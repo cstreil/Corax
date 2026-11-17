@@ -1,14 +1,12 @@
 use super::*;
 
 fn parse_copyuid(response: &[u8], source: u32) -> Option<u32> {
-    let (_, parsed) = Response::from_bytes(response).unwrap();
+    let (_, parsed) = Response::parse(response).unwrap();
     match parsed {
-        Response::Done {
-            code: Some(code), ..
-        }
-        | Response::Data {
-            code: Some(code), ..
-        } => copyuid_destination(&code, source),
+        Response::Done { outcome, .. } | Response::Data { outcome, .. } => outcome
+            .code
+            .as_ref()
+            .and_then(|code| copyuid_destination(code, source)),
         _ => None,
     }
 }
@@ -131,7 +129,9 @@ fn header_fetch(gmail: bool) -> (&'static str, String) {
     let query = if gmail {
         "UID FETCH 5 (UID INTERNALDATE RFC822.SIZE X-GM-MSGID BODY.PEEK[HEADER.FIELDS (MESSAGE-ID)])"
     } else {
-        "UID FETCH 5 (UID INTERNALDATE RFC822.SIZE  BODY.PEEK[HEADER.FIELDS (MESSAGE-ID)])"
+        // No double space: iCloud rejects it and the whole identity listing
+        // then comes back empty.
+        "UID FETCH 5 (UID INTERNALDATE RFC822.SIZE BODY.PEEK[HEADER.FIELDS (MESSAGE-ID)])"
     };
     let extra = if gmail { "X-GM-MSGID 123 " } else { "" };
     (
@@ -239,6 +239,39 @@ async fn omitted_header_section_cannot_prove_header_identity_absent() {
         );
         task.await.unwrap();
     }
+}
+
+#[tokio::test]
+async fn identity_fetch_query_stays_well_formed_without_provider_items() {
+    // iCloud has no provider-specific identity item, so the item list is empty.
+    // A naive `format!` then leaves a double space ("RFC822.SIZE  BODY.PEEK"),
+    // which iCloud rejects - and Trash reconciliation silently sees zero
+    // identities, so uid-less rows are never adopted.
+    let behavior = crate::provider::behavior_for(
+        crate::models::Provider::Imap,
+        &crate::provider::ServerCaps::default(),
+    );
+    let header = "Message-ID: <abc@example.test>\r\n\r\n";
+    let (mut session, task) = scripted_session(vec![
+        login(),
+        (
+            "UID FETCH 5 (UID INTERNALDATE RFC822.SIZE BODY.PEEK[HEADER.FIELDS (MESSAGE-ID)])",
+            format!(
+                "* 1 FETCH (UID 5 INTERNALDATE \"01-Jan-2024 00:00:00 +0000\" RFC822.SIZE 900 BODY[HEADER.FIELDS (MESSAGE-ID)] {{{}}}\r\n{header})\r\n$TAG OK fetched\r\n",
+                header.len()
+            ),
+        ),
+    ])
+    .await;
+    let identities = fetch_identities(&mut session, "5", &*behavior)
+        .await
+        .unwrap();
+    assert_eq!(identities.len(), 1);
+    assert_eq!(
+        identities[0].message_id.as_deref(),
+        Some("abc@example.test")
+    );
+    task.await.unwrap();
 }
 
 #[tokio::test]

@@ -411,9 +411,9 @@ async fn fetch_headers_inner(
     // an empty provider-specific part leaves a double space
     // ("RFC822.SIZE  BODY.PEEK[...]"), which iCloud's parser rejects as well.
     //
-    // The attachment plan is derived from BODYSTRUCTURE when the body is
-    // fetched (see the selective-content path), so nothing is lost here - only
-    // the attachment flag in the list appears once the body has been cached.
+    // The attachment plan comes from a second, separate BODYSTRUCTURE FETCH
+    // (see `attach_mime_plans`): combining it with BODY[HEADER.FIELDS] in one
+    // response is what desynchronised iCloud sessions in the first place.
     let mut parts: Vec<&str> = vec!["UID", "FLAGS", "INTERNALDATE", "RFC822.SIZE"];
     let extra = behavior
         .identity_fetch_items()
@@ -447,7 +447,44 @@ async fn fetch_headers_inner(
             mime_plan: None,
         });
     }
+    drop(stream);
+    attach_mime_plans(session, &mut out).await;
     Ok(out)
+}
+
+/// Fill `has_attachments`/`mime_plan` from a separate BODYSTRUCTURE FETCH.
+///
+/// Deliberately a second command: iCloud desynchronises the session when
+/// BODYSTRUCTURE and BODY[HEADER.FIELDS] share one FETCH response, and the
+/// selective-content path already proves this query parses cleanly on its own.
+/// A failure here only costs the paperclip until the body is cached, so it
+/// never fails the header batch.
+async fn attach_mime_plans(session: &mut Session, headers: &mut [FetchedHeader]) {
+    if headers.is_empty() {
+        return;
+    }
+    let uids: Vec<u32> = headers.iter().map(|header| header.uid).collect();
+    let plans = match fetch_mime_plans_batch_inner(session, &uids).await {
+        Ok(plans) => plans,
+        Err(error) => {
+            tracing::warn!(
+                %error,
+                "BODYSTRUCTURE fetch failed; attachment flags wait for the body fetch",
+            );
+            return;
+        }
+    };
+    let mut by_uid: std::collections::HashMap<u32, MimePlan> = plans
+        .into_iter()
+        .filter(|fetched| fetched.plan.version == mime::MIME_PLAN_VERSION)
+        .map(|fetched| (fetched.uid, fetched.plan))
+        .collect();
+    for header in headers.iter_mut() {
+        if let Some(plan) = by_uid.remove(&header.uid) {
+            header.has_attachments = plan.has_file_attachments();
+            header.mime_plan = Some(plan);
+        }
+    }
 }
 
 /// A BODYSTRUCTURE-derived selective-fetch plan for one remote UID.

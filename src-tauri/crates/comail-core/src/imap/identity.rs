@@ -2,7 +2,8 @@
 use super::*;
 pub use crate::provider::FetchedIdentity;
 use crate::provider::{MailboxBehavior, RemoteKey, gmail_id};
-use async_imap::imap_proto::{Response, ResponseCode, Status, UidSetMember};
+use async_imap::imap_proto::rfc4315::UidSetMember;
+use async_imap::imap_proto::{Response, ResponseCode, Status};
 
 pub async fn fetch_identities<
     T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + std::fmt::Debug + Send,
@@ -14,9 +15,14 @@ pub async fn fetch_identities<
     validate_uid_set(uid_set)?;
     with_deadline("UID FETCH identities", METADATA_TIMEOUT, async {
         let items = behavior.identity_fetch_items();
-        let extra = items.join(" ");
-        let query =
-            format!("(UID INTERNALDATE RFC822.SIZE {extra} BODY.PEEK[HEADER.FIELDS (MESSAGE-ID)])");
+        // Join non-empty parts: a naive `format!` with an empty provider-specific
+        // part leaves a double space ("RFC822.SIZE  BODY.PEEK[...]"), which
+        // iCloud's parser rejects - the same trap the header fetch documents.
+        // On iCloud `identity_fetch_items()` is empty, so this is the normal path.
+        let mut parts: Vec<&str> = vec!["UID", "INTERNALDATE", "RFC822.SIZE"];
+        parts.extend(items.iter().copied());
+        parts.push("BODY.PEEK[HEADER.FIELDS (MESSAGE-ID)]");
+        let query = format!("({})", parts.join(" "));
         let mut out = Vec::new();
         {
             let mut stream = session
@@ -166,25 +172,27 @@ pub(super) async fn copy_or_move<
         match response.parsed() {
             Response::Data {
                 status: Status::Ok,
-                code: Some(code),
+                outcome,
                 ..
             } => {
-                if let Some(uid) = copyuid_destination(code, source) {
-                    destination = Some(uid);
+                if let Some(code) = &outcome.code {
+                    if let Some(uid) = copyuid_destination(code, source) {
+                        destination = Some(uid);
+                    }
                 }
             }
             Response::Done {
                 tag: response_tag,
                 status,
-                code,
-                information,
+                outcome,
             } if *response_tag == tag => {
                 if *status != Status::Ok {
                     return Err(CoreError::Imap(format!(
-                        "UID {operation} failed: {status:?} {information:?}"
+                        "UID {operation} failed: {status:?} {:?}",
+                        outcome.information
                     )));
                 }
-                if let Some(code) = code {
+                if let Some(code) = &outcome.code {
                     destination = copyuid_destination(code, source).or(destination);
                 }
                 return Ok(destination);

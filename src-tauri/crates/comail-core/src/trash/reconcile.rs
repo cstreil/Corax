@@ -183,6 +183,12 @@ async fn reconcile(
         .read(move |conn| candidates(conn, folder_id, account_id, stable))
         .await?;
     if candidates.is_empty() || folder.uidvalidity.is_none() {
+        tracing::debug!(
+            folder_id,
+            candidates = candidates.len(),
+            uidvalidity = ?folder.uidvalidity,
+            "trash reconcile: nothing to do",
+        );
         return Ok(());
     }
     let keyed: Vec<_> = candidates
@@ -190,10 +196,18 @@ async fn reconcile(
         .filter_map(|row| behavior.remote_key(&row).map(|key| (row, key)))
         .collect();
     if keyed.is_empty() {
+        tracing::debug!(folder_id, "trash reconcile: no remote keys");
         return Ok(());
     }
     let listing = fetch_listing(session, behavior.as_ref(), selected.exists).await?;
     let complete = listing.complete;
+    tracing::debug!(
+        folder_id,
+        candidates = keyed.len(),
+        identities = listing.identities.len(),
+        complete,
+        "trash reconcile: listing",
+    );
     if complete {
         session
             .reconcile_stamps
@@ -226,6 +240,14 @@ async fn reconcile(
                 }
                 let absent = listing.absent(&key);
                 if adopt.is_none() && !absent {
+                    if row.uid.is_none() {
+                        tracing::debug!(
+                            message_id = row.id,
+                            matches = matches.len(),
+                            complete,
+                            "trash reconcile: uid-less row not adopted",
+                        );
+                    }
                     continue;
                 }
                 let result = repair_row(conn, &row, adopt, absent, validity);
