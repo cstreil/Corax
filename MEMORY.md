@@ -11,7 +11,7 @@
 
 ## Technik
 - Tauri 2: Rust-Core `src-tauri/crates/comail-core` (Tauri-frei) + Adapter `src-tauri/src` + React/TS-UI `src/`.
-- ~58k Zeilen Rust, ~43k Zeilen TS/TSX, 35 SQL-Migrationen, ~531 Rust-Tests, ~264 TS-Tests.
+- ~58k Zeilen Rust, ~43k Zeilen TS/TSX, 35 SQL-Migrationen, ~531 Rust-Tests, ~341 TS-Tests.
 - SQLite (WAL + FTS5) + lokale Embeddings (bge-small, candle); Credentials im OS-Keyring.
 - Lizenz AGPL-3.0-only — gilt bei Verbreitung eines Forks weiter.
 - `async-imap 0.12` / `imap-proto 0.17` (seit 2026-11-17): 0.16.7 konnte iClouds `NIL` als
@@ -65,8 +65,16 @@
   sobald es welche gibt, steht ein „Inbox"-Tab davor. Ohne eigene Tabs verschwindet die Tab-Leiste.
   Umgesetzt in `lib/splitOrder.ts` (`inboxTabOrder(..., defaultSplits)`), `SplitTabs`, `Sidebar`,
   `keyboard/context.ts`, `InboxScreen` (setzt -1/-2 auf null zurück).
+- Inline-Mailansicht (2026-11-17, `e26761e`): eine geöffnete Mail ersetzt die Liste nicht mehr,
+  sondern klappt als Panel unter ihrer eigenen Zeile auf (75 % Viewport-Höhe, mind. eine Zeile).
+  `listItems.ts` hat dafür den Item-Typ `expanded` + `indexAtOffset` (Zeilen sind nicht mehr
+  gleich hoch, Pointer→Index liest die gemessenen Offsets). Klick auf die Kopfzeile klappt ein.
+  `ui.threadFullView` + `openThreadFull` schalten die alte Vollansicht (Button im Panel-Kopf);
+  `openThread` setzt das Flag zurück, damit Klick/Enter/J/K/Auto-Advance inline bleiben.
 
 ## Offen
+- Inline-Panel: Kosmetik fehlt noch („← Back"-Knopf und Tastatur-Fußzeile im Panel, Inhaltshöhe
+  statt fester 75 %, Antworten inline). Grundfunktion vom Nutzer abgenommen 2026-11-17.
 - MCP in beiden Instanzen aus (`mcpEnabled: false`, Port 47823).
 - Embeddings laufen nach dem Body-Requeue noch nach (~1100 offen, ~300/Minute).
 - Selbst gesendete Mail an die eigene Adresse erscheint nur **einmal** (Message-ID-Dedupe), und zwar
