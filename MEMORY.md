@@ -59,6 +59,13 @@
 - Verifikation immer über Message-ID-Mengen, **nicht** über Zähler pro Ordner: die App dedupliziert
   über Message-IDs, das Backup zählt pro Ordner. Letzter Abgleich: 0 fehlend.
 
+## Eigene Features
+- `inboxDefaultSplits` (Settings → Inbox layout, Default **aus**): blendet die eingebauten Tabs
+  Wichtig/Sonstige aus → eine ungeteilte Inbox. Eigene Splits und Auto-Label-Tabs erscheinen weiter;
+  sobald es welche gibt, steht ein „Inbox"-Tab davor. Ohne eigene Tabs verschwindet die Tab-Leiste.
+  Umgesetzt in `lib/splitOrder.ts` (`inboxTabOrder(..., defaultSplits)`), `SplitTabs`, `Sidebar`,
+  `keyboard/context.ts`, `InboxScreen` (setzt -1/-2 auf null zurück).
+
 ## Offen
 - MCP in beiden Instanzen aus (`mcpEnabled: false`, Port 47823).
 - Embeddings laufen nach dem Body-Requeue noch nach (~1100 offen, ~300/Minute).
