@@ -901,6 +901,7 @@ export function SearchScreen() {
               jumpHints={modHeld}
               layout={settings?.inboxUi}
               photos={avatarUi && (settings?.showSenderPhotos ?? true)}
+              expandedThreadId={openThreadId}
             />
           )}
         </div>

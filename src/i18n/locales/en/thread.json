@@ -8,6 +8,7 @@
   "couldntLoad": "Couldn’t load this thread.",
   "backToList": "Back to list (Esc)",
   "back": "Back",
+  "openFull": "Full view",
   "noSubject": "(no subject)",
   "messages_one": "{{count}} message",
   "messages_other": "{{count}} messages",

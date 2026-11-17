@@ -8,6 +8,7 @@
   "couldntLoad": "无法加载此会话。",
   "backToList": "返回列表（Esc）",
   "back": "返回",
+  "openFull": "完整视图",
   "noSubject": "（无主题）",
   "messages_one": "{{count}} 封邮件",
   "messages_other": "{{count}} 封邮件",

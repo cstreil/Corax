@@ -11,10 +11,11 @@ import { useTranslation } from "react-i18next";
 import type { Label, ThreadSummary } from "../../ipc/types";
 import { buildCommandContext } from "../../keyboard/context";
 import { primaryCorrespondent } from "../../lib/format";
-import { buildListItems, type Bundle, type SectionHeader } from "../../lib/listItems";
+import { buildListItems, indexAtOffset, type Bundle, type SectionHeader } from "../../lib/listItems";
 import { prefetchThread } from "../../queries/hooks";
 import { useUi } from "../../stores/ui";
 import { Button } from "../ui/Button";
+import { ConversationScreen } from "../thread/ConversationScreen";
 import { BundleRow } from "./BundleRow";
 import { ContactPane } from "./ContactPane";
 import { ThreadRow, type AccountMeta, type QuickAction } from "./ThreadRow";
@@ -23,6 +24,8 @@ import { ThreadRow, type AccountMeta, type QuickAction } from "./ThreadRow";
 // shows a full page of mail instead of a handful of tall rows.
 const ROW_HEIGHT = 40;
 const AVATAR_ROW_HEIGHT = 42;
+/** Share of the visible list an opened thread's panel may take. */
+const EXPANDED_SHARE = 0.75;
 
 type ThreadListProps = {
   /** Flattened thread summaries in display order. */
@@ -50,6 +53,9 @@ type ThreadListProps = {
   /** Ungrouped lists only: a header row above each keyed thread (search
    *  results' "Partial matches" / "Related" sections). */
   sections?: ReadonlyMap<number, SectionHeader>;
+  /** The thread whose panel is open below its own row, if any. The panel is
+   *  the list's only taller item; everything else keeps the row height. */
+  expandedThreadId?: number | null;
 };
 
 /**
@@ -71,6 +77,7 @@ export function ThreadList({
   bundles,
   onOpenBundle,
   sections,
+  expandedThreadId = null,
 }: ThreadListProps) {
   const { t } = useTranslation();
   const selectedThreadId = useUi((s) => s.selectedThreadId);
@@ -95,15 +102,18 @@ export function ThreadList({
   // thread-only array (selection, keyboard cursor, leave animation all index by
   // thread), while `items` is what the virtualizer lays out.
   const items = useMemo(
-    () => buildListItems(rows, groupByDate, bundles, Date.now(), sections),
-    [rows, groupByDate, bundles, sections],
+    () => buildListItems(rows, groupByDate, bundles, Date.now(), sections, expandedThreadId),
+    [rows, groupByDate, bundles, sections, expandedThreadId],
   );
   const itemsRef = useRef(items);
   itemsRef.current = items;
   const avatarUi = layout === "avatar";
   const rowHeight = avatarUi ? AVATAR_ROW_HEIGHT : ROW_HEIGHT;
-  const rowHeightRef = useRef(rowHeight);
-  rowHeightRef.current = rowHeight;
+  // Measured item offsets, for the pointer-to-index math below. The sweep
+  // handler is created once, so it reads the virtualizer through a ref.
+  const virtualizerRef = useRef<{
+    getVirtualItems: () => { index: number; start: number; size: number }[];
+  } | null>(null);
 
   // While ⌘/Ctrl is held on the search screen, map the first nine threads to
   // their jump-to number so each row can show its ⌘/Ctrl+1..9 badge.
@@ -161,18 +171,21 @@ export function ThreadList({
     if (selectedThreadId != null) prefetchThread(selectedThreadId);
   }, [selectedThreadId]);
 
-  // Row click: Shift = range, Cmd/Ctrl = toggle one, plain = open.
+  // Row click: Shift = range, Cmd/Ctrl = toggle one, plain = open. Clicking the
+  // row of the thread that is already open folds its panel back up.
   const handleRowClick = useCallback(
     (id: number, e: ReactMouseEvent) => {
       if (e.shiftKey) {
         useUi.getState().selectRange(id, true);
       } else if (e.metaKey || e.ctrlKey) {
         useUi.getState().toggleSelect(id);
+      } else if (id === expandedThreadId) {
+        openThread(null);
       } else {
         openThread(id);
       }
     },
-    [openThread],
+    [openThread, expandedThreadId],
   );
 
   // Right-click a row: open the context menu at the pointer. If the row is part
@@ -232,7 +245,9 @@ export function ThreadList({
       if (!el) return 0;
       const r = el.getBoundingClientRect();
       const y = clientY - r.top + el.scrollTop;
-      return Math.max(0, Math.min(Math.floor(y / rowHeightRef.current), itemsRef.current.length - 1));
+      // Read the measured offsets rather than dividing by a constant: the
+      // opened thread's panel is taller than a row.
+      return indexAtOffset(virtualizerRef.current?.getVirtualItems() ?? [], y);
     };
 
     const onMove = (ev: MouseEvent) => {
@@ -349,16 +364,39 @@ export function ThreadList({
   }, [threads, selectedThreadId, selectedIndex, selectThread]);
 
   const scrollRef = useRef<HTMLDivElement>(null);
+
+  // The opened thread's panel is the list's only taller item. Its height is a
+  // share of the visible list, so it has to be measured rather than expressed
+  // as a percentage: the item is absolutely positioned inside the sized
+  // spacer, where a percentage max-height has no scroller to resolve against.
+  const [viewportHeight, setViewportHeight] = useState(0);
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(() => setViewportHeight(el.clientHeight));
+    ro.observe(el);
+    setViewportHeight(el.clientHeight);
+    return () => ro.disconnect();
+  }, []);
+  const expandedHeight = Math.max(rowHeight, Math.round(viewportHeight * EXPANDED_SHARE));
+
   const virtualizer = useVirtualizer({
     count: items.length,
     getScrollElement: () => scrollRef.current,
-    estimateSize: () => rowHeight,
+    estimateSize: (index) => (items[index]?.kind === "expanded" ? expandedHeight : rowHeight),
     overscan: 12,
   });
-  // UI switch: drop cached sizes so every row re-lays out at the new height.
+  virtualizerRef.current = virtualizer;
+  // Where the panel sits right now. Only a change here (or in either height)
+  // invalidates a cached size: every other item is still one row tall.
+  const expandedIndex = useMemo(
+    () => (expandedThreadId == null ? -1 : items.findIndex((it) => it.kind === "expanded")),
+    [items, expandedThreadId],
+  );
+  // Drop cached sizes so the items re-lay out at the new heights.
   useEffect(() => {
     virtualizer.measure();
-  }, [rowHeight, virtualizer]);
+  }, [rowHeight, expandedHeight, expandedIndex, virtualizer]);
 
   // Keep the keyboard cursor on screen. Only scrolls when the selected row is
   // actually out of view, so hovering a visible row never triggers a scroll.
@@ -370,12 +408,31 @@ export function ThreadList({
       (it) => it.kind === "thread" && it.thread.id === selectedThreadId,
     );
     if (idx < 0) return;
-    const top = idx * rowHeight;
-    const bottom = top + rowHeight;
-    if (top < el.scrollTop || bottom > el.scrollTop + el.clientHeight) {
+    const vi = virtualizer.getVirtualItems().find((v) => v.index === idx);
+    if (!vi || vi.start < el.scrollTop || vi.end > el.scrollTop + el.clientHeight) {
       virtualizer.scrollToIndex(idx, { align: "auto" });
     }
-  }, [selectedThreadId, virtualizer, rowHeight]);
+  }, [selectedThreadId, virtualizer]);
+
+  // Opening a thread: bring its row to the top when the panel below it would
+  // otherwise hang off the bottom of the list.
+  useEffect(() => {
+    if (expandedThreadId == null) return;
+    const el = scrollRef.current;
+    if (!el) return;
+    const idx = itemsRef.current.findIndex(
+      (it) => it.kind === "thread" && it.thread.id === expandedThreadId,
+    );
+    if (idx < 0) return;
+    const raf = requestAnimationFrame(() => {
+      const vi = virtualizer.getVirtualItems().find((v) => v.index === idx);
+      const start = vi?.start ?? idx * rowHeight;
+      if (start + rowHeight + expandedHeight > el.scrollTop + el.clientHeight) {
+        virtualizer.scrollToIndex(idx, { align: "start" });
+      }
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [expandedThreadId, expandedHeight, rowHeight, virtualizer]);
 
   // Infinite scroll.
   const virtualItems = virtualizer.getVirtualItems();
@@ -417,6 +474,21 @@ export function ThreadList({
                 </div>
               );
             }
+            if (item.kind === "expanded") {
+              // The opened thread, inline: it takes the panel height the
+              // virtualizer reserved for it and scrolls inside that box, so the
+              // rows below simply move down instead of being replaced.
+              return (
+                <div key={`x-${item.thread.id}`} className="absolute inset-x-0" style={style}>
+                  <div className="co-hairline-t co-hairline-b flex h-full flex-col overflow-hidden bg-bg0">
+                    <ConversationScreen
+                      threadId={item.thread.id}
+                      onOpenFull={() => useUi.getState().openThreadFull(item.thread.id)}
+                    />
+                  </div>
+                </div>
+              );
+            }
             const th = item.thread;
             return (
               <div key={th.id} className={`absolute inset-x-0${shifting ? " co-row-shift" : ""}`} style={style}>
@@ -450,7 +522,9 @@ export function ThreadList({
         )}
       </div>
 
-      {!avatarUi && (
+      {/* The side pane describes the highlighted thread; with that thread open
+          inline it would only repeat what the panel already shows. */}
+      {!avatarUi && expandedThreadId == null && (
         <ContactPane
           thread={selectedThread}
           recent={recentWithContact}

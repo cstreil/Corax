@@ -20,7 +20,14 @@ import { MessageCard } from "./MessageCard";
  *  auto-align (wheel/trackpad, touch, keyboard nav, scrollbar drag). */
 const USER_SCROLL_EVENTS = ["wheel", "touchstart", "keydown", "mousedown"] as const;
 
-export function ConversationScreen({ threadId }: { threadId: number }) {
+export function ConversationScreen({
+  threadId,
+  onOpenFull,
+}: {
+  threadId: number;
+  /** Inline panel only: leave the list and show this conversation full screen. */
+  onOpenFull?: () => void;
+}) {
   const { t } = useTranslation();
   const { data, isLoading, isError } = useThread(threadId);
   const focusedMessageId = useUi((s) => s.focusedMessageId);
@@ -336,11 +343,18 @@ export function ConversationScreen({ threadId }: { threadId: number }) {
               )}
             </p>
           </div>
-          {position >= 0 && (
-            <span className="mt-1 shrink-0 text-[11.5px] whitespace-nowrap text-ink-faint tabular-nums">
-              {t("thread:positionOf", { pos: position + 1, total: visibleThreadIds.length })}
-            </span>
-          )}
+          <div className="flex shrink-0 flex-col items-end gap-1.5">
+            {onOpenFull && (
+              <Button variant="secondary" size="sm" onClick={onOpenFull}>
+                {t("thread:openFull")}
+              </Button>
+            )}
+            {position >= 0 && (
+              <span className="text-[11.5px] whitespace-nowrap text-ink-faint tabular-nums">
+                {t("thread:positionOf", { pos: position + 1, total: visibleThreadIds.length })}
+              </span>
+            )}
+          </div>
         </header>
 
         {hasSummary && <AiThreadSummary key={threadId} threadId={threadId} onUseReply={useProposedReply} />}

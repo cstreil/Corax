@@ -32,6 +32,7 @@ export function InboxScreen() {
   const folderFilter = useUi((s) => s.folderFilter);
   const selectInboxTab = useUi((s) => s.selectInboxTab);
   const setView = useUi((s) => s.setView);
+  const openThreadId = useUi((s) => s.openThreadId);
 
   const { data: accounts } = useAccounts();
   const { data: labels } = useLabels();
@@ -164,6 +165,7 @@ export function InboxScreen() {
           photos={avatarUi && (settings?.showSenderPhotos ?? true)}
           bundles={showBundles ? bundles : undefined}
           onOpenBundle={openBundle}
+          expandedThreadId={openThreadId}
         />
       )}
       {view === "inbox" && <TipsBar />}

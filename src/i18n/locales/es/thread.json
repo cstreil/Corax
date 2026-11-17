@@ -8,6 +8,7 @@
   "couldntLoad": "No se pudo cargar esta conversación.",
   "backToList": "Volver a la lista (Esc)",
   "back": "Atrás",
+  "openFull": "Vista completa",
   "noSubject": "(sin asunto)",
   "messages_one": "{{count}} mensaje",
   "messages_other": "{{count}} mensajes",

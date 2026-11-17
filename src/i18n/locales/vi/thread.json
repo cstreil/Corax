@@ -8,6 +8,7 @@
   "couldntLoad": "Không thể tải cuộc hội thoại này.",
   "backToList": "Quay lại danh sách (Esc)",
   "back": "Quay lại",
+  "openFull": "Chế độ đầy đủ",
   "noSubject": "(không có chủ đề)",
   "messages_one": "{{count}} thư",
   "messages_other": "{{count}} thư",

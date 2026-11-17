@@ -138,6 +138,10 @@ interface UiState {
   selectedIndex: number;
   selectedThreadId: number | null;
   openThreadId: number | null;
+  /** Open the thread full screen (the pre-inline conversation view) instead of
+   *  expanding it inside the list. Only the panel's "full view" button sets
+   *  this; every other way of opening a thread goes inline. */
+  threadFullView: boolean;
   /** message focused inside the conversation - the reply target (hover, click,
    *  or N/P keyboard). */
   focusedMessageId: number | null;
@@ -259,6 +263,7 @@ interface UiState {
   selectInboxTab: (tab: { splitId?: number; labelId?: number }) => void;
   selectThread: (index: number, id: number | null) => void;
   openThread: (id: number | null) => void;
+  openThreadFull: (id: number) => void;
   toggleSelect: (id: number) => void;
   /** Replace the whole selection with the given ids (deduped). */
   setSelection: (ids: number[]) => void;
@@ -294,6 +299,7 @@ export const useUi = create<UiState>((set, get) => ({
   selectedIndex: 0,
   selectedThreadId: null,
   openThreadId: null,
+  threadFullView: false,
   focusedMessageId: null,
   messageCursorSource: "keyboard",
   selection: [],
@@ -409,7 +415,16 @@ export const useUi = create<UiState>((set, get) => ({
     set({
       openThreadId: id,
       focusedMessageId: null,
+      threadFullView: false,
       ...(id != null ? { selectedThreadId: id } : {}),
+    }),
+
+  openThreadFull: (id) =>
+    set({
+      openThreadId: id,
+      focusedMessageId: null,
+      threadFullView: true,
+      selectedThreadId: id,
     }),
 
   toggleSelect: (id) => {

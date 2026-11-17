@@ -152,3 +152,37 @@ describe("mail navigation from fullscreen calendar", () => {
     },
   );
 });
+
+describe("openThread", () => {
+  it("opens inline by default", () => {
+    useUi.getState().openThread(7);
+    expect(useUi.getState()).toMatchObject({
+      openThreadId: 7,
+      threadFullView: false,
+      selectedThreadId: 7,
+      focusedMessageId: null,
+    });
+  });
+
+  it("openThreadFull asks for the full-screen conversation", () => {
+    useUi.getState().openThreadFull(9);
+    expect(useUi.getState()).toMatchObject({
+      openThreadId: 9,
+      threadFullView: true,
+      selectedThreadId: 9,
+      focusedMessageId: null,
+    });
+  });
+
+  it("opening another thread from the list drops back to the inline panel", () => {
+    useUi.getState().openThreadFull(7);
+    useUi.getState().openThread(8);
+    expect(useUi.getState()).toMatchObject({ openThreadId: 8, threadFullView: false });
+  });
+
+  it("closing the thread clears the full-screen flag", () => {
+    useUi.getState().openThreadFull(7);
+    useUi.getState().openThread(null);
+    expect(useUi.getState()).toMatchObject({ openThreadId: null, threadFullView: false });
+  });
+});

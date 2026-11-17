@@ -75,6 +75,7 @@ export default function App() {
 
   const { data: accounts, isLoading: accountsLoading } = useAccounts();
   const openThreadId = useUi((s) => s.openThreadId);
+  const threadFullView = useUi((s) => s.threadFullView);
   const searchOpen = useUi((s) => s.searchOpen);
   const composer = useUi((s) => s.composer);
   const calendarScreen = useUi((s) => s.calendarScreen);
@@ -111,6 +112,9 @@ export default function App() {
 
   // Replies/forwards render inside the conversation (thread stays visible);
   // only a brand-new message takes over the screen as its own compose view.
+  // An opened thread normally expands inside the list, so the inbox or search
+  // screen stays mounted underneath; only the panel's "full view" button asks
+  // for the old full-screen conversation.
   const sidebarDocked = useSidebarDocked();
   const screen: Screen = inFlow
     ? "onboarding"
@@ -118,7 +122,7 @@ export default function App() {
       ? "compose"
       : calendarScreen
         ? "calendar"
-        : openThreadId != null
+        : openThreadId != null && threadFullView
           ? "conversation"
           : searchOpen
             ? "search"
