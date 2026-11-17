@@ -343,31 +343,114 @@ fn section_entity(mime_header: &[u8], encoded_body: &[u8]) -> Vec<u8> {
     raw
 }
 
-/// Does the decoded output still read as raw quoted-printable? Counts
-/// `=XX` escapes (uppercase hex, as QP mandates); legitimate prose rarely
-/// has more than a couple.
+/// Length of an RFC 2047 encoded-word (`=?charset?Q?text?=`) starting at
+/// `bytes[0]`, or `None` when the bytes there are not one.
+fn encoded_word_len(bytes: &[u8]) -> Option<usize> {
+    if bytes.first() != Some(&b'=') || bytes.get(1) != Some(&b'?') {
+        return None;
+    }
+    // charset, then `?`, then the encoding letter, then `?`.
+    let mut i = 2;
+    while i < bytes.len() && bytes[i] != b'?' {
+        if bytes[i] == b'\n' || i > 80 {
+            return None;
+        }
+        i += 1;
+    }
+    if bytes.get(i) != Some(&b'?') {
+        return None;
+    }
+    i += 1;
+    if !matches!(
+        bytes.get(i),
+        Some(b'Q') | Some(b'q') | Some(b'B') | Some(b'b')
+    ) {
+        return None;
+    }
+    i += 1;
+    if bytes.get(i) != Some(&b'?') {
+        return None;
+    }
+    i += 1;
+    while i + 1 < bytes.len() {
+        if bytes[i] == b'?' && bytes[i + 1] == b'=' {
+            return Some(i + 2);
+        }
+        if bytes[i] == b'\n' {
+            return None;
+        }
+        i += 1;
+    }
+    None
+}
+
+/// Unambiguous evidence that `content` is still transfer-encoded
+/// quoted-printable.
+///
+/// A bare `=XX` proves nothing. URLs (`?g=875f3f54`, `midSig=3D`), CSS
+/// (`=a1`), base64 blobs and RFC 2047 encoded-words (`=?UTF-8?Q?...=C3=A4?=`)
+/// all contain them, and counting those requeued ~1400 correctly decoded
+/// bodies on every start. Only two shapes are produced by QP and nothing else:
+///
+///   * `=3D` directly in front of a quote - a QP encoder writes every `=` of an
+///     HTML attribute as `=3D`, so `href=3D"..."` is the signature of an
+///     undecoded HTML body,
+///   * a run of two or more escapes that spells valid UTF-8 (`M=C3=BCnchen`),
+///     outside an encoded-word.
 fn qp_artifact_count(content: &str) -> usize {
     let bytes = content.as_bytes();
+    let hex = |b: u8| -> Option<u8> {
+        match b {
+            b'0'..=b'9' => Some(b - b'0'),
+            b'A'..=b'F' => Some(b - b'A' + 10),
+            _ => None,
+        }
+    };
     let mut count = 0;
     let mut i = 0;
-    while i + 2 < bytes.len() {
-        let is_hex = |b: u8| b.is_ascii_digit() || (b'A'..=b'F').contains(&b);
-        if bytes[i] == b'=' && is_hex(bytes[i + 1]) && is_hex(bytes[i + 2]) {
-            count += 1;
-            i += 3;
-        } else {
-            i += 1;
+    while i < bytes.len() {
+        // Q-encoding inside an encoded-word is legitimate, not a leftover.
+        if let Some(len) = encoded_word_len(&bytes[i..]) {
+            i += len;
+            continue;
         }
+        if bytes[i] != b'=' {
+            i += 1;
+            continue;
+        }
+        if bytes.get(i + 1) == Some(&b'3')
+            && bytes.get(i + 2) == Some(&b'D')
+            && matches!(bytes.get(i + 3), Some(&b'"') | Some(&b'\''))
+        {
+            count += 1;
+        }
+        // Consume the whole run of escapes so `=C3=A4` counts once, not twice.
+        // Every step must start at a `=`: without that check the bytes after a
+        // single escape (`=3D` + `AB`) are read as further escapes.
+        let mut run = Vec::new();
+        let mut j = i;
+        while j + 2 < bytes.len() && bytes[j] == b'=' {
+            match (hex(bytes[j + 1]), hex(bytes[j + 2])) {
+                (Some(high), Some(low)) => {
+                    run.push(high << 4 | low);
+                    j += 3;
+                }
+                _ => break,
+            }
+        }
+        if run.len() >= 2 && std::str::from_utf8(&run).is_ok() {
+            count += 1;
+        }
+        i = if j > i { j } else { i + 1 };
     }
     count
 }
 
 /// Conservatively identify cached text that still contains a transfer-encoded
-/// quoted-printable body. The threshold intentionally matches selective
-/// decoding's repair gate: isolated `=XX` strings are common in legitimate
-/// prose, while eight escapes strongly indicate an undecoded MIME part.
+/// quoted-printable body. Two independent markers are required so a single
+/// stray `=3D` in prose cannot trigger a re-download.
 pub fn looks_like_undecoded_quoted_printable(content: &str) -> bool {
-    qp_artifact_count(content) >= 8
+    qp_artifact_count(content) >= 2
 }
 
 /// Quoted-printable decoding that never fails: valid `=XX` escapes decode,
@@ -485,6 +568,66 @@ fn header_declares_base64(mime_header: &[u8]) -> bool {
         })
 }
 
+fn is_base64_byte(byte: u8) -> bool {
+    matches!(
+        byte,
+        b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'+' | b'/' | b'='
+    )
+}
+
+/// Explain why a Base64 section did not decode. A section that arrives
+/// truncated, with a stray delimiter, or as the wrong part is visible in the
+/// compacted length, the first byte outside the alphabet, and the tail.
+fn base64_failure_detail(input: &[u8]) -> String {
+    let compact: Vec<u8> = input
+        .iter()
+        .copied()
+        .filter(|byte| !byte.is_ascii_whitespace())
+        .collect();
+    let tail_start = compact.len().saturating_sub(32);
+    let tail: String = String::from_utf8_lossy(&compact[tail_start..])
+        .chars()
+        .map(|c| if c.is_control() { '.' } else { c })
+        .collect();
+    match compact
+        .iter()
+        .enumerate()
+        .find(|(_, byte)| !is_base64_byte(**byte))
+    {
+        Some((index, byte)) => format!(
+            "raw={} compact={} invalid_at={index} byte=0x{byte:02x} tail={tail:?}",
+            input.len(),
+            compact.len()
+        ),
+        None => format!(
+            "raw={} compact={} rem4={} tail={tail:?}",
+            input.len(),
+            compact.len(),
+            compact.len() % 4
+        ),
+    }
+}
+
+/// Base64 as it actually arrives in mail. RFC 2045 requires the unused bits of
+/// the final symbol to be zero, but real mailers leave them set: three messages
+/// in the iCloud corpus end in `...Pi==`, `...Pl==` and `...Pn==`, whose last
+/// symbol carries non-zero padding bits. The decoded bytes are unambiguous
+/// either way, so a strict decoder that rejects them loses the whole message
+/// body. `base64`'s default config rejects them; allow them explicitly.
+const BASE64_PADDED: base64::engine::general_purpose::GeneralPurpose =
+    base64::engine::general_purpose::GeneralPurpose::new(
+        &base64::alphabet::STANDARD,
+        base64::engine::GeneralPurposeConfig::new().with_decode_allow_trailing_bits(true),
+    );
+
+const BASE64_UNPADDED: base64::engine::general_purpose::GeneralPurpose =
+    base64::engine::general_purpose::GeneralPurpose::new(
+        &base64::alphabet::STANDARD,
+        base64::engine::GeneralPurposeConfig::new()
+            .with_decode_allow_trailing_bits(true)
+            .with_decode_padding_mode(base64::engine::DecodePaddingMode::RequireNone),
+    );
+
 fn decode_base64_transfer(input: &[u8]) -> Option<Vec<u8>> {
     use base64::Engine;
 
@@ -496,9 +639,9 @@ fn decode_base64_transfer(input: &[u8]) -> Option<Vec<u8>> {
     if compact.is_empty() {
         return Some(Vec::new());
     }
-    base64::engine::general_purpose::STANDARD
+    BASE64_PADDED
         .decode(&compact)
-        .or_else(|_| base64::engine::general_purpose::STANDARD_NO_PAD.decode(&compact))
+        .or_else(|_| BASE64_UNPADDED.decode(&compact))
         .ok()
 }
 
@@ -616,10 +759,20 @@ fn decode_text_section_inner(
     let base64_declared = header_declares_base64(mime_header)
         || declared_encoding.is_some_and(|value| value.eq_ignore_ascii_case("base64"));
     let decoded_base64 = if base64_declared {
-        Some(
-            decode_base64_transfer(encoded_body)
-                .ok_or_else(|| CoreError::Mime("invalid Base64 selective MIME section".into()))?,
-        )
+        Some(decode_base64_transfer(encoded_body).ok_or_else(|| {
+            // A short prefix of what the server actually returned: when a
+            // section comes back as MIME headers, as a neighbouring part, or
+            // truncated, the first bytes say so immediately.
+            let probe: String =
+                String::from_utf8_lossy(&encoded_body[..encoded_body.len().min(48)])
+                    .chars()
+                    .map(|c| if c.is_control() { '.' } else { c })
+                    .collect();
+            CoreError::Mime(format!(
+                "invalid Base64 selective MIME section ({}; starts {probe:?})",
+                base64_failure_detail(encoded_body)
+            ))
+        })?)
     } else {
         // Legacy callers may not yet pass BODYSTRUCTURE metadata. Infer only
         // strong structured signatures; never guess for arbitrary plain text.
@@ -897,10 +1050,76 @@ mod selective_section_tests {
     }
 
     #[test]
-    fn sanitize_keeps_signature_block_class_only() {
-        let out = sanitize_html(r#"<div class="co-signature x">Best</div><p class="evil">hi</p>"#);
-        assert!(out.contains(r#"class="co-signature""#), "{out}");
-        assert!(!out.contains("evil"), "{out}");
+    fn sanitize_keeps_signature_block_class() {
+        // The composer's signature block (src/lib/signatures.ts) must survive a
+        // draft round-trip so switching signature swaps it instead of appending.
+        let out = sanitize_html(r#"<div class="co-signature x">Best</div>"#);
+        assert!(out.contains(r#"class="co-signature x""#), "{out}");
+    }
+
+    #[test]
+    fn sanitize_keeps_message_stylesheet_and_classes() {
+        // The Allee Theater ticket confirmation styles its whole body through a
+        // <style> block plus classes; dropping either rendered it as bare text.
+        let html = r#"<html><head><title>TITLE-LEAK</title>
+<style type="text/css">.confirmation{width:660px}.totalamount{border-top:2px solid}</style>
+</head><body><div class="confirmation"><div class="totalamount">80,70 EUR</div></div></body></html>"#;
+        let out = sanitize_html(html);
+        assert!(out.contains("<style"), "stylesheet dropped: {out}");
+        assert!(
+            out.contains(".confirmation{width:660px}"),
+            "css dropped: {out}"
+        );
+        assert!(
+            out.contains(r#"class="confirmation""#),
+            "class dropped: {out}"
+        );
+        assert!(
+            out.contains(r#"class="totalamount""#),
+            "class dropped: {out}"
+        );
+        // <title> is metadata: its text must not leak into the body.
+        assert!(!out.contains("TITLE-LEAK"), "title text leaked: {out}");
+    }
+
+    #[test]
+    fn qp_heuristic_ignores_urls_encoded_words_and_base64() {
+        // Real false positives from the cache: URL query values, an RFC 2047
+        // encoded-word, a base64 blob and a wrapped HTML attribute all contain
+        // `=XX` without being transfer-encoded.
+        for body in [
+            "https://www.netflix.com/YourAccount?g=875f3f54&lnktrk=EVO",
+            "https://x.test/a?midToken=AQG_PusV&midSig=3D",
+            "> From: =?UTF-8?Q?Ihr_n=C3=A4chster_Urlaub?= <info@example.test>",
+            "token=abc123==\nX-Mailgun-Sid: WyI0YTJjYiIs",
+            "<a href=\n\"https://marketing.example.test/MzIyLUJX\">",
+            "=============================================\nwaipu.tv",
+        ] {
+            assert!(
+                !looks_like_undecoded_quoted_printable(body),
+                "false positive: {body}"
+            );
+        }
+    }
+
+    #[test]
+    fn qp_heuristic_ignores_hex_after_a_single_escape() {
+        // Real false positive: a Q-encoded encoded-word whose `=3D2022` was read
+        // as a run of escapes (`=3D` + `20` + `22`) because the run scanner did
+        // not require a `=` at every step. Two of them requeued the body.
+        let body = "=?UTF-8?Q?=3D2022-01-11=5F0\n=?UTF-8?Q?=3D2022-01-12=5F0";
+        assert!(!looks_like_undecoded_quoted_printable(body));
+    }
+
+    #[test]
+    fn qp_heuristic_flags_encoded_html() {
+        let encoded = "<meta http-equiv=3D\"content-type\" content=3D\"text/html; charset=3Dutf-8\">\n\
+                       <div class=3D\"confirmation\">M=C3=BCnchen</div>";
+        assert!(looks_like_undecoded_quoted_printable(encoded));
+        // The decoded form must not trip it again.
+        let decoded = "<meta http-equiv=\"content-type\" content=\"text/html; charset=utf-8\">\n\
+                       <div class=\"confirmation\">M\u{fc}nchen</div>";
+        assert!(!looks_like_undecoded_quoted_printable(decoded));
     }
 
     #[test]
@@ -1011,6 +1230,77 @@ mod selective_section_tests {
         .unwrap();
         assert_eq!(bytes, vec![0, 1, 2, 255]);
     }
+
+    /// iCloud sends `NIL` as the transfer encoding and raw UTF-8 bytes inside
+    /// quoted strings. imap-proto 0.16.7 rejected both, which aborted the whole
+    /// FETCH response and desynchronised the session, so the affected messages
+    /// never got a body. These are the exact responses from the sync logs.
+    #[test]
+    fn parses_icloud_bodystructures_with_nil_encoding_and_utf8_names() {
+        use async_imap::imap_proto::{AttributeValue, Response};
+
+        fn plan(response: &[u8]) -> MimePlan {
+            let (_, parsed) = Response::parse(response).expect("iCloud FETCH response must parse");
+            let Response::Fetch(_, attributes) = parsed else {
+                panic!("expected a FETCH response");
+            };
+            let structure = attributes
+                .iter()
+                .find_map(|attribute| match attribute {
+                    AttributeValue::BodyStructure(structure) => Some(structure),
+                    _ => None,
+                })
+                .expect("BODYSTRUCTURE attribute");
+            plan_bodystructure(structure)
+        }
+
+        // NIL as transfer encoding: 511 of 520 logged failures.
+        let nil_encoding = plan(
+            b"* 316 FETCH (UID 316 BODYSTRUCTURE ((\"text\" \"plain\" (\"CHARSET\" \"UTF-8\") NIL NIL NIL 160 8 NIL NIL NIL NIL)(\"text\" \"html\" (\"CHARSET\" \"UTF-8\") NIL NIL \"quoted-printable\" 730 10 NIL NIL NIL NIL) \"alternative\" (\"BOUNDARY\" \"000000000000208e2f058f2500dc\") NIL NIL NIL))\r\n",
+        );
+        assert_eq!(nil_encoding.text_sections.len(), 2);
+        assert!(nil_encoding.attachments.is_empty());
+
+        // Raw UTF-8 inside a quoted filename (UID 1043).
+        let utf8_name = plan(
+            "* 1043 FETCH (UID 1043 BODYSTRUCTURE ((\"application\" \"pdf\" (\"NAME\" \"mit Warenrückbuchung 1001 Kostüme - 50986387 (0NG).pdf\") NIL \"mit Warenrückbuchung 1001 Kostüme - 50986387 (0NG).pdf\" \"base64\" 7210 NIL (\"ATTACHMENT\" (\"FILENAME\" \"mit Warenrückbuchung 1001 Kostüme - 50986387 (0NG).pdf\")) NIL NIL) \"mixed\" (\"BOUNDARY\" \"b\") NIL NIL NIL))\r\n"
+                .as_bytes(),
+        );
+        assert_eq!(utf8_name.attachments.len(), 1);
+        assert_eq!(
+            utf8_name.attachments[0].filename.as_deref(),
+            Some("mit Warenrückbuchung 1001 Kostüme - 50986387 (0NG).pdf")
+        );
+    }
+
+    /// Three messages in the iCloud corpus carry Base64 whose final symbol has
+    /// non-zero padding bits (`...Pi==`, `...Pl==`, `...Pn==`). RFC 2045 wants
+    /// those bits zero, but the decoded bytes are unambiguous, and `base64`'s
+    /// default config rejects the whole part. These are the exact tails from
+    /// the sync logs.
+    #[test]
+    fn decodes_base64_with_non_zero_padding_bits() {
+        // "QR==" is "A" with the last symbol's unused bits set.
+        assert_eq!(decode_base64_transfer(b"QR==").as_deref(), Some(&b"A"[..]));
+        // Real tails, wrapped in CRLF as they arrive from IMAP.
+        assert_eq!(
+            decode_base64_transfer(b"PC9odG1sPi==\r\n").as_deref(),
+            Some(&b"</html>"[..])
+        );
+        assert_eq!(
+            decode_base64_transfer(b"PC90YWJsZT4=\r\n").as_deref(),
+            Some(&b"</table>"[..])
+        );
+        // Canonical Base64 and unpadded input keep working.
+        assert_eq!(
+            decode_base64_transfer(b"PC9odG1sPg==").as_deref(),
+            Some(&b"</html>"[..])
+        );
+        assert_eq!(
+            decode_base64_transfer(b"PC9odG1sPg").as_deref(),
+            Some(&b"</html>"[..])
+        );
+    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -1052,6 +1342,13 @@ fn collect_addrs(value: Option<&mail_parser::Address>) -> Vec<Address> {
 static SANITIZER: Lazy<ammonia::Builder<'static>> = Lazy::new(|| {
     let mut b = ammonia::Builder::default();
     b.add_generic_attributes([
+        // `class` carries the layout of mails that ship a <style> block instead
+        // of inline styles (the Allee Theater ticket confirmation styles its
+        // whole body through `.confirmation`, `.head1`, `.totalamount`, ...).
+        // Dropping the attribute left the message as unstyled running text.
+        // Class names are inert on their own; the sandboxed iframe's CSP is
+        // what keeps a stylesheet from reaching the network.
+        "class",
         "style",
         "align",
         "valign",
@@ -1065,13 +1362,20 @@ static SANITIZER: Lazy<ammonia::Builder<'static>> = Lazy::new(|| {
     ])
     .add_tags([
         "table", "thead", "tbody", "tfoot", "tr", "td", "th", "center", "font", "img",
+        // Keep the message's own stylesheet. Ammonia cannot filter whole
+        // stylesheets (it only filters `style` attributes), so the boundary is
+        // the iframe CSP `default-src 'none'`: @import, url() fetches and font
+        // loads are blocked there, leaving the CSS able to restyle only the
+        // message itself. Without this, every class-styled mail renders bare.
+        "style",
     ])
+    // `<title>` is document metadata, not body text. Ammonia drops the tag but
+    // keeps its text, which printed the subject line as a stray paragraph above
+    // the message. `style` is deliberately absent so its CSS survives.
+    .clean_content_tags(std::collections::HashSet::from(["script", "title"]))
     .add_tag_attributes("img", ["src", "alt", "width", "height"])
     .add_tag_attributes("font", ["face", "size", "color"])
     .add_tag_attributes("a", ["href", "title"])
-    // The composer's signature block (src/lib/signatures.ts) must survive a
-    // draft round-trip so switching signature swaps it instead of appending.
-    .add_allowed_classes("div", ["co-signature"])
     .url_schemes(std::collections::HashSet::from([
         "http", "https", "mailto", "cid", "data",
     ]))

@@ -4177,8 +4177,27 @@ fn decode_selective_content(
                 planned.section
             ))
         })?;
-        let decoded =
-            crate::mime::decode_planned_text_section(planned, &section.mime_header, &section.body)?;
+        let decoded = match crate::mime::decode_planned_text_section(
+            planned,
+            &section.mime_header,
+            &section.body,
+        ) {
+            Ok(decoded) => decoded,
+            Err(error) => {
+                // Keep the exact bytes the server returned for this section
+                // so a decode failure can be reproduced offline instead of
+                // guessed at from a log line.
+                let stem = format!(
+                    "comail-section-{}-{}",
+                    item.message_id,
+                    planned.section.replace('.', "_")
+                );
+                let dir = std::env::temp_dir();
+                let _ = std::fs::write(dir.join(format!("{stem}.body")), &section.body);
+                let _ = std::fs::write(dir.join(format!("{stem}.mime")), &section.mime_header);
+                return Err(error);
+            }
+        };
         match decoded.kind {
             crate::mime::TextSectionKind::Plain => plain.push(decoded.content),
             crate::mime::TextSectionKind::Html => html.push(decoded.content),
