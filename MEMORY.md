@@ -61,9 +61,9 @@
 
 ## Offen
 - MCP in beiden Instanzen aus (`mcpEnabled: false`, Port 47823).
-- Embeddings laufen nach dem Body-Requeue noch nach (~2300 offen, ~300/Minute).
-- Büroklammer aus dem Header-Fetch ist gebaut, aber noch nicht mit einer echten neuen Mail mit
-  Anhang verifiziert (Stand 2026-11-17 22:10).
+- Embeddings laufen nach dem Body-Requeue noch nach (~1100 offen, ~300/Minute).
+- Selbst gesendete Mail an die eigene Adresse erscheint nur **einmal** (Message-ID-Dedupe), und zwar
+  im Ordner, der zuletzt synchronisiert wurde — bei „Anhang Test" war das Sent, nicht INBOX.
 
 ## Umgebung
 - node 26.7.0, pnpm 10.7.0 (lädt pnpm@11.11.0 selbst nach), cargo/rustc 1.99.1 via Homebrew, kein rustup,
