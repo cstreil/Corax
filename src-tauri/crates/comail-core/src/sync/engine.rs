@@ -349,6 +349,75 @@ mod mutation_worker_tests {
     }
 
     #[tokio::test]
+    async fn store_headers_sets_attachment_flag_from_bodystructure_plan() {
+        // The paperclip must be known from the header fetch alone: the body is
+        // not cached yet when the row is inserted.
+        let root = tempfile::tempdir().unwrap();
+        let paths = Paths::for_tests(root.path());
+        let db = Db::open(&paths.db_file()).unwrap();
+        let ctx = SyncCtx {
+            db: db.clone(),
+            bus: EventBus::new(),
+            paths: Arc::new(paths),
+            tokens: TokenProvider::new(),
+        };
+        db.write(|conn| {
+            crate::db::testutil::seed_account(conn);
+            Ok(())
+        })
+        .await
+        .unwrap();
+        let config = db
+            .read(|conn| Ok(repo::accounts::get_config(conn, 1)?.unwrap()))
+            .await
+            .unwrap();
+        let folder = db
+            .read(|conn| Ok(repo::folders::get(conn, 1)?.unwrap()))
+            .await
+            .unwrap();
+        let plan = crate::mime::MimePlan {
+            version: crate::mime::MIME_PLAN_VERSION,
+            text_sections: Vec::new(),
+            attachments: vec![crate::mime::PlannedAttachment {
+                section: "2".into(),
+                filename: Some("report.pdf".into()),
+                mime_type: "application/pdf".into(),
+                size: 1024,
+                content_id: None,
+                is_inline: false,
+                transfer_encoding: "base64".into(),
+            }],
+        };
+        let header = FetchedHeader {
+            uid: 7,
+            flags: Default::default(),
+            internal_date_ms: Some(1_000),
+            gm_msgid: None,
+            size: None,
+            header_bytes: b"Message-ID: <att@test.dev>\r\nFrom: a@test.dev\r\nSubject: s\r\nDate: Mon, 1 Jan 2024 00:00:00 +0000\r\n\r\n".to_vec(),
+            has_attachments: plan.has_file_attachments(),
+            mime_plan: Some(plan),
+        };
+        store_headers(&ctx, &config, &folder, vec![header], None)
+            .await
+            .unwrap();
+        let (has_attachments, body_state, plan_json): (i64, String, Option<String>) = db
+            .read(|conn| {
+                Ok(conn.query_row(
+                    "SELECT has_attachments, body_state, mime_plan_json FROM messages
+                     WHERE folder_id = 1 AND uid = 7",
+                    [],
+                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                )?)
+            })
+            .await
+            .unwrap();
+        assert_eq!(has_attachments, 1, "paperclip comes from BODYSTRUCTURE");
+        assert_eq!(body_state, "none", "body is still uncached");
+        assert!(plan_json.is_some());
+    }
+
+    #[tokio::test]
     async fn store_headers_adopts_uidless_trash_rows() {
         let root = tempfile::tempdir().unwrap();
         let paths = Paths::for_tests(root.path());
