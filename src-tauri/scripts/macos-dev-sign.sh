@@ -18,8 +18,9 @@ shift
 
 IDENTITY="comail-dev"
 # Must match bundle.identifier in tauri.conf.json so the dev signature lines up
-# with release builds.
-BUNDLE_ID="com.deanoss.comail"
+# with release builds. An isolated dev instance (tauri.dev.conf.json) overrides
+# it via COMAIL_BUNDLE_ID so its signature stays distinct from the release app.
+BUNDLE_ID="${COMAIL_BUNDLE_ID:-com.deanoss.comail}"
 
 if [ "$(uname)" = "Darwin" ] \
   && [ "$(basename "$BIN")" = "comail" ] \

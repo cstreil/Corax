@@ -9,6 +9,30 @@ use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{Emitter, Manager};
 
+/// Bundle identifier of the shipped release. Any other identifier (the dev
+/// overlay in `tauri.dev.conf.json`) marks a separate instance.
+const RELEASE_IDENTIFIER: &str = "com.deanoss.comail";
+
+/// Give a non-release build its own data directory and keyring service, so a
+/// dev build can run next to an installed release without sharing its SQLite
+/// database, raw mail, logs, model weights or credentials. Explicit
+/// `COMAIL_DATA_DIR` / `COMAIL_KEYRING_SERVICE` still win.
+fn isolate_instance(identifier: &str) {
+    if identifier == RELEASE_IDENTIFIER {
+        return;
+    }
+    if std::env::var_os("COMAIL_DATA_DIR").is_none() {
+        if let Some(dir) = comail_core::config::platform_data_dir().map(|d| d.join(identifier)) {
+            if std::fs::create_dir_all(&dir).is_ok() {
+                std::env::set_var("COMAIL_DATA_DIR", &dir);
+            }
+        }
+    }
+    if std::env::var_os("COMAIL_KEYRING_SERVICE").is_none() {
+        std::env::set_var("COMAIL_KEYRING_SERVICE", identifier);
+    }
+}
+
 pub(crate) fn show_main(app: &tauri::AppHandle) {
     if let Some(w) = app.get_webview_window("main") {
         let _ = w.show();
@@ -176,6 +200,12 @@ fn init_logging() {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // The bundle identifier decides whether this is the shipped release or an
+    // isolated dev build, and it must be known before logging picks a
+    // directory - so the context is built up front and handed to the builder.
+    let context = tauri::generate_context!();
+    isolate_instance(&context.config().identifier);
+
     init_logging();
     tracing::info!(
         version = env!("CARGO_PKG_VERSION"),
@@ -461,7 +491,7 @@ pub fn run() {
             commands::embedding_status,
             commands::semantic_reindex,
         ])
-        .build(tauri::generate_context!())
+        .build(context)
         .expect("error while building tauri application")
         .run(|_app, _event| {
             // macOS reactivation (Dock-icon click, and clicking a notification

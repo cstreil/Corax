@@ -2125,7 +2125,25 @@ async fn run_history_backfill(
                 }
                 let s = session.as_mut().unwrap();
                 let step = async {
-                    imap::select(s, &folder.imap_name).await?;
+                    let sel = imap::select(s, &folder.imap_name).await?;
+                    tracing::debug!(
+                        folder = %folder.imap_name,
+                        exists = sel.exists,
+                        uid_next = sel.uid_next,
+                        uid_validity = sel.uid_validity,
+                        "history backfill: selected"
+                    );
+                    // A healthy SELECT always reports UIDNEXT and UIDVALIDITY.
+                    // When the server has dropped the connection, async-imap
+                    // yields an empty response instead of an error: every
+                    // subsequent command then "succeeds" with no data, and the
+                    // walk marks folders done without storing anything. Treat
+                    // that as a lost session so the caller reconnects.
+                    if sel.uid_next.is_none() && sel.uid_validity.is_none() {
+                        return Err(CoreError::Imap(
+                            "session lost: SELECT returned no UIDNEXT/UIDVALIDITY".into(),
+                        ));
+                    }
                     // Re-read: the sync actor may have advanced this folder.
                     let fid = folder.id;
                     let fresh = ctx
@@ -2300,6 +2318,20 @@ async fn initial_backfill(
         emit_sync_status(ctx, account_id).await;
     }
 
+    // A date-filtered search that returns nothing does not mean the folder is
+    // empty: its mail may simply be older than BACKFILL_DAYS. Marking the
+    // folder done here would skip the whole history walk, which is how folders
+    // holding only old mail ended up permanently empty. Start the walk at the
+    // high-water mark instead and let extend_history work downward.
+    if uids.is_empty() {
+        let start = folder.last_seen_uid.max(0) + 1;
+        let fid = folder.id;
+        ctx.db
+            .write(move |conn| repo::folders::set_backfill(conn, fid, Some(start), start <= 1))
+            .await?;
+        return Ok(());
+    }
+
     // Record where the synced window starts, so history can extend below it.
     let min_uid = uids.first().copied().unwrap_or(1) as i64;
     let max_uid = uids.last().copied().unwrap_or(0) as i64;
@@ -2354,6 +2386,69 @@ async fn extend_history(
         total: 0,
     }));
     emit_sync_status(ctx, config.id).await;
+    if new_cursor <= 1 {
+        // The range walk is finished. Reconcile against the server's actual UID
+        // list: a large range fetch can come back empty (iCloud truncates or
+        // the parser gives up), which silently leaves a folder marked done with
+        // a fraction of its mail. Fetch whatever is still missing.
+        fill_missing_uids(ctx, config, session, folder).await?;
+    }
+    Ok(())
+}
+
+/// Fetch every UID the folder holds on the server but not in the local DB.
+/// Runs once per folder when the history walk reaches the bottom; small
+/// batches keep each response well inside what the server and parser handle.
+async fn fill_missing_uids(
+    ctx: &SyncCtx,
+    config: &AccountConfig,
+    session: &mut Session,
+    folder: &Folder,
+) -> Result<()> {
+    const FILL_CHUNK: usize = 50;
+    let all = imap::uid_search_all(session).await?;
+    tracing::info!(
+        folder = %folder.imap_name,
+        server_uids = all.len(),
+        "history backfill: reconciling folder against server UID list"
+    );
+    if all.is_empty() {
+        return Ok(());
+    }
+    let fid = folder.id;
+    let stored: std::collections::HashSet<i64> = ctx
+        .db
+        .read(move |conn| repo::messages::uids_in_folder(conn, fid))
+        .await?
+        .into_iter()
+        .map(|(_, uid)| uid)
+        .collect();
+    let missing: Vec<u32> = all
+        .into_iter()
+        .filter(|uid| !stored.contains(&(*uid as i64)))
+        .collect();
+    if missing.is_empty() {
+        return Ok(());
+    }
+    tracing::info!(
+        account_id = config.id,
+        folder = %folder.imap_name,
+        missing = missing.len(),
+        "history backfill: filling UIDs the range walk missed"
+    );
+    let caps = session.server_caps().await?;
+    let behavior = crate::provider::behavior_for(config.provider, &caps);
+    for chunk in missing.chunks(FILL_CHUNK) {
+        let set = imap::uid_set(chunk);
+        if set.is_empty() {
+            continue;
+        }
+        let headers = imap::fetch_headers(session, &set, behavior.as_ref()).await?;
+        let (thread_ids, _) = store_headers(ctx, config, folder, headers, None).await?;
+        if !thread_ids.is_empty() {
+            ctx.bus.emit(CoreEvent::MailUpdated { thread_ids });
+        }
+    }
     Ok(())
 }
 
@@ -3570,6 +3665,26 @@ async fn body_worker(
                         ),
                     }
                 } else {
+                    // A single message that keeps failing (e.g. a BODYSTRUCTURE
+                    // response async-imap cannot parse) must not block the
+                    // semantic index forever: the embed worker treats "body
+                    // pending, no recorded failure" as foreground work and would
+                    // never run. Record the failure so the message is skipped,
+                    // and keep it queued for a later retry.
+                    let message_id = retry.items[0].0;
+                    let error_text = error.to_string();
+                    let retry_at = now_ms() + 60 * 60 * 1000;
+                    let _ = ctx
+                        .db
+                        .write(move |conn| {
+                            repo::sync_failures::record_content(
+                                conn,
+                                message_id,
+                                Some(retry_at),
+                                &error_text,
+                            )
+                        })
+                        .await;
                     queue.lock().await.push_front(retry);
                 }
                 // A singleton failure waits for the next periodic retry rather

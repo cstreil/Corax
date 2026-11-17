@@ -6,10 +6,18 @@ pub struct Paths {
 }
 
 impl Paths {
+    /// `COMAIL_DATA_DIR` overrides the data directory. Used to run a second,
+    /// isolated instance (dev build) next to an installed release without
+    /// sharing its SQLite database, raw mail, logs or model weights.
     pub fn default_dirs() -> Self {
-        let data_dir = dirs::data_dir()
-            .unwrap_or_else(|| PathBuf::from("."))
-            .join("comail");
+        let data_dir = std::env::var_os("COMAIL_DATA_DIR")
+            .filter(|v| !v.is_empty())
+            .map(PathBuf::from)
+            .unwrap_or_else(|| {
+                dirs::data_dir()
+                    .unwrap_or_else(|| PathBuf::from("."))
+                    .join("comail")
+            });
         Paths { data_dir }
     }
 
@@ -50,4 +58,11 @@ impl Paths {
     pub fn ensure(&self) -> std::io::Result<()> {
         std::fs::create_dir_all(&self.data_dir)
     }
+}
+
+/// Platform data directory (`~/Library/Application Support` on macOS) without
+/// the app-specific folder. Used to derive a separate directory for an
+/// isolated instance from its bundle identifier.
+pub fn platform_data_dir() -> Option<PathBuf> {
+    dirs::data_dir()
 }

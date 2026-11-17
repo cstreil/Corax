@@ -48,7 +48,16 @@ create_identity() {
   # verification on truly empty-password bundles, so use a non-empty one just
   # for the openssl -> keychain handoff.
   local p12pass="comail-dev"
-  openssl pkcs12 -export -inkey "$tmp/key.pem" -in "$tmp/cert.pem" \
+  # OpenSSL 3+ defaults to PBES2/AES-256-CBC with a SHA-256 MAC, which Apple's
+  # `security import` rejects with "MAC verification failed during PKCS12
+  # import (wrong password?)". `-legacy` writes the SHA-1/RC2 form it accepts.
+  # LibreSSL (Apple's /usr/bin/openssl) has no such flag and already writes the
+  # legacy form, so only pass it when the local openssl knows it.
+  local p12_legacy=""
+  if openssl pkcs12 -help 2>&1 | grep -q -- "-legacy"; then
+    p12_legacy="-legacy"
+  fi
+  openssl pkcs12 -export $p12_legacy -inkey "$tmp/key.pem" -in "$tmp/cert.pem" \
     -name "$IDENTITY" -out "$tmp/id.p12" -passout "pass:$p12pass" >/dev/null 2>&1
 
   # -A: let any tool (codesign) use this throwaway *dev signing* key without a

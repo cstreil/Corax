@@ -5,6 +5,16 @@ use crate::error::{CoreError, Result};
 
 const SERVICE: &str = "comail";
 
+/// Keyring service name. `COMAIL_KEYRING_SERVICE` overrides it so an isolated
+/// dev instance never reads, overwrites or deletes the installed release's
+/// credentials (same account ids would otherwise collide on the same entries).
+fn service() -> String {
+    std::env::var("COMAIL_KEYRING_SERVICE")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| SERVICE.to_string())
+}
+
 pub enum Slot {
     Password,
     RefreshToken,
@@ -42,7 +52,7 @@ impl Slot {
 
 fn entry(account_id: i64, slot: &Slot) -> Result<keyring::Entry> {
     let user = format!("{account_id}:{}", slot.as_str());
-    keyring::Entry::new(SERVICE, &user).map_err(Into::into)
+    keyring::Entry::new(&service(), &user).map_err(Into::into)
 }
 
 // Windows Credential Manager caps a credential blob at 2560 bytes
@@ -65,7 +75,7 @@ const MAX_CHUNKS: usize = 256;
 
 fn chunk_entry(account_id: i64, slot: &Slot, index: usize) -> Result<keyring::Entry> {
     let user = format!("{account_id}:{}:c{index}", slot.as_str());
-    keyring::Entry::new(SERVICE, &user).map_err(Into::into)
+    keyring::Entry::new(&service(), &user).map_err(Into::into)
 }
 
 /// Split on char boundaries so no chunk exceeds `max_units` UTF-16 code units

@@ -398,38 +398,54 @@ async fn fetch_headers_inner(
     uid_set: &str,
     behavior: &dyn crate::provider::MailboxBehavior,
 ) -> Result<Vec<FetchedHeader>> {
-    let items = behavior.identity_fetch_items();
-    let extra = items
+    // Headers only - deliberately no BODYSTRUCTURE.
+    //
+    // iCloud returns FETCH responses that async-imap cannot parse when
+    // BODYSTRUCTURE and BODY[HEADER.FIELDS] are requested together. A parse
+    // error leaves the response only partially consumed, so the session is
+    // desynchronised: every later command reads the leftovers and "succeeds"
+    // with empty data (SELECT without UIDNEXT/UIDVALIDITY, UID SEARCH with no
+    // results), which silently marks folders done without storing anything.
+    //
+    // The item list is built by joining non-empty parts: a naive `format!` with
+    // an empty provider-specific part leaves a double space
+    // ("RFC822.SIZE  BODY.PEEK[...]"), which iCloud's parser rejects as well.
+    //
+    // The attachment plan is derived from BODYSTRUCTURE when the body is
+    // fetched (see the selective-content path), so nothing is lost here - only
+    // the attachment flag in the list appears once the body has been cached.
+    let mut parts: Vec<&str> = vec!["UID", "FLAGS", "INTERNALDATE", "RFC822.SIZE"];
+    let extra = behavior
+        .identity_fetch_items()
         .iter()
         .copied()
         .filter(|item| *item != "EMAILID")
         .collect::<Vec<_>>()
         .join(" ");
-    let query =
-        format!("(UID FLAGS INTERNALDATE RFC822.SIZE BODYSTRUCTURE {extra} {HEADER_FIELDS})");
+    if !extra.is_empty() {
+        parts.push(&extra);
+    }
+    parts.push(HEADER_FIELDS);
+    let query = format!("({})", parts.join(" "));
+
     let mut out = Vec::new();
-    {
-        let mut stream = session
-            .uid_fetch(uid_set, &query)
-            .await
-            .map_err(|e| CoreError::Imap(e.to_string()))?;
-        while let Some(item) = stream.next().await {
-            let fetch = item.map_err(|e| CoreError::Imap(e.to_string()))?;
-            let Some(uid) = fetch.uid else { continue };
-            let mime_plan = fetch.bodystructure().map(mime::plan_bodystructure);
-            out.push(FetchedHeader {
-                uid,
-                flags: flags_of(&fetch),
-                gm_msgid: crate::provider::gmail_id(&fetch).map(|id| id.to_string()),
-                internal_date_ms: fetch.internal_date().map(|d| d.timestamp_millis()),
-                size: fetch.size,
-                header_bytes: fetch.header().map(|h| h.to_vec()).unwrap_or_default(),
-                has_attachments: mime_plan
-                    .as_ref()
-                    .is_some_and(MimePlan::has_file_attachments),
-                mime_plan,
-            });
-        }
+    let mut stream = session
+        .uid_fetch(uid_set, &query)
+        .await
+        .map_err(|e| CoreError::Imap(e.to_string()))?;
+    while let Some(item) = stream.next().await {
+        let fetch = item.map_err(|e| CoreError::Imap(e.to_string()))?;
+        let Some(uid) = fetch.uid else { continue };
+        out.push(FetchedHeader {
+            uid,
+            flags: flags_of(&fetch),
+            gm_msgid: crate::provider::gmail_id(&fetch).map(|id| id.to_string()),
+            internal_date_ms: fetch.internal_date().map(|d| d.timestamp_millis()),
+            size: fetch.size,
+            header_bytes: fetch.header().map(|h| h.to_vec()).unwrap_or_default(),
+            has_attachments: false,
+            mime_plan: None,
+        });
     }
     Ok(out)
 }

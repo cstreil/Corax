@@ -12,7 +12,9 @@
     "tauri": "tauri",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "prepare": "git config core.hooksPath .githooks || true"
+    "prepare": "git config core.hooksPath .githooks || true",
+    "dev:isolated": "sh scripts/dev-isolated.sh",
+    "build:dev-app": "sh scripts/build-dev-app.sh"
   },
   "dependencies": {
     "@tanstack/react-query": "^5.51.0",
