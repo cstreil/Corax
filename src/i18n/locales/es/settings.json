@@ -917,5 +917,9 @@
       "ComailAutoSocial": "Notificaciones de redes sociales y plataformas de comunidad.",
       "ComailAutoPitch": "Contactos en frío de una persona que te pide tu tiempo."
     }
+  },
+  "inboxDefaultSplits": {
+    "label": "Bandeja única",
+    "hint": "Oculta las pestañas integradas Importante y Otros, así que la bandeja se abre sin dividir. Tus propios splits y pestañas de etiquetas siguen apareciendo."
   }
 }

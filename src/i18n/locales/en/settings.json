@@ -919,5 +919,9 @@
       "ComailAutoSocial": "Notifications from social networks and community platforms.",
       "ComailAutoPitch": "Cold outreach from a person asking for your time."
     }
+  },
+  "inboxDefaultSplits": {
+    "label": "Single inbox",
+    "hint": "Hides the built-in Important and Other tabs, so the inbox opens unsplit. Your own splits and label tabs still appear."
   }
 }

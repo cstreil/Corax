@@ -90,6 +90,7 @@ const DEFAULT_SETTINGS: Settings = {
   inboxUi: "classic",
   showSenderPhotos: true,
   showBundles: true,
+  inboxDefaultSplits: false,
   undoSendSeconds: 10,
   loadRemoteImages: false,
   aiBaseUrl: "",
@@ -347,14 +348,17 @@ export function SettingsPanel() {
     splits,
     labels,
     s.autoLabelsEnabled !== false,
-  ).map((item) => {
+    s.inboxDefaultSplits !== false,
+  ).flatMap((item) => {
+    // "all" is not a route key the backend stores, so it is not a scope.
+    if (item.kind === "all") return [];
     if (item.kind === "important")
-      return { key: "important", name: t("inbox:split.important") };
+      return [{ key: "important", name: t("inbox:split.important") }];
     if (item.kind === "other")
-      return { key: "other", name: t("inbox:split.other") };
+      return [{ key: "other", name: t("inbox:split.other") }];
     if (item.kind === "split")
-      return { key: `split:${item.id}`, name: item.name };
-    return { key: `label:${item.id}`, name: item.name };
+      return [{ key: `split:${item.id}`, name: item.name }];
+    return [{ key: `label:${item.id}`, name: item.name }];
   });
   const toggleNotifyTab = (key: string, on: boolean) => {
     const next = on
@@ -776,6 +780,18 @@ export function SettingsPanel() {
                 />
               </SettingRow>
             )}
+            <SettingRow
+              label={t("settings:inboxDefaultSplits.label")}
+              hint={t("settings:inboxDefaultSplits.hint")}
+            >
+              <Toggle
+                label={t("settings:inboxDefaultSplits.label")}
+                checked={s.inboxDefaultSplits !== false}
+                onChange={(inboxDefaultSplits) =>
+                  void updateSettings({ inboxDefaultSplits })
+                }
+              />
+            </SettingRow>
             <SettingRow
               label={t("settings:groupByDate.label")}
               hint={t("settings:groupByDate.hint")}

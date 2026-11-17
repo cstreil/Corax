@@ -917,5 +917,9 @@
       "ComailAutoSocial": "Notifications des réseaux sociaux et des plateformes communautaires.",
       "ComailAutoPitch": "Démarchage à froid d’une personne qui sollicite votre temps."
     }
+  },
+  "inboxDefaultSplits": {
+    "label": "Boîte unique",
+    "hint": "Masque les onglets intégrés Important et Autres : la boîte s'ouvre sans division. Vos propres splits et onglets d'étiquettes restent affichés."
   }
 }

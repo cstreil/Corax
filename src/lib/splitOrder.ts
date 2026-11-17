@@ -7,6 +7,7 @@ export type OrderedTab =
 
 export type InboxTabOrderItem =
   | { kind: "important" }
+  | { kind: "all" }
   | OrderedTab
   | { kind: "other" };
 
@@ -61,19 +62,23 @@ export function nextTabPosition(
 /** Complete inbox tab order shared by rendering, direct hotkeys, and cycling.
  *  Rules that route their matches into an existing tab (a non-null `target`)
  *  own no tab of their own, so they are excluded here; Settings lists them via
- *  `mergeTabOrder` directly, which keeps every rule. */
+ *  `mergeTabOrder` directly, which keeps every rule.
+ *
+ *  `defaultSplits` off drops the built-in Important/Other tabs, leaving one
+ *  unsplit inbox plus whatever custom splits and auto-label tabs exist. With
+ *  custom tabs present, a leading "all" tab keeps the unsplit inbox reachable
+ *  from the bar itself; without any, the bar is empty and stays hidden. */
 export function inboxTabOrder(
   splits: SplitRule[] | undefined,
   labels: Label[] | undefined,
   autoLabelsEnabled: boolean,
+  defaultSplits = true,
 ): InboxTabOrderItem[] {
-  return [
-    { kind: "important" },
-    ...mergeTabOrder(splits, autoLabelsEnabled ? labels : []).filter(
-      (item) => item.kind !== "split" || item.rule.target == null,
-    ),
-    { kind: "other" },
-  ];
+  const custom = mergeTabOrder(splits, autoLabelsEnabled ? labels : []).filter(
+    (item) => item.kind !== "split" || item.rule.target == null,
+  );
+  if (!defaultSplits) return custom.length === 0 ? [] : [{ kind: "all" }, ...custom];
+  return [{ kind: "important" }, ...custom, { kind: "other" }];
 }
 
 /**

@@ -917,5 +917,9 @@
       "ComailAutoSocial": "来自社交网络和社区平台的通知。",
       "ComailAutoPitch": "陌生人发来、希望占用你时间的推销邮件。"
     }
+  },
+  "inboxDefaultSplits": {
+    "label": "单一收件箱",
+    "hint": "隐藏内置的“重要”和“其他”标签页，收件箱不再分栏打开。你自建的分组和标签页仍会显示。"
   }
 }

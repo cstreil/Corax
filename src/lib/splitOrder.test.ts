@@ -43,6 +43,24 @@ describe("inboxTabOrder", () => {
     ]);
   });
 
+  it("drops the built-in splits but keeps custom tabs when they are off", () => {
+    const tabs = inboxTabOrder(
+      [split(1, "Ads", 0)],
+      [autoLabel(101, "News", 1)],
+      true,
+      false,
+    );
+    expect(tabs.map((tab) => "name" in tab ? tab.name : tab.kind)).toEqual([
+      "all",
+      "Ads",
+      "News",
+    ]);
+  });
+
+  it("returns no tabs at all when nothing custom exists and splits are off", () => {
+    expect(inboxTabOrder([], [], true, false)).toEqual([]);
+  });
+
   it("keeps the legacy grouped order while positions still collide", () => {
     const tabs = inboxTabOrder(
       [split(1, "Ads", 0)],

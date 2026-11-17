@@ -1014,6 +1014,10 @@ pub struct Settings {
     /// Important.
     #[serde(default = "default_true")]
     pub show_bundles: bool,
+    /// Show the built-in Important/Other tabs. Off (the default) leaves one
+    /// unsplit inbox; custom splits and auto-label tabs still get their own tabs.
+    #[serde(default)]
+    pub inbox_default_splits: bool,
     pub undo_send_seconds: i64,
     pub load_remote_images: bool,
     #[serde(default = "default_ai_base_url")]
@@ -1377,6 +1381,7 @@ impl Default for Settings {
             inbox_ui: default_inbox_ui(),
             show_sender_photos: true,
             show_bundles: true,
+            inbox_default_splits: false,
             undo_send_seconds: 10,
             load_remote_images: true,
             ai_base_url: default_ai_base_url(),

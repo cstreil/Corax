@@ -1,4 +1,4 @@
-import { useCallback, useMemo } from "react";
+import { useCallback, useEffect, useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import {
   flattenThreads,
@@ -31,6 +31,7 @@ export function InboxScreen() {
   const labelFilter = useUi((s) => s.labelFilter);
   const folderFilter = useUi((s) => s.folderFilter);
   const selectInboxTab = useUi((s) => s.selectInboxTab);
+  const setView = useUi((s) => s.setView);
 
   const { data: accounts } = useAccounts();
   const { data: labels } = useLabels();
@@ -93,10 +94,19 @@ export function InboxScreen() {
 
   // Avatar inbox UI: every other tab collapses into a bundle row at the top of
   // the Important list (Settings → Show other tabs at the top turns it off).
+  const defaultSplits = settings?.inboxDefaultSplits !== false;
+  // Built-in splits off: the inbox opens unsplit, so a stale Important/Other
+  // selection (initial state, hotkey, command palette) falls back to "all".
+  useEffect(() => {
+    if (defaultSplits) return;
+    if (splitId === SPLIT_IMPORTANT || splitId === SPLIT_OTHER) setView("inbox", null);
+  }, [defaultSplits, splitId, setView]);
+
   const avatarUi = settings?.inboxUi === "avatar";
   const showBundles =
     avatarUi &&
     settings?.showBundles !== false &&
+    defaultSplits &&
     view === "inbox" &&
     splitId === SPLIT_IMPORTANT &&
     labelFilter == null &&
@@ -104,13 +114,13 @@ export function InboxScreen() {
   const autoLabelsEnabled = settings?.autoLabelsEnabled !== false;
   const bundleTabs = useMemo<BundleTab[]>(() => {
     if (!showBundles) return [];
-    return inboxTabOrder(splits, labels, autoLabelsEnabled).flatMap((item): BundleTab[] => {
-      if (item.kind === "important") return [];
+    return inboxTabOrder(splits, labels, autoLabelsEnabled, defaultSplits).flatMap((item): BundleTab[] => {
+      if (item.kind === "important" || item.kind === "all") return [];
       if (item.kind === "other") return [{ key: "other", name: t("inbox:split.other"), splitId: SPLIT_OTHER }];
       if (item.kind === "split") return [{ key: `s${item.id}`, name: item.name, splitId: item.id }];
       return [{ key: `l${item.id}`, name: item.name, labelId: item.id }];
     });
-  }, [showBundles, splits, labels, autoLabelsEnabled, t]);
+  }, [showBundles, splits, labels, autoLabelsEnabled, defaultSplits, t]);
   const bundleData = useInboxBundles(bundleTabs, accountFilter, showBundles);
   const { data: counts } = useUnreadCounts(accountFilter, showBundles);
   const bundles = useMemo<Bundle[]>(

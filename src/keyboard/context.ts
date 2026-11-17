@@ -131,10 +131,12 @@ export function inboxTabs(): {
 }[] {
   const splits = queryClient.getQueryData<SplitRule[]>(["splits"]);
   const labels = queryClient.getQueryData<Label[]>(["labels"]);
-  const autoOn =
-    queryClient.getQueryData<Settings>(["settings"])?.autoLabelsEnabled !==
-    false;
-  return inboxTabOrder(splits, labels, autoOn).map((item) => {
+  const settings = queryClient.getQueryData<Settings>(["settings"]);
+  const autoOn = settings?.autoLabelsEnabled !== false;
+  const defaultSplits = settings?.inboxDefaultSplits !== false;
+  return inboxTabOrder(splits, labels, autoOn, defaultSplits).map((item) => {
+    if (item.kind === "all")
+      return { splitId: null, labelId: null, name: i18n.t("common:view.inbox") };
     if (item.kind === "important")
       return {
         splitId: SPLIT_IMPORTANT,
@@ -481,6 +483,7 @@ export function buildCommandContext(targetsOverride?: number[]): CommandCtx {
         inboxUi: "classic",
         showSenderPhotos: true,
         showBundles: true,
+        inboxDefaultSplits: false,
         undoSendSeconds: 10,
         loadRemoteImages: false,
         aiBaseUrl: "",

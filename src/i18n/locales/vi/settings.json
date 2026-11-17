@@ -917,5 +917,9 @@
       "ComailAutoSocial": "Thông báo từ mạng xã hội và nền tảng cộng đồng.",
       "ComailAutoPitch": "Thư tiếp cận lạnh từ một người muốn xin thời gian của bạn."
     }
+  },
+  "inboxDefaultSplits": {
+    "label": "Hộp thư duy nhất",
+    "hint": "Ẩn hai tab mặc định Quan trọng và Khác, hộp thư mở ra không chia tab. Các split và tab nhãn của bạn vẫn hiển thị."
   }
 }

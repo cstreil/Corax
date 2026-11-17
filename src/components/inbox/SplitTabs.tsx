@@ -21,9 +21,12 @@ export function SplitTabs() {
   const tabRefs = useRef(new Map<string, HTMLButtonElement>());
 
   const autoLabels = settings?.autoLabelsEnabled !== false;
+  const defaultSplits = settings?.inboxDefaultSplits !== false;
   const tabs = useMemo<{ key: string; name: string; splitId?: number; labelId?: number }[]>(
     () =>
-      inboxTabOrder(splits, labels, autoLabels).map((item) => {
+      inboxTabOrder(splits, labels, autoLabels, defaultSplits).map((item) => {
+        if (item.kind === "all")
+          return { key: "all", name: t("common:view.inbox") };
         if (item.kind === "important")
           return { key: "important", name: t("inbox:split.important"), splitId: SPLIT_IMPORTANT };
         if (item.kind === "other")
@@ -32,11 +35,15 @@ export function SplitTabs() {
           return { key: `s${item.id}`, name: item.name, splitId: item.id };
         return { key: `l${item.id}`, name: item.name, labelId: item.id };
       }),
-    [splits, labels, autoLabels, t],
+    [splits, labels, autoLabels, defaultSplits, t],
   );
 
-  // null = the sidebar's unsplit "Inbox": no tab is highlighted (see activeInboxTabKey).
-  const activeKey = activeInboxTabKey(splitId, labelFilter);
+  // null = the sidebar's unsplit "Inbox": no tab is highlighted (see
+  // activeInboxTabKey). With the built-in splits off, the leading "all" tab is
+  // exactly that unsplit inbox, so it takes the highlight.
+  const activeKey =
+    activeInboxTabKey(splitId, labelFilter) ??
+    (!defaultSplits && splitId == null && labelFilter == null ? "all" : null);
   // Roving tabindex: the active tab, or the first one while none is active.
   const focusKey = activeKey != null && tabs.some((tab) => tab.key === activeKey) ? activeKey : tabs[0]?.key;
 
@@ -87,6 +94,9 @@ export function SplitTabs() {
     selectInboxTab(tab);
     tabRefs.current.get(tab.key)?.focus();
   };
+
+  // No built-in splits and no custom tabs: one unsplit inbox, no tab bar.
+  if (tabs.length === 0) return null;
 
   return (
     <div className="relative z-10 flex shrink-0 items-center gap-1 overflow-x-auto overflow-y-hidden bg-bg1 px-5">

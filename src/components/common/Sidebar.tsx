@@ -43,6 +43,7 @@ export function Sidebar({ docked = false }: { docked?: boolean }) {
   const { data: labels } = useLabels();
   const { data: settings } = useSettings();
   const autoLabelsEnabled = settings?.autoLabelsEnabled !== false;
+  const defaultSplits = settings?.inboxDefaultSplits !== false;
   const { data: folders } = useFolders(accountFilter);
   const { data: counts } = useUnreadCounts(accountFilter, open);
 
@@ -188,7 +189,9 @@ export function Sidebar({ docked = false }: { docked?: boolean }) {
         {/* Same order as the tab bar (lib/splitOrder). Rules routed into an
             existing tab own no tab, so they get no row either. */}
         <div className="mb-1">
-          {inboxTabOrder(splits, labels, autoLabelsEnabled).map((item) => {
+          {inboxTabOrder(splits, labels, autoLabelsEnabled, defaultSplits).map((item) => {
+            // The unsplit inbox already has its own row above.
+            if (item.kind === "all") return null;
             if (item.kind === "important" || item.kind === "other") {
               const sid = item.kind === "important" ? SPLIT_IMPORTANT : SPLIT_OTHER;
               return (

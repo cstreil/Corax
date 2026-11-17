@@ -476,6 +476,8 @@ export interface Settings {
   showSenderPhotos: boolean;
   /** Avatar inbox UI: other tabs as bundle rows at the top of Important. */
   showBundles: boolean;
+  /** Show the built-in Important/Other tabs; off leaves one unsplit inbox. */
+  inboxDefaultSplits: boolean;
   undoSendSeconds: number;
   loadRemoteImages: boolean;
   aiBaseUrl: string;
