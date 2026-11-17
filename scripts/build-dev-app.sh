@@ -32,5 +32,33 @@ PY
 
 pnpm tauri build --config src-tauri/tauri.dev.conf.json --bundles app "$@"
 
+# Sign with a stable identity, exactly like build-local-app.sh. Without this the
+# bundle keeps tauri's ad-hoc signature, whose CDHash changes on every build -
+# and the login keychain ties its "Always Allow" grant to that signature, so
+# each rebuild would re-prompt for the stored IMAP credentials (and hang until
+# someone clicks).
+#
+# A real "Apple Development" identity is preferred over the self-signed
+# "comail-dev" one: only an Apple-issued certificate carries a Team ID, and
+# macOS derives the keychain partition ID from it. A self-signed identity has
+# no Team ID, so its partition ID falls back to the CDHash and every rebuild
+# re-prompts no matter how often "Always Allow" was clicked.
+APP="src-tauri/target/release/bundle/macos/Comail Dev.app"
+SIGN_IDENTITY="$(security find-identity -v -p codesigning 2>/dev/null \
+  | sed -n 's/.*"\(Apple Development: [^"]*\)".*/\1/p' | head -1)"
+if [ -z "$SIGN_IDENTITY" ] && security find-certificate -c "comail-dev" >/dev/null 2>&1; then
+  SIGN_IDENTITY="comail-dev"
+fi
+if [ -n "$SIGN_IDENTITY" ]; then
+  xattr -cr "$APP"
+  codesign --force --sign "$SIGN_IDENTITY" --identifier "com.deanoss.comail.dev" \
+    --timestamp=none "$APP"
+  echo "Signiert mit: $SIGN_IDENTITY"
+else
+  echo "Warnung: keine Signatur-Identität gefunden - App bleibt ad-hoc signiert." >&2
+  echo "         Einmalig: bash src-tauri/scripts/macos-dev-cert.sh" >&2
+fi
+
 echo
-echo "Bundle: src-tauri/target/release/bundle/macos/Comail Dev.app"
+echo "Bundle: $APP"
+echo "Installieren: ditto \"$APP\" \"/Applications/Comail Dev.app\""

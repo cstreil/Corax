@@ -16,7 +16,11 @@ set -euo pipefail
 BIN="$1"
 shift
 
-IDENTITY="comail-dev"
+IDENTITY="$(security find-identity -v -p codesigning 2>/dev/null \
+  | sed -n 's/.*"\(Apple Development: [^"]*\)".*/\1/p' | head -1)"
+if [ -z "$IDENTITY" ] && security find-certificate -c "comail-dev" >/dev/null 2>&1; then
+  IDENTITY="comail-dev"
+fi
 # Must match bundle.identifier in tauri.conf.json so the dev signature lines up
 # with release builds. An isolated dev instance (tauri.dev.conf.json) overrides
 # it via COMAIL_BUNDLE_ID so its signature stays distinct from the release app.
@@ -24,7 +28,7 @@ BUNDLE_ID="${COMAIL_BUNDLE_ID:-com.deanoss.comail}"
 
 if [ "$(uname)" = "Darwin" ] \
   && [ "$(basename "$BIN")" = "comail" ] \
-  && security find-certificate -c "$IDENTITY" >/dev/null 2>&1; then
+  && [ -n "$IDENTITY" ]; then
   codesign --force --sign "$IDENTITY" --identifier "$BUNDLE_ID" \
     --timestamp=none "$BIN" >/dev/null 2>&1 \
     || echo "macos-dev-sign: codesign failed; running unsigned" >&2

@@ -77,7 +77,9 @@ write_cargo_config() {
 # keychain stops re-prompting for comail's secrets. Delete this file (and the
 # 'comail-dev' cert in Keychain Access) to revert.
 [target.'cfg(target_os = "macos")']
-runner = "$SIGN_SCRIPT"
+# Array form: cargo splits a plain string on whitespace, which breaks as soon as
+# the checkout path contains a space (e.g. "Mobile Documents").
+runner = ["$SIGN_SCRIPT"]
 EOF
   echo "  ✓ wrote $CARGO_CONFIG"
 }
