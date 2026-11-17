@@ -30,6 +30,8 @@ pub enum Slot {
     DecisionApiKey,
     /// OpenAI Decisions API key (account id 0).
     DecisionOpenAiKey,
+    /// Command Code decision key (account id 0). Same key as its chat provider.
+    DecisionCommandCodeKey,
     /// Key for a custom decision endpoint (account id 0).
     DecisionCustomKey,
 }
@@ -45,6 +47,7 @@ impl Slot {
             Slot::McpToken => "mcp_token",
             Slot::DecisionApiKey => "decision_api_key",
             Slot::DecisionOpenAiKey => "decision_api_key_openai",
+            Slot::DecisionCommandCodeKey => "decision_api_key_commandcode",
             Slot::DecisionCustomKey => "decision_api_key_custom",
         }
     }

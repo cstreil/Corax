@@ -855,6 +855,7 @@
       "off": "Tắt",
       "openrouter": "OpenRouter: TypeSafe Jev và các mô hình khác",
       "openai": "OpenAI Decisions API",
+      "commandcode": "Command Code: System One (Jev)",
       "custom": "Điểm cuối tùy chỉnh"
     },
     "urlLabel": "Điểm cuối",

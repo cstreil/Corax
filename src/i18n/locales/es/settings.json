@@ -855,6 +855,7 @@
       "off": "Desactivado",
       "openrouter": "OpenRouter: TypeSafe Jev y otros",
       "openai": "Decisions API de OpenAI",
+      "commandcode": "Command Code: System One (Jev)",
       "custom": "Endpoint personalizado"
     },
     "urlLabel": "Endpoint",

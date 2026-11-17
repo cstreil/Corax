@@ -714,8 +714,14 @@ export interface AiStatus {
 }
 
 /** Decision model backend: TypeSafe Jev & co. on OpenRouter, OpenAI's
- *  Decisions API, or any endpoint speaking one of those two formats. */
-export type DecisionProvider = "off" | "openrouter" | "openai" | "custom";
+ *  Decisions API, Command Code's System One route (same TypeSafe shape), or
+ *  any endpoint speaking one of those two formats. */
+export type DecisionProvider =
+  | "off"
+  | "openrouter"
+  | "openai"
+  | "commandcode"
+  | "custom";
 
 export interface DecisionTestResult {
   provider: string;

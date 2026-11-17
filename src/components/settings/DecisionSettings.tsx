@@ -34,10 +34,12 @@ const MODEL_SUGGESTIONS: Record<Provider, string[]> = {
     "liquid/d1",
   ],
   openai: ["gpt-6-luna"],
+  commandcode: ["typesafe/jev", "typesafe/jev-1.14.0"],
   custom: [],
 };
 
 function defaultModel(ep: DecisionEndpoint): string {
+  if (ep.provider === "commandcode") return "typesafe/jev";
   return ep.provider === "openai" ||
     (ep.provider === "custom" && ep.format === "openai")
     ? "gpt-6-luna"
@@ -119,7 +121,9 @@ export function DecisionSettings({
       ? "openrouter"
       : !used.has("openai")
         ? "openai"
-        : "custom";
+        : !used.has("commandcode")
+          ? "commandcode"
+          : "custom";
     setChain([...chain, { provider, model: "", baseUrl: "", format: "openrouter" }]);
   };
 
@@ -353,6 +357,9 @@ function EndpointRow({
         >
           <option value="openrouter">{t("settings:decision.provider.openrouter")}</option>
           <option value="openai">{t("settings:decision.provider.openai")}</option>
+          <option value="commandcode">
+            {t("settings:decision.provider.commandcode")}
+          </option>
           <option value="custom">{t("settings:decision.provider.custom")}</option>
         </Select>
         <span className="ml-auto flex items-center gap-1">

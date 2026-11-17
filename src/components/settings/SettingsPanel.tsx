@@ -1335,6 +1335,15 @@ const AI_PROVIDER_PRESETS: {
     defaultModel: "openai/gpt-6-luna",
   },
   {
+    // OpenAI-compatible aggregator. Its Claude models answer only on
+    // /provider/v1/messages (Anthropic shape), which this client does not
+    // speak, so they are not offered here; everything else works.
+    id: "commandcode",
+    label: "Command Code",
+    baseUrl: "https://api.commandcode.ai/provider/v1",
+    defaultModel: "deepseek/deepseek-v4.1-flash",
+  },
+  {
     id: "anthropic",
     label: "Anthropic (Claude)",
     baseUrl: "https://api.anthropic.com/v1",

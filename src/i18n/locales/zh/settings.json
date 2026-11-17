@@ -855,6 +855,7 @@
       "off": "关闭",
       "openrouter": "OpenRouter：TypeSafe Jev 等",
       "openai": "OpenAI Decisions API",
+      "commandcode": "Command Code：System One (Jev)",
       "custom": "自定义端点"
     },
     "urlLabel": "端点",

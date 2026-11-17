@@ -19,8 +19,12 @@ use std::collections::HashMap;
 
 pub const OPENROUTER_URL: &str = "https://openrouter.ai/api/alpha/decisions";
 pub const OPENAI_URL: &str = "https://api.openai.com/v1/decisions";
+/// Command Code serves the same TypeSafe System One shape as OpenRouter, on its
+/// own route. Claude models there are `/messages`-only and cannot serve this.
+pub const COMMANDCODE_URL: &str = "https://api.commandcode.ai/provider/v1/systemone";
 pub const DEFAULT_OPENROUTER_MODEL: &str = "typesafe/jev-1.14";
 pub const DEFAULT_OPENAI_MODEL: &str = "gpt-6-luna";
+pub const DEFAULT_COMMANDCODE_MODEL: &str = "typesafe/jev";
 
 /// Request/response shape spoken by an endpoint.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

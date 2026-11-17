@@ -3032,6 +3032,12 @@ impl Core {
                 dec::DEFAULT_OPENAI_MODEL,
                 Slot::DecisionOpenAiKey,
             ),
+            "commandcode" => (
+                dec::COMMANDCODE_URL.to_string(),
+                Dialect::OpenRouter,
+                dec::DEFAULT_COMMANDCODE_MODEL,
+                Slot::DecisionCommandCodeKey,
+            ),
             "custom" if !ep.base_url.trim().is_empty() => {
                 let dialect = Dialect::from_setting(&ep.format);
                 let model = match dialect {
@@ -3049,6 +3055,7 @@ impl Core {
         };
         let share_ai_key = match ep.provider.as_str() {
             "openai" => settings.ai_base_url.contains("api.openai.com"),
+            "commandcode" => settings.ai_base_url.contains("api.commandcode.ai"),
             _ => true,
         };
         let api_key = match credentials::load_async(0, slot).await {
@@ -3164,10 +3171,12 @@ impl Core {
     }
 
     /// Store (or, when empty, forget) the decision API key for one provider
-    /// ("openrouter" | "openai" | "custom"). Unset falls back to the chat AI key.
+    /// ("openrouter" | "openai" | "commandcode" | "custom"). Unset falls back
+    /// to the chat AI key.
     pub async fn set_decision_key(&self, provider: String, api_key: String) -> Result<()> {
         let slot = || match provider.as_str() {
             "openai" => Slot::DecisionOpenAiKey,
+            "commandcode" => Slot::DecisionCommandCodeKey,
             "custom" => Slot::DecisionCustomKey,
             _ => Slot::DecisionApiKey,
         };

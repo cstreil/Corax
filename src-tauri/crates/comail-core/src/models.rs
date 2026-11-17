@@ -958,7 +958,7 @@ pub struct AiAutomationRule {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DecisionEndpoint {
-    /// "openrouter" | "openai" | "custom".
+    /// "openrouter" | "openai" | "commandcode" | "custom".
     pub provider: String,
     /// Empty uses the provider default.
     #[serde(default)]
@@ -1104,7 +1104,8 @@ pub struct Settings {
     pub ai_automation_rules: Vec<AiAutomationRule>,
     /// Decision model used for categories and rule questions: "off" |
     /// "openrouter" (TypeSafe Jev and other OpenRouter decision models) |
-    /// "openai" (OpenAI Decisions API) | "custom". Off, or a failing provider,
+    /// "openai" (OpenAI Decisions API) | "commandcode" (Command Code System
+    /// One, same TypeSafe shape) | "custom". Off, or a failing provider,
     /// falls back to the chat classifier, then the heuristic.
     #[serde(default = "default_decision_provider")]
     pub decision_provider: String,

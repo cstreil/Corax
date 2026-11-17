@@ -855,6 +855,7 @@
       "off": "Désactivé",
       "openrouter": "OpenRouter : TypeSafe Jev et autres",
       "openai": "OpenAI Decisions API",
+      "commandcode": "Command Code : System One (Jev)",
       "custom": "Point de terminaison personnalisé"
     },
     "urlLabel": "Point de terminaison",

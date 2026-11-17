@@ -857,6 +857,7 @@
       "off": "Off",
       "openrouter": "OpenRouter: TypeSafe Jev and others",
       "openai": "OpenAI Decisions API",
+      "commandcode": "Command Code: System One (Jev)",
       "custom": "Custom endpoint"
     },
     "urlLabel": "Endpoint",
