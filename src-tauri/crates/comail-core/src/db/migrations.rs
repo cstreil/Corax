@@ -49,6 +49,7 @@ const MIGRATIONS: &[&str] = &[
 
 pub fn run(conn: &mut Connection) -> Result<()> {
     let version: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
+    let mut applied_upsell_repair = false;
     for (i, sql) in MIGRATIONS.iter().enumerate() {
         let target = (i + 1) as i64;
         if version < target {
@@ -62,10 +63,32 @@ pub fn run(conn: &mut Connection) -> Result<()> {
             }
             tx.pragma_update(None, "user_version", target)?;
             tx.commit()?;
+            if target == 39 {
+                applied_upsell_repair = true;
+            }
             tracing::info!("applied db migration {target}");
         }
     }
     ensure_folder_sync_columns(conn)?;
+    if applied_upsell_repair {
+        // 039 sends folders that never saved a message back to a full walk. It
+        // cannot clear the fork's reconcile flag itself: on a database from an
+        // upstream release that column only exists after the guard above. A
+        // folder that re-walks from scratch has to reconcile again at the end.
+        conn.execute(
+            "UPDATE folders SET backfill_reconciled = 0, backfill_reconcile_retry_at = NULL
+             WHERE backfill_done = 0 AND last_seen_uid = 0",
+            [],
+        )?;
+    }
+    if version >= 38 {
+        // A database can be past revision 38 without the folder names ever
+        // having been rewritten, if upstream adds a migration of its own in
+        // that slot. `decode` is idempotent and reads one row per folder.
+        let tx = conn.transaction()?;
+        decode_folder_names(&tx)?;
+        tx.commit()?;
+    }
     Ok(())
 }
 

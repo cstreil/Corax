@@ -668,7 +668,7 @@ async fn fetch_mime_plans_batch_inner(
     }
     fetch_mime_plans_for_set(session, &uid_set, uids)
         .await
-        .map_err(|error| CoreError::Imap(error.to_string()))
+        .map_err(imap_error)
 }
 
 /// The raw async-imap error is preserved so the caller can tell a tagged

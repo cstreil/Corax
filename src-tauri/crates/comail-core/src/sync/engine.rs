@@ -3032,15 +3032,17 @@ async fn fill_missing_uids(
         missing = missing.len(),
         "history backfill: filling UIDs the range walk missed"
     );
-    let caps = session.server_caps().await?;
-    let behavior = crate::provider::behavior_for(config.provider, &caps);
     for chunk in missing.chunks(FILL_CHUNK) {
         let set = imap::uid_set(chunk);
         if set.is_empty() {
             continue;
         }
-        let headers = imap::fetch_headers(session, &set, behavior.as_ref()).await?;
-        let (thread_ids, _) = store_headers(ctx, config, folder, headers, None).await?;
+        // The tolerant path, not a bare `fetch_headers`: one message the parser
+        // rejects must not fail the whole reconcile, or the folder is retried
+        // every 15 minutes and that message never arrives. It also records the
+        // unreadable UID so the user can see why.
+        let (thread_ids, _, _) =
+            fetch_and_store_headers(ctx, config, session, folder, &set, |_| true, None).await?;
         if !thread_ids.is_empty() {
             ctx.bus.emit(CoreEvent::MailUpdated { thread_ids });
         }

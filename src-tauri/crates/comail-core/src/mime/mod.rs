@@ -620,23 +620,20 @@ fn base64_failure_detail(input: &[u8]) -> String {
         .copied()
         .filter(|byte| !byte.is_ascii_whitespace())
         .collect();
-    let tail_start = compact.len().saturating_sub(32);
-    let tail: String = String::from_utf8_lossy(&compact[tail_start..])
-        .chars()
-        .map(|c| if c.is_control() { '.' } else { c })
-        .collect();
+    // Structural facts only - never the decoded or raw characters, which are
+    // the mail body.
     match compact
         .iter()
         .enumerate()
         .find(|(_, byte)| !is_base64_byte(**byte))
     {
         Some((index, byte)) => format!(
-            "raw={} compact={} invalid_at={index} byte=0x{byte:02x} tail={tail:?}",
+            "raw={} compact={} invalid_at={index} byte=0x{byte:02x}",
             input.len(),
             compact.len()
         ),
         None => format!(
-            "raw={} compact={} rem4={} tail={tail:?}",
+            "raw={} compact={} rem4={}",
             input.len(),
             compact.len(),
             compact.len() % 4
@@ -847,16 +844,12 @@ fn decode_text_section_inner(
                 // dropping the part (#101).
                 .or_else(|| decode_base64_lenient(encoded_body))
                 .ok_or_else(|| {
-                    // A short prefix of what the server actually returned: when a
-                    // section comes back as MIME headers, as a neighbouring part, or
-                    // truncated, the first bytes say so immediately.
-                    let probe: String =
-                        String::from_utf8_lossy(&encoded_body[..encoded_body.len().min(48)])
-                            .chars()
-                            .map(|c| if c.is_control() { '.' } else { c })
-                            .collect();
+                    // No part of the body goes into the error: it ends up in the
+                    // log and in the error panel, and a body that is really text
+                    // can be mislabelled Base64. Sizes and the first invalid byte
+                    // are enough to tell a truncated section from a wrong one.
                     CoreError::Mime(format!(
-                        "invalid Base64 selective MIME section ({}; starts {probe:?})",
+                        "invalid Base64 selective MIME section ({})",
                         base64_failure_detail(encoded_body)
                     ))
                 })?,
