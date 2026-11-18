@@ -8,7 +8,7 @@
 //! macOS returns `None`; there the theme setting keeps meaning light/dark.
 
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use serde::Serialize;
 
@@ -160,7 +160,13 @@ fn build(
             from.mix(Rgb(0, 0, 0), amount)
         }
     };
-    let bg2 = sort_by_luminance(button_bg, bg1, dark).0;
+    // bg2 is the next step up from the surface: on a dark theme that is the
+    // lighter of the two, on a light theme the darker one. Taking the button
+    // tone unconditionally would collapse hover into the card itself.
+    let bg2 = {
+        let (darker, lighter) = sort_by_luminance(button_bg, bg1, dark);
+        if dark { lighter } else { darker }
+    };
     let bg3 = step(bg2, 0.06);
     let bg4 = step(bg2, 0.12);
 
@@ -302,6 +308,12 @@ fn parse_flat_toml(text: &str) -> HashMap<String, String> {
 mod tests {
     use super::*;
 
+    /// Luminance of a `#rrggbb` token, so tests compare brightness and not
+    /// the lexical order of strings.
+    fn luma(hex: &str) -> f32 {
+        Rgb::parse(hex).expect("token is a colour").luminance()
+    }
+
     #[test]
     fn parses_kde_and_hex_colours() {
         assert_eq!(Rgb::parse("20,22,24"), Some(Rgb(20, 22, 24)));
@@ -326,13 +338,14 @@ mod tests {
         assert_eq!(c.bg0, "#141618");
         assert_eq!(c.bg1, "#202326");
         assert_eq!(c.accent, "#3daee9");
-        // Elevated surfaces must stay above the card on a dark theme.
+        // #202326 (window) is the surface and the button tone #292c30 the step
+        // above it: hover and menus must not collapse into the card.
+        assert_eq!(c.bg2, "#292c30", "bg2 should take the button tone");
         assert!(
-            c.bg3 > c.bg2,
-            "bg3 {} should be lighter than bg2 {}",
-            c.bg3,
-            c.bg2
+            luma(&c.bg2) > luma(&c.bg1),
+            "bg2 must stand off the surface"
         );
+        assert!(luma(&c.bg3) > luma(&c.bg2), "bg3 must be lighter than bg2");
     }
 
     #[test]
@@ -351,8 +364,12 @@ mod tests {
         assert_eq!(c.bg0, "#eff0f1");
         assert_eq!(c.bg1, "#fcfcfc");
         assert!(
-            c.bg3 < c.bg2,
+            luma(&c.bg3) < luma(&c.bg2),
             "on a light theme bg3 must be darker than bg2"
+        );
+        assert!(
+            luma(&c.bg2) < luma(&c.bg1),
+            "on a light theme the step above the surface is darker"
         );
     }
 
