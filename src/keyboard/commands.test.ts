@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { queryClient } from "../queries/client";
+import type { ThreadDetail } from "../ipc/types";
 import { SPLIT_IMPORTANT, useUi } from "../stores/ui";
 import { ALL_COMMANDS } from "./commands";
 import { buildCommandContext } from "./context";
@@ -111,5 +112,63 @@ describe("calendar to mail command navigation", () => {
       labelFilter: null,
       searchQuery: "old query",
     });
+  });
+});
+
+describe("open attachment command", () => {
+  const attachment = (id: number, isInline = false) => ({
+    id,
+    filename: `dokument-${id}.pdf`,
+    mimeType: "application/pdf",
+    size: 2048,
+    isInline,
+  });
+  const message = (id: number, attachments: ReturnType<typeof attachment>[]) => ({
+    id,
+    attachments,
+    from: { name: "Ada", email: "ada@example.test" },
+    date: 1_700_000_000_000,
+    subject: "Vertrag",
+  });
+  const seed = (messages: ReturnType<typeof message>[]) =>
+    queryClient.setQueryData(["thread", 101], {
+      thread: { id: 101 },
+      messages,
+    } as unknown as ThreadDetail);
+
+  it("previews the focused message and skips inline images", async () => {
+    seed([message(102, [attachment(1, true), attachment(2), attachment(3)]), message(103, [attachment(4)])]);
+    await runCommand("open-attachment");
+    expect(useUi.getState().attachmentPreview).toMatchObject({
+      index: 0,
+      items: [{ id: 2 }, { id: 3 }],
+      subject: "Vertrag",
+    });
+  });
+
+  it("falls back to the last message when nothing is focused", async () => {
+    useUi.setState({ focusedMessageId: null });
+    seed([message(102, [attachment(1)]), message(103, [attachment(4)])]);
+    await runCommand("open-attachment");
+    expect(useUi.getState().attachmentPreview?.items.map((a) => a.id)).toEqual([4]);
+  });
+
+  it("does nothing when the message only carries inline images", async () => {
+    seed([message(102, [attachment(1, true)])]);
+    await runCommand("open-attachment");
+    expect(useUi.getState().attachmentPreview).toBeNull();
+  });
+
+  it("is available in a conversation only and is the sole binding for 'a'", () => {
+    const command = ALL_COMMANDS.find((candidate) => candidate.id === "open-attachment");
+    expect(command?.keys).toEqual(["a"]);
+    const context = buildCommandContext();
+    expect(command?.when?.(context)).toBe(true);
+    const bound = ALL_COMMANDS.filter(
+      (candidate) => candidate.keys?.includes("a") && (candidate.when?.(context) ?? true),
+    );
+    expect(bound.map((candidate) => candidate.id)).toEqual(["open-attachment"]);
+    useUi.setState({ openThreadId: null });
+    expect(command?.when?.(buildCommandContext())).toBe(false);
   });
 });

@@ -670,6 +670,15 @@ export const ALL_COMMANDS: Command[] = [
     hiddenInPalette: true,
   },
   {
+    id: "open-attachment",
+    titleKey: "commands:title.openAttachment",
+    aliases: ["attachment", "attachments", "attach", "preview attachment", "view attachment"],
+    keys: ["a"],
+    section: "Navigation",
+    when: (ctx) => noOverlay(ctx) && ctx.inConversation,
+    run: (ctx) => ctx.openAttachment(),
+  },
+  {
     id: "go-inbox",
     titleKey: "commands:title.goInbox",
     aliases: ["inbox"],

@@ -32,7 +32,8 @@ them; labels and rules can still be turned into tabs or splits.
 **Inline conversation panel.** Opening a thread expands it inside the list instead of replacing
 the list, sized to the conversation up to 75% of the viewport. A "Full view" button keeps the
 old full-screen reading mode one click away. Selection is toggled from the left gutter only; the
-rest of the row expands and collapses.
+rest of the row expands and collapses. Inside a conversation, `a` opens the in-app preview of the
+focused message's first attachment (arrow keys page through the rest, `o` opens it externally).
 
 **German localization.** `src/i18n/locales/de/` is under construction. The tooling that keeps it
 honest is general: `pnpm i18n:status`, and a parity test that refuses to drop placeholders,
