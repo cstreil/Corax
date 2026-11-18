@@ -4,8 +4,10 @@
 - Fork von NextOSP/comail: https://github.com/cstreil/Rabe (public, AGPL-3.0-only); `origin` = Fork,
   `upstream` = Original, Arbeit auf `fork/sync-fixes`. Repo am 2026-11-18 von `comail` in `Rabe`
   umbenannt (alte URLs leiten 301 um). Details `FORK.md`, Fix-Begründungen `HANDOVER.md`.
-- Upstream v0.2.44 (`ded0898`) eingezogen → Branch `chore/merge-upstream-0.2.44`, 44 Commits / 62 Dateien,
-  **PR #1** gegen `fork/sync-fixes` (MERGEABLE/CLEAN, offen).
+- Upstream v0.2.44 (`ded0898`) eingezogen → Branch `chore/merge-upstream-0.2.44` (50 Commits, PR #1 offen),
+  darauf Rabe-Umbenennung, Shortcut `a`, Keyring-Migration, eigener Updater.
+- **v0.2.45 veröffentlicht** (2026-11-18, Tag auf `4416fb4`); Update-Test 0.2.44 → 0.2.45 in
+  `/Applications/Rabe.app` bestanden: Keychain bleibt, Sync verbindet ohne Passwortabfrage.
 - Push über lokales `gh` (Account `cstreil`, HTTPS/Keychain); der GitHub-Connector pusht nicht. `gh` zielt
   im Fork sonst aufs Eltern-Repo → einmalig `gh repo set-default cstreil/Rabe`.
 - Zwei Instanzen, gleiches Binary, getrennte Daten: `de.streil.rabe` → `/Applications/Rabe.app`,
@@ -27,16 +29,10 @@
 - iCloud-IMAP lehnt parallele Verbindungen mit `[AUTHENTICATIONFAILED]` ab, obwohl das App-Passwort gilt.
 
 ## Sync-Fixes
-- Zwei-Schritt-FETCH: BODYSTRUCTURE separat (`attach_mime_plans`), nie mit `BODY[HEADER.FIELDS]`
-  kombiniert — iCloud desynchronisiert sonst. Item-Liste über `header_fetch_query(items, false)`;
-  `attach_mime_plans` nur bei `with_structure`. `fill_missing_uids` und Batch-Fetches über
-  `fetch_and_store_headers`; Fehler über `imap_error`, damit `unparseable_response` greift und der Sync
-  weiterläuft. Base64-Fehler ohne Body-Inhalt.
-- `done` erst nach Abgleich (`backfill_reconciled`, 036), `_retry_at` (037) hält 15 min zurück;
-  `initial_backfill` markiert bei leerer Suche nicht mehr fertig. `imap/identity.rs`: kein leerer
-  Provider-Item (doppelte Leerzeichen → iCloud lehnt ab).
-- `isolate_instance` leitet Datenverzeichnis und Keyring-Service aus dem Bundle-Identifier ab
-  (`COMAIL_DATA_DIR`, `COMAIL_KEYRING_SERVICE`).
+- Zwei-Schritt-FETCH (BODYSTRUCTURE getrennt, `header_fetch_query(items, false)`, `attach_mime_plans` nur
+  bei `with_structure`), `done` erst nach Abgleich (036/037), `isolate_instance` leitet Datenverzeichnis
+  und Keyring-Service aus dem Bundle-Identifier ab (`COMAIL_DATA_DIR`, `COMAIL_KEYRING_SERVICE`).
+  Begründungen und Code-Stellen: `HANDOVER.md`.
 - Review (Auditor 2026-11-18): Sicherheit freigegeben (iframe-CSP als Grenze); akzeptiertes Restrisiko
   eine Base64-Endzeile mit 60–76 Zeichen als QP-Marker.
 
@@ -53,6 +49,9 @@
 ## Bauen
 - `sh scripts/build-dev-app.sh` → `src-tauri/target/release/bundle/macos/Rabe Dev.app` (installiert nicht
   selbst, dann `ditto` nach `/Applications`); `sh scripts/build-local-app.sh` → `/Applications/Rabe.app`.
+- `sh scripts/release-fork.sh [--no-publish]` baut, packt `dist/Rabe.app.tar.gz`, signiert mit
+  `~/.tauri/rabe-updater.key`, schreibt `latest.json`, legt das Release an (Tag auf HEAD). Version vorher
+  in `tauri.conf.json` hochziehen — gleiche Version heißt „kein Update".
 - Signatur: echte `Apple Development`-Identität (Team-ID `2XSHYS8HMR`), Fallback `comail-dev`.
 - Das Dev-Skript patcht `tauri.conf.json` und stellt sie per `trap` zurück: während des Builds ist der
   Arbeitsbaum schmutzig, nicht committen. `pnpm dev:isolated` = Hot-Reload-Instanz.
@@ -62,9 +61,8 @@
   `scripts/imap-backup.py` (nur lesend), Abgleich über Message-ID-Mengen. Letzter Abgleich: 0 fehlend.
 
 ## Offen
-- **Updater-Endpoint** zeigt auf `NextOSP/comail/releases/latest` → eine Fork-Release-Version ersetzt sich
-  selbst durch Upstream. Auf Fork umbiegen oder abschalten.
-- Release-DB (user_version 35) wandert erst beim nächsten Release-Lauf auf 39; `/Applications/Rabe.app` 0.2.41.
+- App-Icon ist noch das Upstream-Planeten-Icon (Dock/„Über"); `/Applications/Comail Dev.app` liegt noch da.
+- Eigenes „Passwort ändern" für IMAP-Konten fehlt (nur OAuth-Reauth); Snooze-Zeitwörter Deutsch offen.
 - cua: `open "/Applications/Rabe Dev.app"` nötig (`cua.activate` hilft nicht); Klicks ~1 Zeile höher als geschätzt
   (Screenshot-Pixel × 1,043); gesperrter Desktop → `SESSION_LOCKED`.
 - MCP in beiden Instanzen aus (`mcpEnabled: false`, Port 47823).
