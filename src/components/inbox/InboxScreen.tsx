@@ -95,7 +95,7 @@ export function InboxScreen() {
 
   // Avatar inbox UI: every other tab collapses into a bundle row at the top of
   // the Important list (Settings → Show other tabs at the top turns it off).
-  const defaultSplits = settings?.inboxDefaultSplits !== false;
+  const defaultSplits = settings?.inboxDefaultSplits === true;
   // Built-in splits off: the inbox opens unsplit, so a stale Important/Other
   // selection (initial state, hotkey, command palette) falls back to "all".
   useEffect(() => {

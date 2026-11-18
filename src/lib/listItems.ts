@@ -1,3 +1,4 @@
+import { defaultRangeExtractor, type Range } from "@tanstack/react-virtual";
 import type { ThreadSummary } from "../ipc/types";
 import { dateGroup, longDate } from "./format";
 
@@ -36,6 +37,19 @@ export function indexAtOffset(rows: readonly RowOffset[], offset: number): numbe
     if (offset < row.start + row.size) return row.index;
   }
   return rows.length > 0 ? rows[rows.length - 1].index : 0;
+}
+
+/** Virtualizer range extractor that keeps one index rendered even when it is
+ *  outside the visible range. The opened conversation is a virtualized item;
+ *  unmounting it would drop the inline composer's unsaved text, because its
+ *  autosave only runs every few seconds. */
+export function rangeWithPinnedIndex(range: Range, pinnedIndex: number): number[] {
+  const indexes = defaultRangeExtractor(range);
+  if (pinnedIndex >= 0 && !indexes.includes(pinnedIndex)) {
+    indexes.push(pinnedIndex);
+    indexes.sort((a, b) => a - b);
+  }
+  return indexes;
 }
 
 /** Interleave date-group headers into the thread rows. When grouping is off the

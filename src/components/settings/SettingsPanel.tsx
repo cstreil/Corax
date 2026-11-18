@@ -348,7 +348,7 @@ export function SettingsPanel() {
     splits,
     labels,
     s.autoLabelsEnabled !== false,
-    s.inboxDefaultSplits !== false,
+    s.inboxDefaultSplits === true,
   ).flatMap((item) => {
     // "all" is not a route key the backend stores, so it is not a scope.
     if (item.kind === "all") return [];
@@ -786,7 +786,7 @@ export function SettingsPanel() {
             >
               <Toggle
                 label={t("settings:inboxDefaultSplits.label")}
-                checked={s.inboxDefaultSplits !== false}
+                checked={s.inboxDefaultSplits === true}
                 onChange={(inboxDefaultSplits) =>
                   void updateSettings({ inboxDefaultSplits })
                 }

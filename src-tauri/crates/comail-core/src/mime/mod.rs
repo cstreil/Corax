@@ -396,7 +396,12 @@ fn encoded_word_len(bytes: &[u8]) -> Option<usize> {
 ///     HTML attribute as `=3D`, so `href=3D"..."` is the signature of an
 ///     undecoded HTML body,
 ///   * a run of two or more escapes that spells valid UTF-8 (`M=C3=BCnchen`),
-///     outside an encoded-word.
+///     outside an encoded-word,
+///   * a run of two or more escapes that are all high bytes (`Gr=FC=DFe`) -
+///     QP-encoded Latin-1, which is never valid UTF-8,
+///   * a soft line break (`=` + optional transport padding + line end). Prose
+///     and markup do not end a line with a bare `=`; this is what catches
+///     Latin-1 bodies whose escapes are too sparse for the run rules.
 fn qp_artifact_count(content: &str) -> usize {
     let bytes = content.as_bytes();
     let hex = |b: u8| -> Option<u8> {
@@ -438,8 +443,39 @@ fn qp_artifact_count(content: &str) -> usize {
                 _ => break,
             }
         }
-        if run.len() >= 2 && std::str::from_utf8(&run).is_ok() {
-            count += 1;
+        if run.len() >= 2 {
+            if std::str::from_utf8(&run).is_ok() {
+                count += 1;
+            } else if run.iter().all(|byte| *byte >= 0x80) {
+                // Latin-1 text (`Gr=FC=DFe`): two consecutive high-byte
+                // escapes are QP-encoded text, not markup or base64.
+                count += 1;
+            }
+        }
+        // Soft line break: `=` then optional transport padding, then CRLF/LF.
+        // Only a real QP wrap counts. The `=` must not be the last character of
+        // a run (`=====` rules, Setext headings, base64 padding), and the line
+        // must have the length a QP encoder produces: RFC 2045 6.7 rule 5 caps
+        // a line at 76 characters including the `=`. Without the bounds, two
+        // separator lines or two long tracking URLs ending in `=` are two
+        // markers and requeue a correctly decoded body on every start.
+        let mut pad = i + 1;
+        while matches!(bytes.get(pad), Some(&b' ') | Some(&b'\t')) {
+            pad += 1;
+        }
+        let soft_break = bytes.get(pad) == Some(&b'\n')
+            || (bytes.get(pad) == Some(&b'\r') && bytes.get(pad + 1) == Some(&b'\n'));
+        if soft_break && (i == 0 || bytes[i - 1] != b'=') {
+            // Measured from the last LF up to and including the `=`, so the CR
+            // and the transport padding behind it do not count.
+            let line_start = bytes[..i]
+                .iter()
+                .rposition(|byte| *byte == b'\n')
+                .map_or(0, |pos| pos + 1);
+            let line_len = i - line_start + 1;
+            if (60..=76).contains(&line_len) {
+                count += 1;
+            }
         }
         i = if j > i { j } else { i + 1 };
     }
@@ -1109,6 +1145,61 @@ mod selective_section_tests {
         // not require a `=` at every step. Two of them requeued the body.
         let body = "=?UTF-8?Q?=3D2022-01-11=5F0\n=?UTF-8?Q?=3D2022-01-12=5F0";
         assert!(!looks_like_undecoded_quoted_printable(body));
+    }
+
+    #[test]
+    fn qp_heuristic_flags_latin1_bodies() {
+        // A real QP wrap: 76 characters including the soft-break `=`.
+        let line = "Gr=FC=DFe aus M=FCnchen, hier steht ein langer Satz der umbrochen wird noch=";
+        assert_eq!(line.len(), 76);
+        // `=FC=DF` is not valid UTF-8 and not `=3D"`, so the high-byte run plus
+        // the soft break identify the body.
+        assert!(looks_like_undecoded_quoted_printable(&format!(
+            "{line}\r\nund weiter geht es mit Umlauten =E4 =F6 =FC."
+        )));
+        // Transport padding before the line end is legal and must not hide it.
+        assert!(looks_like_undecoded_quoted_printable(&format!(
+            "{line} \r\nund weiter geht es mit Umlauten =E4 =F6 =FC."
+        )));
+        // Decoded Latin-1 text must not trip it.
+        assert!(!looks_like_undecoded_quoted_printable(
+            "Gr\u{fc}\u{df}e aus M\u{fc}nchen"
+        ));
+        // A bare `=` at a line end in prose is one marker, not two.
+        assert!(!looks_like_undecoded_quoted_printable("a =\nb"));
+    }
+
+    #[test]
+    fn qp_soft_break_respects_the_line_length_bounds() {
+        // One marker alone never triggers, so every case carries a second one
+        // (`=FC=DF` run) and the soft break is what decides.
+        let body = |len: usize| {
+            let mut line = "x".repeat(len - 1);
+            line.push('=');
+            format!("{line}\r\nGr=FC=DFe")
+        };
+        assert!(!looks_like_undecoded_quoted_printable(&body(59)));
+        assert!(looks_like_undecoded_quoted_printable(&body(60)));
+        assert!(looks_like_undecoded_quoted_printable(&body(76)));
+        assert!(!looks_like_undecoded_quoted_printable(&body(77)));
+    }
+
+    #[test]
+    fn qp_heuristic_ignores_separators_setext_and_long_urls() {
+        // Two `=====` rules around a title: each `=` is the last of a run, not
+        // a soft break.
+        assert!(!looks_like_undecoded_quoted_printable(
+            "=====\nTitel\n=====\nText"
+        ));
+        // Setext heading.
+        assert!(!looks_like_undecoded_quoted_printable("Titel\n=====\nText"));
+        // Two tracking URLs whose base64 token ends in `=`: the lines are
+        // longer than a QP wrap, so they are not soft breaks either.
+        let url = "https://track.example.test/c?u=aHR0cHM6Ly9leGFtcGxlLnRlc3QvbG9uZy9wYXRoL3RvL3NvbWV0aGluZy9lbHNlL2FuZC9tb3JlL2NoYXJzL2hlcmU=";
+        assert!(url.len() > 76);
+        assert!(!looks_like_undecoded_quoted_printable(&format!(
+            "{url}\n{url}\n"
+        )));
     }
 
     #[test]

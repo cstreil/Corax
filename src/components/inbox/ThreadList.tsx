@@ -1,4 +1,4 @@
-import { useVirtualizer } from "@tanstack/react-virtual";
+import { useVirtualizer, type Range } from "@tanstack/react-virtual";
 import {
   useCallback,
   useEffect,
@@ -11,7 +11,13 @@ import { useTranslation } from "react-i18next";
 import type { Label, ThreadSummary } from "../../ipc/types";
 import { buildCommandContext } from "../../keyboard/context";
 import { primaryCorrespondent } from "../../lib/format";
-import { buildListItems, indexAtOffset, type Bundle, type SectionHeader } from "../../lib/listItems";
+import {
+  buildListItems,
+  indexAtOffset,
+  rangeWithPinnedIndex,
+  type Bundle,
+  type SectionHeader,
+} from "../../lib/listItems";
 import { prefetchThread } from "../../queries/hooks";
 import { useUi } from "../../stores/ui";
 import { Button } from "../ui/Button";
@@ -243,6 +249,9 @@ export function ThreadList({
     dragRef.current = { startId: id, base: useUi.getState().selection, moved: false };
     useUi.getState().set({ selectAnchorId: id });
     el?.classList.add("select-none");
+    // The message iframes swallow mousemove/mouseup, so a release over a mail
+    // body never reached `onUp` and the sweep kept following the cursor.
+    el?.classList.add("sweeping");
 
     // Uniform row height (headers and bundles included), so pointer Y maps straight to an
     // item index; range selection then filters that slice down to thread ids.
@@ -273,6 +282,7 @@ export function ThreadList({
       const drag = dragRef.current;
       dragRef.current = null;
       el?.classList.remove("select-none");
+      el?.classList.remove("sweeping");
       window.removeEventListener("mousemove", onMove);
       window.removeEventListener("mouseup", onUp);
       if (drag?.moved) {
@@ -409,19 +419,27 @@ export function ThreadList({
     ),
   );
 
-  const virtualizer = useVirtualizer({
-    count: items.length,
-    getScrollElement: () => scrollRef.current,
-    estimateSize: (index) => (items[index]?.kind === "expanded" ? expandedHeight : rowHeight),
-    overscan: 12,
-  });
-  virtualizerRef.current = virtualizer;
   // Where the panel sits right now. Only a change here (or in either height)
   // invalidates a cached size: every other item is still one row tall.
   const expandedIndex = useMemo(
     () => (expandedThreadId == null ? -1 : items.findIndex((it) => it.kind === "expanded")),
     [items, expandedThreadId],
   );
+  // The open conversation is a virtualized item, so scrolling it past the
+  // overscan window would unmount it - and with it the inline composer, whose
+  // autosave only runs every few seconds. Pin it into every render range.
+  const rangeExtractor = useCallback(
+    (range: Range) => rangeWithPinnedIndex(range, expandedIndex),
+    [expandedIndex],
+  );
+  const virtualizer = useVirtualizer({
+    count: items.length,
+    getScrollElement: () => scrollRef.current,
+    estimateSize: (index) => (items[index]?.kind === "expanded" ? expandedHeight : rowHeight),
+    overscan: 12,
+    rangeExtractor,
+  });
+  virtualizerRef.current = virtualizer;
   // Drop cached sizes so the items re-lay out at the new heights.
   useEffect(() => {
     virtualizer.measure();

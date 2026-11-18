@@ -1376,3 +1376,10 @@ textarea {
     opacity: 0;
   }
 }
+
+/* Press-and-drag selection in the thread list. The message iframes swallow
+   mousemove/mouseup, so a release over a mail body never reached the window
+   handler and the sweep kept following the cursor. */
+.sweeping iframe {
+  pointer-events: none;
+}

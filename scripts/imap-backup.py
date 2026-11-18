@@ -11,10 +11,13 @@ kein EXPUNGE, kein STORE). Es werden ausschließlich Lese-Kommandos
 gesendet: LIST, SELECT (readonly), UID SEARCH, UID FETCH.
 
 Aufruf:
-    python3 scripts/imap-backup.py <zielverzeichnis> [--service comail]
+    python3 scripts/imap-backup.py <zielverzeichnis> --user <adresse> \
+        [--host imap.mail.me.com] [--port 993] [--service comail]
 
-Das Passwort wird aus dem Login-Keychain gelesen (Service/Account wie von
-Comail abgelegt) und nie ausgegeben.
+Adresse, Host und Port lassen sich auch über COMAIL_IMAP_USER,
+COMAIL_IMAP_HOST und COMAIL_IMAP_PORT setzen. Das Passwort wird aus dem
+Login-Keychain gelesen (Service/Account wie von Comail abgelegt) und nie
+ausgegeben.
 """
 
 import argparse
@@ -27,9 +30,8 @@ import subprocess
 import sys
 import time
 
-HOST = "imap.mail.me.com"
-PORT = 993
-USER = "cstreil@me.com"
+DEFAULT_HOST = "imap.mail.me.com"
+DEFAULT_PORT = 993
 
 
 def keychain_password(service: str, account: str) -> str:
@@ -96,18 +98,24 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("target")
     ap.add_argument("--service", default="comail")
+    ap.add_argument("--host", default=os.environ.get("COMAIL_IMAP_HOST", DEFAULT_HOST))
+    ap.add_argument("--port", type=int, default=int(os.environ.get("COMAIL_IMAP_PORT", DEFAULT_PORT)))
+    ap.add_argument("--user", default=os.environ.get("COMAIL_IMAP_USER"))
     ap.add_argument("--account-id", default="1")
     ap.add_argument("--delay", type=float, default=0.0, help="Pause pro Mail in Sekunden")
     args = ap.parse_args()
+
+    if not args.user:
+        sys.exit("Keine Adresse: --user setzen oder COMAIL_IMAP_USER exportieren")
 
     target = os.path.abspath(args.target)
     os.makedirs(target, exist_ok=True)
 
     password = keychain_password(args.service, f"{args.account_id}:password")
 
-    print(f"Verbinde mit {HOST}:{PORT} als {USER} …", flush=True)
-    M = imaplib.IMAP4_SSL(HOST, PORT)
-    M.login(USER, password)
+    print(f"Verbinde mit {args.host}:{args.port} als {args.user} …", flush=True)
+    M = imaplib.IMAP4_SSL(args.host, args.port)
+    M.login(args.user, password)
 
     typ, raw_folders = M.list()
     if typ != "OK":
@@ -116,7 +124,12 @@ def main() -> int:
     folders = [f for f in (parse_list_line(x) for x in raw_folders) if f]
     print(f"{len(folders)} Ordner gefunden", flush=True)
 
-    manifest = {"host": HOST, "user": USER, "folders": {}, "started": time.strftime("%Y-%m-%dT%H:%M:%S")}
+    manifest = {
+        "host": args.host,
+        "user": args.user,
+        "folders": {},
+        "started": time.strftime("%Y-%m-%dT%H:%M:%S"),
+    }
     total = 0
     errors = []
 

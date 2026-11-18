@@ -53,6 +53,10 @@ pub struct Folder {
     pub last_seen_uid: i64,
     pub backfill_cursor: Option<i64>,
     pub backfill_done: bool,
+    /// The folder's UID list was reconciled against the server after the
+    /// history walk reached the bottom. `backfill_done` alone is not enough:
+    /// older builds set it before the reconcile ran.
+    pub backfill_reconciled: bool,
 }
 
 fn from_row(row: &Row) -> rusqlite::Result<Folder> {
@@ -69,6 +73,7 @@ fn from_row(row: &Row) -> rusqlite::Result<Folder> {
         last_seen_uid: row.get("last_seen_uid")?,
         backfill_cursor: row.get("backfill_cursor")?,
         backfill_done: row.get::<_, i64>("backfill_done")? != 0,
+        backfill_reconciled: row.get::<_, i64>("backfill_reconciled")? != 0,
     })
 }
 
@@ -310,6 +315,16 @@ pub fn set_backfill(conn: &Connection, id: i64, cursor: Option<i64>, done: bool)
     Ok(())
 }
 
+/// Record that the folder's UID list was reconciled against the server. Only
+/// then is `backfill_done` trustworthy.
+pub fn mark_backfill_reconciled(conn: &Connection, id: i64) -> Result<()> {
+    conn.execute(
+        "UPDATE folders SET backfill_reconciled = 1 WHERE id = ?1",
+        params![id],
+    )?;
+    Ok(())
+}
+
 #[cfg(test)]
 #[path = "folders_tests.rs"]
 mod tests;
@@ -323,7 +338,8 @@ pub fn reset_uid_mappings(conn: &Connection, id: i64) -> Result<()> {
     )?;
     conn.execute(
         "UPDATE folders SET last_seen_uid = 0, uidnext = NULL, highestmodseq = NULL,
-                            backfill_cursor = NULL, backfill_done = 0
+                            backfill_cursor = NULL, backfill_done = 0,
+                            backfill_reconciled = 0
          WHERE id = ?1",
         params![id],
     )?;

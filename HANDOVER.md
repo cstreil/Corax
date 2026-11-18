@@ -362,8 +362,7 @@ Zeile.
 
 ```bash
 # Backup (rein lesend, SELECT readonly + BODY.PEEK[])
-python3 scripts/imap-backup.py \
-  "/Users/cs/Library/Mobile Documents/com~apple~CloudDocs/Work/Tasks/2026-11-17-comail-mail-backup.nosync"
+python3 scripts/imap-backup.py <zielverzeichnis> --user <adresse>
 
 # Abgleich: Message-IDs normalisieren (spitze Klammern entfernen, lowercase)
 # und die Mengen differenzieren. Erwartung: "nur im Backup: 0".

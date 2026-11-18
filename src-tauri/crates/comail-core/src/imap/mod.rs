@@ -448,7 +448,7 @@ async fn fetch_headers_inner(
         });
     }
     drop(stream);
-    attach_mime_plans(session, &mut out).await;
+    attach_mime_plans(session, &mut out).await?;
     Ok(out)
 }
 
@@ -457,22 +457,31 @@ async fn fetch_headers_inner(
 /// Deliberately a second command: iCloud desynchronises the session when
 /// BODYSTRUCTURE and BODY[HEADER.FIELDS] share one FETCH response, and the
 /// selective-content path already proves this query parses cleanly on its own.
-/// A failure here only costs the paperclip until the body is cached, so it
-/// never fails the header batch.
-async fn attach_mime_plans(session: &mut Session, headers: &mut [FetchedHeader]) {
+///
+/// A tagged `NO`/`BAD` only costs the paperclip until the body is cached, so it
+/// is swallowed. A parse or transport failure is not: it leaves the session out
+/// of sync, every following FETCH in the batch returns nothing, and the caller
+/// would checkpoint past UIDs it never fetched. That error goes up so the
+/// caller drops the connection.
+async fn attach_mime_plans(session: &mut Session, headers: &mut [FetchedHeader]) -> Result<()> {
     if headers.is_empty() {
-        return;
+        return Ok(());
     }
     let uids: Vec<u32> = headers.iter().map(|header| header.uid).collect();
-    let plans = match fetch_mime_plans_batch_inner(session, &uids).await {
+    let uid_set = normalized_uid_set(&uids)?;
+    if uid_set.is_empty() {
+        return Ok(());
+    }
+    let plans = match fetch_mime_plans_for_set(session, &uid_set, &uids).await {
         Ok(plans) => plans,
-        Err(error) => {
+        Err(error) if is_tagged_rejection(&error) => {
             tracing::warn!(
                 %error,
-                "BODYSTRUCTURE fetch failed; attachment flags wait for the body fetch",
+                "BODYSTRUCTURE fetch rejected; attachment flags wait for the body fetch",
             );
-            return;
+            return Ok(());
         }
+        Err(error) => return Err(CoreError::Imap(error.to_string())),
     };
     let mut by_uid: std::collections::HashMap<u32, MimePlan> = plans
         .into_iter()
@@ -485,6 +494,17 @@ async fn attach_mime_plans(session: &mut Session, headers: &mut [FetchedHeader])
             header.mime_plan = Some(plan);
         }
     }
+    Ok(())
+}
+
+/// A FETCH the server rejected with a tagged `NO`/`BAD` leaves the session
+/// usable. Anything else (I/O, connection loss, parse) means the stream is out
+/// of sync and the caller has to reconnect.
+fn is_tagged_rejection(error: &async_imap::error::Error) -> bool {
+    matches!(
+        error,
+        async_imap::error::Error::Bad(_) | async_imap::error::Error::No(_)
+    )
 }
 
 /// A BODYSTRUCTURE-derived selective-fetch plan for one remote UID.
@@ -504,14 +524,23 @@ async fn fetch_mime_plans_batch_inner(
     if uid_set.is_empty() {
         return Ok(Vec::new());
     }
+    fetch_mime_plans_for_set(session, &uid_set, uids)
+        .await
+        .map_err(|error| CoreError::Imap(error.to_string()))
+}
+
+/// The raw async-imap error is preserved so the caller can tell a tagged
+/// rejection from a desynchronised session.
+async fn fetch_mime_plans_for_set(
+    session: &mut Session,
+    uid_set: &str,
+    uids: &[u32],
+) -> std::result::Result<Vec<FetchedMimePlan>, async_imap::error::Error> {
     let requested: std::collections::HashSet<u32> = uids.iter().copied().collect();
     let mut result = std::collections::BTreeMap::<u32, MimePlan>::new();
-    let mut stream = session
-        .uid_fetch(&uid_set, MIME_PLAN_QUERY)
-        .await
-        .map_err(|error| CoreError::Imap(error.to_string()))?;
+    let mut stream = session.uid_fetch(uid_set, MIME_PLAN_QUERY).await?;
     while let Some(item) = stream.next().await {
-        let fetch = item.map_err(|error| CoreError::Imap(error.to_string()))?;
+        let fetch = item?;
         let Some(uid) = fetch.uid.filter(|uid| requested.contains(uid)) else {
             continue;
         };
@@ -1403,8 +1432,33 @@ pub fn uid_set(uids: &[u32]) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{MIME_PLAN_QUERY, normalized_uid_set, section_fetch_query, section_paths};
+    use super::{
+        MIME_PLAN_QUERY, is_tagged_rejection, normalized_uid_set, section_fetch_query,
+        section_paths,
+    };
     use crate::error::CoreError;
+
+    #[test]
+    fn only_tagged_rejections_leave_the_session_usable() {
+        // A tagged NO/BAD is the server refusing this one command.
+        assert!(is_tagged_rejection(&async_imap::error::Error::No(
+            "BODYSTRUCTURE unsupported".into()
+        )));
+        assert!(is_tagged_rejection(&async_imap::error::Error::Bad(
+            "syntax".into()
+        )));
+        // Everything else means the stream is out of sync: the caller has to
+        // reconnect instead of checkpointing past UIDs it never fetched.
+        assert!(!is_tagged_rejection(
+            &async_imap::error::Error::ConnectionLost
+        ));
+        assert!(!is_tagged_rejection(&async_imap::error::Error::Io(
+            std::io::Error::other("reset")
+        )));
+        assert!(!is_tagged_rejection(&async_imap::error::Error::Parse(
+            async_imap::error::ParseError::Unexpected("garbage".into())
+        )));
+    }
 
     #[test]
     fn exchange_authenticated_but_not_connected_is_retryable() {

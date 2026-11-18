@@ -133,7 +133,7 @@ export function inboxTabs(): {
   const labels = queryClient.getQueryData<Label[]>(["labels"]);
   const settings = queryClient.getQueryData<Settings>(["settings"]);
   const autoOn = settings?.autoLabelsEnabled !== false;
-  const defaultSplits = settings?.inboxDefaultSplits !== false;
+  const defaultSplits = settings?.inboxDefaultSplits === true;
   return inboxTabOrder(splits, labels, autoOn, defaultSplits).map((item) => {
     if (item.kind === "all")
       return { splitId: null, labelId: null, name: i18n.t("common:view.inbox") };

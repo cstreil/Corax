@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ThreadSummary } from "../ipc/types";
-import { buildListItems, indexAtOffset, type Bundle } from "./listItems";
+import { buildListItems, indexAtOffset, rangeWithPinnedIndex, type Bundle } from "./listItems";
 
 const NOW = new Date(2026, 9, 18, 15, 0).getTime();
 const HOUR = 3_600_000;
@@ -150,5 +150,21 @@ describe("indexAtOffset", () => {
     expect(indexAtOffset(uniform, -50)).toBe(0);
     expect(indexAtOffset(uniform, 10_000)).toBe(2);
     expect(indexAtOffset([], 100)).toBe(0);
+  });
+});
+
+describe("rangeWithPinnedIndex", () => {
+  const range = { startIndex: 10, endIndex: 14, overscan: 2, count: 100 };
+
+  it("keeps the default window when nothing is pinned", () => {
+    expect(rangeWithPinnedIndex(range, -1)).toEqual([8, 9, 10, 11, 12, 13, 14, 15, 16]);
+  });
+
+  it("pins an index outside the window", () => {
+    expect(rangeWithPinnedIndex(range, 40)).toEqual([8, 9, 10, 11, 12, 13, 14, 15, 16, 40]);
+  });
+
+  it("does not duplicate an index already in the window", () => {
+    expect(rangeWithPinnedIndex(range, 12)).toEqual([8, 9, 10, 11, 12, 13, 14, 15, 16]);
   });
 });

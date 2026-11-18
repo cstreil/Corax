@@ -43,7 +43,7 @@ export function Sidebar({ docked = false }: { docked?: boolean }) {
   const { data: labels } = useLabels();
   const { data: settings } = useSettings();
   const autoLabelsEnabled = settings?.autoLabelsEnabled !== false;
-  const defaultSplits = settings?.inboxDefaultSplits !== false;
+  const defaultSplits = settings?.inboxDefaultSplits === true;
   const { data: folders } = useFolders(accountFilter);
   const { data: counts } = useUnreadCounts(accountFilter, open);
 

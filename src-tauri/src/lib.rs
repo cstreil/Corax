@@ -22,11 +22,21 @@ fn isolate_instance(identifier: &str) {
         return;
     }
     if std::env::var_os("COMAIL_DATA_DIR").is_none() {
-        if let Some(dir) = comail_core::config::platform_data_dir().map(|d| d.join(identifier)) {
-            if std::fs::create_dir_all(&dir).is_ok() {
-                std::env::set_var("COMAIL_DATA_DIR", &dir);
-            }
+        // Falling back to the release data directory would open the release
+        // SQLite database with a dev build's migrations - data loss on the
+        // daily driver. Abort instead of sharing it silently.
+        let Some(dir) = comail_core::config::platform_data_dir().map(|d| d.join(identifier)) else {
+            panic!(
+                "dev instance {identifier}: no platform data directory; refusing to share the release database"
+            );
+        };
+        if let Err(error) = std::fs::create_dir_all(&dir) {
+            panic!(
+                "dev instance {identifier}: cannot create data directory {}: {error}; refusing to share the release database",
+                dir.display()
+            );
         }
+        std::env::set_var("COMAIL_DATA_DIR", &dir);
     }
     if std::env::var_os("COMAIL_KEYRING_SERVICE").is_none() {
         std::env::set_var("COMAIL_KEYRING_SERVICE", identifier);

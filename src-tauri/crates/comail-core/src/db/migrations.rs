@@ -37,6 +37,7 @@ const MIGRATIONS: &[&str] = &[
     include_str!("migrations/033_folder_role_repairs.sql"),
     include_str!("migrations/034_stable_identity_attempts.sql"),
     include_str!("migrations/035_restore_non_trash_roles.sql"),
+    include_str!("migrations/036_backfill_reconciled.sql"),
 ];
 
 pub fn run(conn: &mut Connection) -> Result<()> {
@@ -128,6 +129,26 @@ mod tests {
                 .unwrap(),
             3
         );
+    }
+
+    #[test]
+    fn migration_036_leaves_existing_done_folders_unreconciled() {
+        // A folder an older build marked done was never reconciled against the
+        // server's UID list. The new column must default to 0 so the history
+        // worker picks it up exactly once more.
+        let mut conn = Connection::open_in_memory().unwrap();
+        conn.pragma_update(None, "foreign_keys", "ON").unwrap();
+        run_through(&mut conn, 35);
+        crate::db::testutil::seed_account(&conn);
+        conn.execute(
+            "UPDATE folders SET backfill_cursor = 1, backfill_done = 1 WHERE id = 1",
+            [],
+        )
+        .unwrap();
+        run(&mut conn).unwrap();
+        let folder = crate::db::repo::folders::get(&conn, 1).unwrap().unwrap();
+        assert!(folder.backfill_done);
+        assert!(!folder.backfill_reconciled);
     }
 
     #[test]

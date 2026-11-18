@@ -21,7 +21,7 @@ export function SplitTabs() {
   const tabRefs = useRef(new Map<string, HTMLButtonElement>());
 
   const autoLabels = settings?.autoLabelsEnabled !== false;
-  const defaultSplits = settings?.inboxDefaultSplits !== false;
+  const defaultSplits = settings?.inboxDefaultSplits === true;
   const tabs = useMemo<{ key: string; name: string; splitId?: number; labelId?: number }[]>(
     () =>
       inboxTabOrder(splits, labels, autoLabels, defaultSplits).map((item) => {

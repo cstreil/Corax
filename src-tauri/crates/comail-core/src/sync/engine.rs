@@ -1870,7 +1870,7 @@ async fn sync_folder(
         }
         // Historical backfill (extending the window downward) also runs on the
         // history connection; just make sure it's awake.
-        if !fresh_folder.backfill_done {
+        if !fresh_folder.backfill_done || !fresh_folder.backfill_reconciled {
             let _ = hist_tx.send(());
         }
     }
@@ -2180,7 +2180,7 @@ async fn run_history_backfill(
                 {
                     continue;
                 }
-                if folder.backfill_cursor.is_some() && folder.backfill_done {
+                if !needs_history_work(&folder) {
                     continue;
                 }
                 if session.is_none() {
@@ -2221,8 +2221,8 @@ async fn run_history_backfill(
                         .await?
                         .ok_or_else(|| CoreError::NotFound("folder".into()))?;
                     if fresh.backfill_cursor.is_none() {
-                        initial_backfill(&ctx, &config, s, &fresh).await?;
-                    } else if !fresh.backfill_done {
+                        initial_backfill(&ctx, &config, s, &fresh, sel.uid_next).await?;
+                    } else if !fresh.backfill_done || !fresh.backfill_reconciled {
                         extend_history(&ctx, &config, s, &fresh).await?;
                     }
                     Ok::<(), CoreError>(())
@@ -2319,11 +2319,32 @@ async fn retry_one_header_failure(
     Ok(true)
 }
 
+/// Whether the history worker still has work for this folder. `backfill_done`
+/// alone is not "finished": folders finished by older builds were marked done
+/// before the UID list was reconciled, so they get one more pass.
+fn needs_history_work(folder: &Folder) -> bool {
+    folder.backfill_cursor.is_none() || !folder.backfill_done || !folder.backfill_reconciled
+}
+
+/// Where the history walk starts when the date-filtered search came back
+/// empty. UIDNEXT is the next UID the server will hand out, so the highest
+/// existing UID is `uid_next - 1` and the walk starts there. `last_seen_uid` is
+/// only a fallback: the history worker can run before the sync actor recorded
+/// it, and a 0 there would start the walk at 1 and mark the folder done
+/// without walking anything.
+fn backfill_start_for_empty_search(uid_next: Option<i64>, last_seen_uid: i64) -> i64 {
+    uid_next
+        .filter(|uid| *uid > 0)
+        .or_else(|| (last_seen_uid > 0).then_some(last_seen_uid + 1))
+        .unwrap_or(1)
+}
+
 async fn initial_backfill(
     ctx: &SyncCtx,
     config: &AccountConfig,
     session: &mut Session,
     folder: &Folder,
+    uid_next: Option<i64>,
 ) -> Result<()> {
     let account_id = config.id;
     let since = chrono::Utc::now().date_naive() - chrono::Duration::days(BACKFILL_DAYS);
@@ -2393,7 +2414,11 @@ async fn initial_backfill(
     // holding only old mail ended up permanently empty. Start the walk at the
     // high-water mark instead and let extend_history work downward.
     if uids.is_empty() {
-        let start = folder.last_seen_uid.max(0) + 1;
+        // UIDNEXT comes from the SELECT that just ran. `last_seen_uid` is only
+        // a fallback: the history worker can run before the sync actor has
+        // recorded it, and a 0 there would start the walk at 1 and mark the
+        // folder done without walking anything.
+        let start = backfill_start_for_empty_search(uid_next, folder.last_seen_uid);
         let fid = folder.id;
         ctx.db
             .write(move |conn| repo::folders::set_backfill(conn, fid, Some(start), start <= 1))
@@ -2424,10 +2449,10 @@ async fn extend_history(
         return Ok(());
     };
     if cursor <= 1 {
-        let fid = folder.id;
-        ctx.db
-            .write(move |conn| repo::folders::set_backfill(conn, fid, Some(1), true))
-            .await?;
+        // Bottom of the walk. Reconcile before the folder counts as done, and
+        // do it here too: folders finished by older builds reach this branch
+        // with `done = true` but were never reconciled.
+        finish_backfill(ctx, config, session, folder).await?;
         return Ok(());
     }
     let hi = (cursor - 1).max(1) as u32;
@@ -2442,10 +2467,9 @@ async fn extend_history(
     }
     let fid = folder.id;
     let new_cursor = lo as i64;
+    // Never mark done here: `finish_backfill` does that after the reconcile.
     ctx.db
-        .write(move |conn| {
-            repo::folders::set_backfill(conn, fid, Some(new_cursor), new_cursor <= 1)
-        })
+        .write(move |conn| repo::folders::set_backfill(conn, fid, Some(new_cursor), false))
         .await?;
     ctx.bus.emit(CoreEvent::SyncProgress(SyncProgress {
         account_id: config.id,
@@ -2456,12 +2480,31 @@ async fn extend_history(
     }));
     emit_sync_status(ctx, config.id).await;
     if new_cursor <= 1 {
-        // The range walk is finished. Reconcile against the server's actual UID
-        // list: a large range fetch can come back empty (iCloud truncates or
-        // the parser gives up), which silently leaves a folder marked done with
-        // a fraction of its mail. Fetch whatever is still missing.
-        fill_missing_uids(ctx, config, session, folder).await?;
+        finish_backfill(ctx, config, session, folder).await?;
     }
+    Ok(())
+}
+
+/// Reconcile the folder against the server's actual UID list, then mark it
+/// done. A large range fetch can come back empty (iCloud truncates or the
+/// parser gives up), which silently leaves a folder marked done with a
+/// fraction of its mail. Order matters: when the reconcile fails (session
+/// lost, timeout) the folder stays `done = false` and the next tick retries
+/// instead of leaving a permanently incomplete folder behind.
+async fn finish_backfill(
+    ctx: &SyncCtx,
+    config: &AccountConfig,
+    session: &mut Session,
+    folder: &Folder,
+) -> Result<()> {
+    fill_missing_uids(ctx, config, session, folder).await?;
+    let fid = folder.id;
+    ctx.db
+        .write(move |conn| {
+            repo::folders::set_backfill(conn, fid, Some(1), true)?;
+            repo::folders::mark_backfill_reconciled(conn, fid)
+        })
+        .await?;
     Ok(())
 }
 
@@ -4246,27 +4289,11 @@ fn decode_selective_content(
                 planned.section
             ))
         })?;
-        let decoded = match crate::mime::decode_planned_text_section(
-            planned,
-            &section.mime_header,
-            &section.body,
-        ) {
-            Ok(decoded) => decoded,
-            Err(error) => {
-                // Keep the exact bytes the server returned for this section
-                // so a decode failure can be reproduced offline instead of
-                // guessed at from a log line.
-                let stem = format!(
-                    "comail-section-{}-{}",
-                    item.message_id,
-                    planned.section.replace('.', "_")
-                );
-                let dir = std::env::temp_dir();
-                let _ = std::fs::write(dir.join(format!("{stem}.body")), &section.body);
-                let _ = std::fs::write(dir.join(format!("{stem}.mime")), &section.mime_header);
-                return Err(error);
-            }
-        };
+        // A decode failure is reported, not dumped: raw mail bytes must stay
+        // inside the app data directory, and a file in $TMPDIR survives an
+        // account deletion.
+        let decoded =
+            crate::mime::decode_planned_text_section(planned, &section.mime_header, &section.body)?;
         match decoded.kind {
             crate::mime::TextSectionKind::Plain => plain.push(decoded.content),
             crate::mime::TextSectionKind::Html => html.push(decoded.content),
@@ -4609,5 +4636,54 @@ mod date_tests {
         assert_eq!(sane_date_ms(Some(recv + 400 * day), Some(recv), 0), recv);
         assert_eq!(sane_date_ms(None, Some(recv), 0), recv);
         assert_eq!(sane_date_ms(Some(99 * day), None, recv), recv);
+    }
+}
+
+#[cfg(test)]
+mod backfill_reconcile_tests {
+    use super::{backfill_start_for_empty_search, needs_history_work};
+    use crate::db::repo;
+
+    fn folder(conn: &rusqlite::Connection) -> repo::folders::Folder {
+        repo::folders::get(conn, 1).unwrap().unwrap()
+    }
+
+    #[test]
+    fn empty_search_starts_at_uidnext_not_at_one() {
+        // The history worker can run before the sync actor recorded
+        // last_seen_uid. Starting at 1 there marks the folder done without a
+        // single walk, which is the bug this path exists to avoid.
+        assert_eq!(backfill_start_for_empty_search(Some(500), 0), 500);
+        assert_eq!(backfill_start_for_empty_search(Some(500), 42), 500);
+        // No UIDNEXT (should not happen after a healthy SELECT): fall back.
+        assert_eq!(backfill_start_for_empty_search(None, 42), 43);
+        // Empty folder: nothing to walk, done immediately.
+        assert_eq!(backfill_start_for_empty_search(Some(1), 0), 1);
+        assert_eq!(backfill_start_for_empty_search(None, 0), 1);
+    }
+
+    #[test]
+    fn folder_marked_done_by_an_older_build_still_needs_work() {
+        let conn = crate::db::testutil::conn();
+        crate::db::testutil::seed_account(&conn);
+        // Migration 036 leaves pre-existing folders unreconciled, so a folder
+        // that an older build marked done is picked up once more.
+        conn.execute(
+            "UPDATE folders SET backfill_cursor = 1, backfill_done = 1 WHERE id = 1",
+            [],
+        )
+        .unwrap();
+        assert!(!folder(&conn).backfill_reconciled);
+        assert!(needs_history_work(&folder(&conn)));
+
+        repo::folders::mark_backfill_reconciled(&conn, 1).unwrap();
+        assert!(!needs_history_work(&folder(&conn)));
+
+        // A UIDVALIDITY reset starts the folder over, reconcile included.
+        repo::folders::reset_uid_mappings(&conn, 1).unwrap();
+        let reset = folder(&conn);
+        assert!(!reset.backfill_done);
+        assert!(!reset.backfill_reconciled);
+        assert!(needs_history_work(&reset));
     }
 }
