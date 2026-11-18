@@ -6,6 +6,7 @@
 | Locale | Language | Status |
 |--------|----------|--------|
 | `en`   | English  | Source |
+| `de`   | Deutsch  | In progress - English placeholders until translated |
 | `es`   | Español  | Machine-translated - pending native review |
 | `fr`   | Français | Machine-translated - pending native review |
 | `zh`   | 中文 (简体) | Machine-translated - pending native review |

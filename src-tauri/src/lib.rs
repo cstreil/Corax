@@ -127,6 +127,10 @@ fn resolve_lang(setting: &str) -> String {
 /// Localized tray menu labels: (open, quit). "Comail" is a proper noun and stays.
 /// Add a match arm per language as catalogs are added on the frontend.
 fn tray_labels(lang: &str) -> (String, String) {
+    // German puts the verb last, so it cannot use the "<verb> Comail" template.
+    if lang == "de" {
+        return ("Comail öffnen".to_string(), "Comail beenden".to_string());
+    }
     let (open, quit) = match lang {
         "es" => ("Abrir", "Salir"),
         "fr" => ("Ouvrir", "Quitter"),

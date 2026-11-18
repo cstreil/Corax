@@ -1,0 +1,30 @@
+{
+  "db": "Database error",
+  "io": "File system error",
+  "network": "Couldn't reach the server. Check your connection or the endpoint in Settings.",
+  "imap": "Mail server (IMAP) error",
+  "smtp": "Could not send (SMTP error)",
+  "tls": "Secure connection (TLS) error",
+  "auth": "Authentication failed",
+  "needs_reauth": "This account needs to be reconnected",
+  "keyring": "Secure storage error",
+  "mime": "Message format error",
+  "not_found": "Not found",
+  "offline": "You're offline",
+  "ai_not_configured": "AI is not configured. Add an API key in Settings (not needed for local endpoints like LM Studio).",
+  "ai_key_rejected": "Your AI provider rejected the API key. Open Settings → AI and paste a valid key.",
+  "other": "Something went wrong",
+  "unknown": "Something went wrong",
+  "oauthFailed": "OAuth sign-in failed",
+  "connectionFailed": "Connection failed",
+  "caldav": "Calendar server error",
+  "crash": {
+    "title": "Something went wrong",
+    "body": "This view hit an unexpected error. Your mail is safe — try again, or reload the app.",
+    "details": "Technical details",
+    "copy": "Copy details",
+    "copied": "Copied",
+    "reload": "Reload app",
+    "retry": "Try again"
+  }
+}

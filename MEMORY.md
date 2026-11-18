@@ -11,7 +11,7 @@
 
 ## Technik
 - Tauri 2: Rust-Core `src-tauri/crates/comail-core` (Tauri-frei) + Adapter `src-tauri/src` + React/TS-UI `src/`.
-- ~58k Zeilen Rust, ~43k Zeilen TS/TSX, 35 SQL-Migrationen, ~531 Rust-Tests, ~341 TS-Tests.
+- ~58k Zeilen Rust, ~43k Zeilen TS/TSX, 38 SQL-Migrationen, ~509 Rust-Tests, 344 TS-Tests.
 - SQLite (WAL + FTS5) + lokale Embeddings (bge-small, candle); Credentials im OS-Keyring.
 - Lizenz AGPL-3.0-only — gilt bei Verbreitung eines Forks weiter.
 - `async-imap 0.12` / `imap-proto 0.17` (seit 2026-11-17): 0.16.7 konnte iClouds `NIL` als
@@ -25,6 +25,10 @@
 - `looks_like_undecoded_quoted_printable` zählt nur noch `=3D` vor einem Anführungszeichen und
   UTF-8-Escapes-Läufe außerhalb von RFC-2047-Encoded-Words (Schwelle 2). Vorher: jedes `=XX`,
   ab 8 → ~1100 Fehlalarme pro Start (URL-Parameter, Encoded-Words, Base64).
+- IMAP-Mailbox-Namen kommen in modifiziertem UTF-7 (RFC 3501) und werden an der Grenze in
+  `src/imap/mutf7.rs` dekodiert (LIST) bzw. kodiert (SELECT/APPEND/CREATE/COPY/MOVE). **Keine**
+  Unicode-Normalisierung des Schlüssels: iCloud speichert Umlaute zerlegt (a + U+0308) und antwortet
+  auf die komponierte Form mit `[NONEXISTENT]`. NFC nur in der Anzeige (`displayFolderName`).
 - iCloud-IMAP lehnt **gleichzeitige** Verbindungen mit `[AUTHENTICATIONFAILED]` ab, obwohl das
   App-Passwort gültig ist. Die App öffnet Sync-Actor, Body-Fetcher und Mutation-Worker parallel;
   einzelne Versuche scheitern, der nächste gelingt. Nicht als falsches Passwort deuten.
@@ -85,11 +89,23 @@
   schalten die alte Vollansicht (Button im Panel-Kopf); `openThread` setzt das Flag zurück, damit
   Klick/Enter/J/K/Auto-Advance inline bleiben. Im Panel kein Back-Link und keine Tastatur-Fußzeile.
 
+## i18n / Deutsch (2026-11-18)
+- `de` ist vorbereitet: `src/i18n/locales/de/` = 1:1-Kopie von `en` (englische Werte als
+  Platzhalter, UI bleibt lesbar). 1833 Textwerte in 9 Dateien, `settings.json` hat 779.
+- Verdrahtet: `LANGUAGE_NAMES` (`de: "Deutsch"`), `tray_labels` (deutsch dreht die Wortstellung:
+  „Comail öffnen"), `TRANSLATION_STATUS.md`.
+- Werkzeuge: `node scripts/i18n-status.mjs [de] [--missing]` zeigt Fortschritt;
+  `src/i18n/localeParity.test.ts` erzwingt Keys/Platzhalter/Tags (für `de` vollständig, für die
+  maschinell übersetzten Sprachen sind fehlende Keys erlaubt — dort fehlen je 2: sidebar.pin/unpin,
+  splits.countAll*, compose.forward*_one).
+- Arbeitsauftrag für den Übersetzer: `docs/i18n-de.md`. Anrede „du" ist Vorgabe, noch nicht
+  vom Nutzer bestätigt.
+- `@types/node` fehlt absichtlich: Tests nutzen `import.meta.glob`, keine Node-APIs.
+
 ## Offen
-- **cua ist defekt** und blockiert die Selbstprüfung der UI: `params` kommt als JSON-String statt als
-  Objekt an (`Invalid input: expected object, received string`), bei jeder Methode. Andere Werkzeuge
-  mit verschachtelten Objekten funktionieren, also liegt es am 22-Zweige-`oneOf`-Schema. `dsh-cua`
-  liegt gepackt in `app.asar`; nur `dsh-experimental-cua-macos` ist entpackt.
+- cua läuft (seit 2026-11-18). Ursache war die **Modellvariante**: `deepseek-v4.1-flash` schickt
+  `params` als String, `-flash-fast` als Objekt. `cua.activate` holt Comail nicht nach vorn, erst
+  `open -a "Comail Dev"`; Klicks landen ~1 Zeile höher als geschätzt (Screenshot-Pixel × 1,043).
 - MCP in beiden Instanzen aus (`mcpEnabled: false`, Port 47823).
 - Embeddings laufen nach dem Body-Requeue noch nach (~1100 offen, ~300/Minute).
 - Selbst gesendete Mail an die eigene Adresse erscheint nur **einmal** (Message-ID-Dedupe), und zwar

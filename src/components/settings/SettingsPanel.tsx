@@ -75,6 +75,7 @@ import {
 /** Endonyms for the language picker - a language is named in its own language. */
 const LANGUAGE_NAMES: Record<string, string> = {
   en: "English",
+  de: "Deutsch",
   es: "Español",
   fr: "Français",
   zh: "中文",

@@ -14,7 +14,8 @@
     "test": "vitest run",
     "prepare": "git config core.hooksPath .githooks || true",
     "dev:isolated": "sh scripts/dev-isolated.sh",
-    "build:dev-app": "sh scripts/build-dev-app.sh"
+    "build:dev-app": "sh scripts/build-dev-app.sh",
+    "i18n:status": "node scripts/i18n-status.mjs"
   },
   "dependencies": {
     "@tanstack/react-query": "^5.51.0",

@@ -1,0 +1,39 @@
+{
+  "zero": {
+    "allDone": "You’re all done",
+    "nothingIn": "Nothing in {{view}} · {{date}}",
+    "hintNextSplit": "next split",
+    "hintCompose": "compose",
+    "hintShortcuts": "shortcuts"
+  },
+  "split": {
+    "important": "Important",
+    "other": "Other"
+  },
+  "splitPopover": {
+    "title": "New split",
+    "fromSender": "Mail from {{email}}",
+    "fromDomain": "Everyone @{{domain}}",
+    "tabName": "tab: {{name}}",
+    "created": "Split \"{{name}}\" created",
+    "excludeSender": "Exclude {{email}} from its current rule",
+    "excludeDomain": "Exclude everyone @{{domain}} from its current rule",
+    "excluded": "Excluded from \"{{name}}\""
+  },
+  "pane": {
+    "empty": "No conversation selected",
+    "recent": "Recent conversations",
+    "noRecent": "No other conversations",
+    "noSubject": "(no subject)"
+  },
+  "tips": {
+    "done": "to mark done",
+    "remind": "to remind me",
+    "compose": "to compose",
+    "search": "to search",
+    "command": "for all commands",
+    "dismiss": "Hide tips",
+    "splits": "to switch inbox tabs. Add your own in Settings › Split inbox.",
+    "splitsOpen": "Set up tabs"
+  }
+}
