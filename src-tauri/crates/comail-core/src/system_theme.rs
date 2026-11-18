@@ -38,7 +38,13 @@ pub fn detect() -> Option<SystemColors> {
     if !cfg!(target_os = "linux") {
         return None;
     }
-    plasma().or_else(omarchy)
+    // Omarchy first, not Plasma: Omarchy writes its own `kdeglobals` for the
+    // Qt apps it ships, so that file exists on an Omarchy box too — but it
+    // spends `[Colors:Selection] BackgroundNormal` on the selection tone and
+    // leaves the theme's accent in `DecorationFocus`, which would hand the app
+    // a grey accent. `kdeglobals` is only authoritative on a real Plasma
+    // session, and there is no Omarchy state directory to find first.
+    omarchy().or_else(plasma)
 }
 
 fn config_home() -> Option<PathBuf> {
@@ -84,17 +90,42 @@ fn plasma() -> Option<SystemColors> {
     ))
 }
 
-/// Omarchy: `~/.config/omarchy/current/colors.toml` points at the active theme.
+/// Omarchy: the applied theme is staged complete under its `current` state
+/// directory, so `colors.toml` is read from there.
 fn omarchy() -> Option<SystemColors> {
-    let base = config_home()?.join("omarchy");
-    let path = [
-        base.join("current").join("colors.toml"),
-        base.join("current/colors.toml"),
-    ]
-    .into_iter()
-    .find(|p| p.is_file())?;
+    let path = omarchy_colors_path()?;
     let text = std::fs::read_to_string(&path).ok()?;
-    let values = parse_flat_toml(&text);
+    omarchy_from_colors_toml(&text)
+}
+
+/// Where the active Omarchy theme keeps its `colors.toml`.
+///
+/// Omarchy 4 stages the applied theme at
+/// `$HOME/.local/state/omarchy/current/theme`; Omarchy 3 kept it under
+/// `~/.config/omarchy/current`. Omarchy writes `$HOME/.local/state` literally,
+/// whatever `XDG_STATE_HOME` says, so that path is built from `HOME` alone.
+fn omarchy_colors_path() -> Option<PathBuf> {
+    let home = std::env::var_os("HOME").map(PathBuf::from)?;
+    omarchy_candidates(&home, config_home().as_deref())
+        .into_iter()
+        .find(|path| path.is_file())
+}
+
+fn omarchy_candidates(home: &std::path::Path, config: Option<&std::path::Path>) -> Vec<PathBuf> {
+    let mut paths = vec![
+        home.join(".local/state/omarchy/current/theme/colors.toml"),
+        home.join(".config/omarchy/current/theme/colors.toml"),
+        home.join(".config/omarchy/current/colors.toml"),
+    ];
+    if let Some(config) = config {
+        paths.push(config.join("omarchy/current/theme/colors.toml"));
+        paths.push(config.join("omarchy/current/colors.toml"));
+    }
+    paths
+}
+
+fn omarchy_from_colors_toml(text: &str) -> Option<SystemColors> {
+    let values = parse_flat_toml(text);
 
     let background = values.get("background").and_then(|v| Rgb::parse(v))?;
     let ink = values.get("foreground").and_then(|v| Rgb::parse(v))?;
@@ -121,7 +152,13 @@ fn omarchy() -> Option<SystemColors> {
             }
         });
 
-    let dark = background.luminance() < 0.45;
+    // `mode` states the theme's intent; the background luminance is only the
+    // fallback for themes that leave it out.
+    let dark = match values.get("mode").map(|v| v.trim().trim_matches('"')) {
+        Some("light") => false,
+        Some("dark") => true,
+        _ => background.luminance() < 0.45,
+    };
     let (bg0, bg1) = sort_by_luminance(background, lighter, dark);
     Some(build(
         "omarchy",
@@ -392,5 +429,112 @@ mod tests {
             Some("\"#ff8d52\"")
         );
         assert_eq!(values.len(), 2);
+    }
+
+    /// `matte-black`, the theme installed on the Omarchy test machine. Copied
+    /// verbatim from `~/.local/state/omarchy/current/theme/colors.toml`.
+    const MATTE_BLACK: &str = r##"
+mode = "dark"
+
+accent = "#e68e0d"
+selection = "#2a2a2a"
+muted = "#333333"
+
+background = "#121212"
+dark_background = "#0d0d0d"
+darker_background = "#090909"
+lighter_background = "#1e1e1e"
+
+foreground = "#bebebe"
+dark_foreground = "#555555"
+light_foreground = "#8a8a8d"
+bright_foreground = "#bebebe"
+
+red = "#D35F5F"
+yellow = "#b91c1c"
+orange = "#c63d3d"
+green = "#FFC107"
+cyan = "#bebebe"
+blue = "#e68e0d"
+magenta = "#D35F5F"
+brown = "#631e1e"
+
+bright_red = "#B91C1C"
+bright_yellow = "#b90a0a"
+bright_green = "#FFC107"
+bright_cyan = "#eaeaea"
+bright_blue = "#f59e0b"
+bright_magenta = "#B91C1C"
+"##;
+
+    #[test]
+    fn real_omarchy_theme_maps_to_the_dark_token_set() {
+        let c = omarchy_from_colors_toml(MATTE_BLACK).expect("the real theme parses");
+        assert_eq!(c.source, "omarchy");
+        assert_eq!(c.mode, "dark");
+        // The theme's own roles, not a luminance guess.
+        assert_eq!(c.bg0, "#121212");
+        assert_eq!(c.bg1, "#1e1e1e");
+        assert_eq!(c.ink, "#bebebe");
+        // The accent is the theme's orange, never the `selection` grey.
+        assert_eq!(c.accent, "#e68e0d");
+        assert_eq!(c.on_accent, "#000000", "black text on the orange accent");
+        assert!(
+            luma(&c.bg2) > luma(&c.bg1),
+            "bg2 must stand off the surface"
+        );
+        assert!(luma(&c.bg3) > luma(&c.bg2));
+        assert!(
+            luma(&c.hairline) > luma(&c.bg1),
+            "the hairline separates on a dark theme"
+        );
+    }
+
+    #[test]
+    fn omarchy_mode_wins_over_a_dark_background() {
+        // A light theme can still carry a dark `background` in its palette;
+        // the stated mode decides, not the luminance.
+        let c = omarchy_from_colors_toml(
+            "mode = \"light\"\nbackground = \"#f7f7f7\"\nforeground = \"#202020\"\n",
+        )
+        .expect("parses");
+        assert_eq!(c.mode, "light");
+        assert!(luma(&c.bg3) < luma(&c.bg2), "light theme steps downwards");
+    }
+
+    #[test]
+    fn omarchy_state_dir_wins_over_the_old_config_path() {
+        let root = std::env::temp_dir().join(format!(
+            "rabe-system-theme-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        let state = root.join(".local/state/omarchy/current/theme");
+        let legacy = root.join(".config/omarchy/current");
+        std::fs::create_dir_all(&state).expect("temp state dir");
+        std::fs::create_dir_all(&legacy).expect("temp legacy dir");
+        std::fs::write(
+            state.join("colors.toml"),
+            "mode = \"dark\"\nbackground = \"#121212\"\nforeground = \"#bebebe\"\n",
+        )
+        .expect("write state theme");
+        std::fs::write(
+            legacy.join("colors.toml"),
+            "mode = \"light\"\nbackground = \"#ffffff\"\nforeground = \"#000000\"\n",
+        )
+        .expect("write legacy theme");
+
+        let path = omarchy_candidates(&root, None)
+            .into_iter()
+            .find(|path| path.is_file())
+            .expect("a theme is found");
+        assert_eq!(path, state.join("colors.toml"), "Omarchy 4 outranks 3");
+
+        let text = std::fs::read_to_string(&path).expect("read theme");
+        let c = omarchy_from_colors_toml(&text).expect("parses");
+        assert_eq!(c.bg0, "#121212");
+
+        std::fs::remove_dir_all(&root).expect("clean up");
     }
 }
