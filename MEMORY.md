@@ -37,6 +37,9 @@
   eine Base64-Endzeile mit 60–76 Zeichen als QP-Marker.
 
 ## Eigene Features
+- Themes seit 2026-11-18: `snow` = „Glas" (hell, blauer Akzent `#2f62ff`), `carbon` = „Graphit"
+  (dunkel, Akzent `#ff8d52`); Palette aus `Tasks/2026-11-18-mail-app-mockup`. IDs bewusst unverändert
+  (localStorage, Unions, Locale-Keys) — nur Werte und Labels. Paper/Omarchy/KDE bleiben Entwurf.
 - `inboxDefaultSplits` Default **aus**: eine ungeteilte Inbox; eigene Splits/Auto-Tabs erscheinen weiter.
 - Inline-Mailansicht: Mail klappt als Panel unter ihrer Zeile auf (Deckel 75 %, min. drei Zeilen,
   `ResizeObserver`); Klick auf die Kopfzeile klappt ein, `openThreadFull` öffnet die Vollansicht.
