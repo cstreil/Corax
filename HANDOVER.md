@@ -381,14 +381,17 @@ App 11012 eindeutige, **0 fehlend**.
    Agenten-Zugriff in den Settings aktivieren; bei parallelem Betrieb braucht
    die zweite Instanz einen anderen Port.
 4. **Keychain nach der Umbenennung** (2026-11-18): Mit dem Wechsel auf den
-   Identifier `de.streil.rabe.dev` wandert auch der Keyring-Service. Der
-   iCloud-Zugang des Dev-Builds liegt weiter unter dem alten Service
-   `com.deanoss.comail.dev` und wird nicht mehr gefunden — einmal
-   Kontoeinstellungen öffnen und das App-Passwort neu eintragen, danach hält
-   es. Die Release-Instanz ist nicht betroffen: deren Service ist die feste
-   Konstante `comail`, unabhängig vom Identifier. Falls im Keyring zusätzlich
-   ein KI-Schlüssel lag (`0:ai_api_key`), den ebenfalls einmal neu setzen.
-   Stand vorher (Punkt 10): 0 Keychain-Abfragen im Log, das Thema war durch.
+   Identifier `de.streil.rabe.dev` wandert der Keyring-Service. `credentials::load`
+   übernimmt einen vorhandenen Eintrag aus dem alten Service
+   (`com.deanoss.comail.dev`) beim ersten Lesen automatisch und legt ihn unter
+   dem neuen Namen ab; die alte Kopie bleibt liegen und wird nicht mehr gelesen.
+   Die Release-Instanz ist nicht betroffen, ihr Service ist die feste Konstante
+   `comail`. Belegt: nach dem Umzug „receive: connected; IDLE push enabled" ohne
+   Umgebungsvariable, Eintrag `1:password` unter `de.streil.rabe.dev`.
+   Grund für die Migration: `Bearbeiten` im Konto kennt kein Passwortfeld, und
+   `reauth_account` ist reiner OAuth-Flow — für IMAP-Konten gab es keinen Weg,
+   ein Passwort neu zu hinterlegen. Offene Lücke: ein eigenes „Passwort ändern"
+   für IMAP-Konten fehlt weiterhin.
 
 ## Fallstricke
 
