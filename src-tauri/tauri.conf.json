@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Rabe",
-  "version": "0.2.44",
+  "version": "0.2.45",
   "identifier": "de.streil.rabe",
   "build": {
     "beforeDevCommand": "pnpm dev",
@@ -32,7 +32,7 @@
       "deb",
       "appimage"
     ],
-    "createUpdaterArtifacts": true,
+    "createUpdaterArtifacts": false,
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -63,9 +63,9 @@
       }
     },
     "updater": {
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEU0MUYwODhGNzhDQTA0NzQKUldSMEJNcDRqd2dmNUFRenVJYkE3ZDZFZWdXSUNscmQ3VS9iMFBBa2FIRXlGTDhuWDFYdTUxU0UK",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEFENjc5MzlDNTEwOEI5MkQKUldRdHVRaFJuSk5uclFiL1lZdmJDZ0hxdElHTThmU2hFdU1Ccnd6UjZnUUJEaFZlaFIxS2tNR0gK",
       "endpoints": [
-        "https://github.com/NextOSP/comail/releases/latest/download/latest.json"
+        "https://github.com/cstreil/comail/releases/latest/download/latest.json"
       ]
     }
   }

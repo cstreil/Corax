@@ -1,17 +1,19 @@
 #!/bin/sh
-# Baut Rabe.app aus dem Fork und installiert sie nach /Applications.
+# Baut Rabe.app aus dem Fork, signiert sie und installiert sie nach /Applications.
 #
-# Zwei lokale Eigenheiten werden behandelt:
+# Drei lokale Eigenheiten werden behandelt:
 #  - Ohne volles Xcode fehlen die Siri-Intents-Metadaten
 #    (gen/apple-intents/Metadata.appintents), tauri.conf.json referenziert sie
 #    aber im Bundle. Der Eintrag wird für den Build entfernt und danach
 #    wiederhergestellt.
-#  - Die App wird mit der stabilen "comail-dev"-Identität signiert, damit die
-#    Keychain-Freigabe Rebuilds überlebt. Voraussetzung:
-#    bash src-tauri/scripts/macos-dev-cert.sh (einmalig).
-#
-# Updater-Artefakte und -Endpunkte sind über tauri.local.conf.json aus, damit
-# sich der Fork nicht selbst durch Upstream-Releases ersetzt.
+#  - Signiert wird mit einer echten "Apple Development"-Identität, nicht mit
+#    einer selbstgemachten: nur ein Apple-Zertifikat trägt eine Team-ID, und
+#    daraus leitet macOS die Keychain-Partition ab. Mit der ad-hoc-Signatur von
+#    tauri hinge die Freigabe am CDHash und jedes Update würde erneut nach dem
+#    IMAP-Passwort fragen. Fallback: die selbstgemachte "comail-dev"-Identität
+#    (einmalig: bash src-tauri/scripts/macos-dev-cert.sh).
+#  - Der Updater bleibt aktiv. Endpoint und Public Key stehen in
+#    tauri.conf.json; Updates werden von scripts/release-fork.sh signiert.
 set -e
 cd "$(dirname "$0")/.."
 
@@ -28,14 +30,43 @@ d.get("bundle", {}).get("macOS", {}).pop("files", None)
 p.write_text(json.dumps(d, indent=2) + "\n")
 PY
 
-pnpm tauri build --config src-tauri/tauri.local.conf.json --bundles app
+pnpm tauri build --bundles app
 
-APP=src-tauri/target/release/bundle/macos/Rabe.app
+APP="src-tauri/target/release/bundle/macos/Rabe.app"
+SIGN_IDENTITY="$(security find-identity -v -p codesigning 2>/dev/null \
+  | sed -n 's/.*"\(Apple Development: [^"]*\)".*/\1/p' | head -1)"
+if [ -z "$SIGN_IDENTITY" ] && security find-certificate -c "comail-dev" >/dev/null 2>&1; then
+  SIGN_IDENTITY="comail-dev"
+fi
+if [ -n "$SIGN_IDENTITY" ]; then
+  # Sign a copy outside the iCloud work tree: fileprovider keeps
+  # com.apple.FinderInfo on bundles in there, and codesign rejects that with
+  # "resource fork, Finder information, or similar detritus not allowed".
+  SIGN_DIR="$(mktemp -d)"
+  ditto "$APP" "$SIGN_DIR/Rabe.app"
+  xattr -cr "$SIGN_DIR/Rabe.app"
+  codesign --force --sign "$SIGN_IDENTITY" --identifier "de.streil.rabe" \
+    --timestamp=none "$SIGN_DIR/Rabe.app"
+  rm -rf "$APP"
+  ditto "$SIGN_DIR/Rabe.app" "$APP"
+  rm -rf "$SIGN_DIR"
+  echo "Signiert mit: $SIGN_IDENTITY"
+else
+  echo "Warnung: keine Signatur-Identität gefunden - App bleibt ad-hoc signiert." >&2
+  echo "         Einmalig: bash src-tauri/scripts/macos-dev-cert.sh" >&2
+fi
+
+# release-fork.sh baut nur und verpackt selbst; alles andere installiert.
+if [ "${NO_INSTALL:-0}" = "1" ]; then
+  echo
+  echo "Nicht installiert (NO_INSTALL=1). Bundle: $APP"
+  exit 0
+fi
+
+osascript -e 'quit app "Rabe"' 2>/dev/null || true
+sleep 2
 rm -rf /Applications/Rabe.app
-cp -R "$APP" /Applications/Rabe.app
-xattr -cr /Applications/Rabe.app
-codesign --force --sign "comail-dev" --identifier "de.streil.rabe" \
-  --timestamp=none /Applications/Rabe.app
+ditto "$APP" /Applications/Rabe.app
 
 echo
 echo "Installiert: /Applications/Rabe.app"

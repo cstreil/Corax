@@ -100,12 +100,19 @@ teilen:
 
 | Datei | Zweck |
 |---|---|
-| `scripts/build-local-app.sh` | Release-Build aus dem Fork, installiert nach `/Applications` |
+| `scripts/build-local-app.sh` | Release-Build aus dem Fork, signiert, installiert nach `/Applications` |
+| `scripts/release-fork.sh` | baut, packt `Rabe.app.tar.gz`, signiert und legt das GitHub-Release mit `latest.json` an |
 | `scripts/build-dev-app.sh` | `Rabe Dev.app` (Release-Profil, Dev-Identifier) |
 | `scripts/dev-isolated.sh` | `tauri dev` mit Dev-Overlay |
 | `scripts/imap-backup.py` | rein lesendes IMAP-Vollbackup als `.eml` |
 | `src-tauri/tauri.dev.conf.json` | Dev-Overlay: Identifier, Name, Updater aus |
-| `src-tauri/tauri.local.conf.json` | lokaler Build: Updater-Endpoints und -Artefakte aus |
+
+Der Updater ist in der Release-App **an**: `tauri.conf.json` trägt unseren
+Public Key und den Endpoint
+`https://github.com/cstreil/comail/releases/latest/download/latest.json`. Der
+private Schlüssel liegt unter `~/.tauri/rabe-updater.key` (außerhalb des Repos,
+`chmod 600`), ohne ihn kann niemand ein Update bauen, das eine installierte App
+annimmt.
 
 `build-local-app.sh` und `build-dev-app.sh` entfernen für den Build
 `bundle.macOS.files` aus `tauri.conf.json` und stellen die Datei per `trap`
