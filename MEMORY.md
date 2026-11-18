@@ -40,7 +40,7 @@
 ## Eigene Features
 - Themes seit 2026-11-18: `snow` = „Glas" (hell, blauer Akzent `#2f62ff`), `carbon` = „Graphit"
   (dunkel, Akzent `#ff8d52`); Palette aus `Tasks/2026-11-18-mail-app-mockup`. IDs bewusst unverändert
-  (localStorage, Unions, Locale-Keys) — nur Werte und Labels. Paper/Omarchy/KDE bleiben Entwurf.
+  (localStorage, Unions, Locale-Keys) — nur Werte und Labels.
 - Offene Mail = **eine ruhige Karte inklusive Kopf** (`border-hairline` + `shadow-card`); das Antwortziel
   markiert nur `border-accent/40` mit 1-px-Ring (10 %). Kein 2-px-Akzentrahmen mehr (Commit `811a106`).
 - Icon seit 2026-11-18: Rabenkopf (Variante A) aus `design/icon/`; `pnpm tauri icon` erzeugt `src-tauri/icons/`,
@@ -53,6 +53,23 @@
   `node scripts/i18n-status.mjs de [--missing]`, Regeln in `docs/i18n-de.md`.
 - `src/lib/snooze.ts` parst nur englische Zeitwörter; deutsche Keyword-Tabelle vom Nutzer 2026-11-18
   zurückgestellt (danach Platzhalter in `common:timePopover`/`calendar:create` umstellen).
+
+## Linux (angefangen 2026-11-18)
+- Scott (x86/CachyOS, Plasma 6.8.2 Wayland, `ssh scott`) und Burton (ARM/Omarchy, Hyprland, `ssh burton`)
+  bauen `Rabe_0.2.46_*.deb` mit `CARGO_BUILD_JOBS=3 pnpm tauri build --bundles deb` (~11–45 min).
+  AppImage scheitert an linuxdeploy, wird nicht verfolgt; für Arch ist ein PKGBUILD richtig, `.deb` nur
+  Zwischenstand. `patchelf` fehlt auf Burton, dort braucht `sudo` ein Passwort.
+- `System` liest unter Linux die Desktop-Palette: `comail-core/src/system_theme.rs`, Command
+  `system_colors`, Overlay `src/themes/system.ts`. Plasma aus `~/.config/kdeglobals`, Omarchy 4 aus
+  `~/.local/state/omarchy/current/theme/colors.toml` (der 3er-Pfad `~/.config/omarchy/current` gilt nur
+  für Omarchy 3). **Omarchy vor Plasma prüfen**: Omarchy schreibt eine eigene `kdeglobals`, deren
+  `[Colors:Selection] BackgroundNormal` das Auswahl-Grau ist, nicht der Akzent. `mode` entscheidet
+  hell/dunkel, Luminanz nur als Rückfall.
+- Die Palette überschreibt nur Flächen, Text, Akzent und Hairline; Schatten, KI- und Selection-Töne
+  bleiben aus Glas/Graphit. Ein selbst gewählter Akzent schlägt den Desktop-Akzent; `violet` ist der
+  Standard und lässt den Desktop-Akzent durch. `applySystemColors(null)` darf `--accent` nie löschen.
+- Burton steht auf Omarchy-Theme `matte-black` (dunkel, Akzent `#e68e0d`), Rabe dort auf `carbon`/`violet`.
+- Offen: Deko je Desktop (Hyprland zeichnet eigene Fensterknöpfe), Arch-Paketierung, Scott hat kein Konto.
 
 ## Bauen
 - `sh scripts/build-dev-app.sh` → `src-tauri/target/release/bundle/macos/Rabe Dev.app` (installiert nicht
@@ -69,6 +86,9 @@
   `scripts/imap-backup.py` (nur lesend). Letzter Abgleich über Message-IDs: 0 fehlend.
 
 ## Offen
+- **Linux-Builds von `2eb0ec4` stehen aus**: Scott und Burton gingen am 2026-11-18 gegen 20:30 offline;
+  die vorherigen Builds (vor den beiden Theme-Fixes) habe ich abgebrochen. Nach dem Aufwecken neu bauen
+  und die Palette im Screenshot prüfen (Burton: `theme` in `app_settings` auf `system` setzen).
 - Eigene Einstellungen fehlen: „Passwort ändern" für IMAP (nur OAuth-Reauth), deutsche Snooze-Zeitwörter.
 - Aufräum-Reste: `/Applications/Comail.app` (Upstream 0.2.41) und alte Dev-Daten (`com.deanoss.comail.dev`,
   `de.streil.rabe.dev` je ~885 MB) stehen noch; `Comail Dev.app` liegt in `~/.Trash`.
