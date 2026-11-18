@@ -30,6 +30,7 @@ pub mod scheduler;
 pub mod search;
 pub mod smtp;
 pub mod sync;
+pub mod system_theme;
 pub mod trash;
 pub mod unsubscribe;
 

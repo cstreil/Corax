@@ -541,6 +541,7 @@ pub fn run() {
             commands::ai_learn_voice,
             commands::ai_ask,
             commands::embedding_status,
+            commands::system_colors,
             commands::semantic_reindex,
         ])
         .build(context)

@@ -3986,6 +3986,10 @@ export async function mockInvoke(
       return delay(askMailbox(question, accountId), 900);
     }
 
+    case "system_colors":
+      // A browser tab has no desktop palette to read.
+      return null;
+
     case "embedding_status":
       return delay(
         {

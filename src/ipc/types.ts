@@ -879,6 +879,24 @@ export interface SearchResults {
   explain: SearchExplain;
 }
 
+/** Desktop palette for the Linux builds: Plasma's kdeglobals or an Omarchy theme. */
+export interface SystemColors {
+  /** Which desktop the colours came from. */
+  source: "kde" | "omarchy";
+  mode: "dark" | "light";
+  bg0: string;
+  bg1: string;
+  bg2: string;
+  bg3: string;
+  bg4: string;
+  ink: string;
+  inkMuted: string;
+  inkFaint: string;
+  accent: string;
+  onAccent: string;
+  hairline: string;
+}
+
 export interface EmbeddingStatus {
   /** Whether the local embedding backend is enabled. */
   enabled: boolean;
@@ -1337,4 +1355,9 @@ export interface Commands {
   embedding_status(args: Record<string, never>): Promise<EmbeddingStatus>;
   /** Requeue the whole mailbox for (re-)embedding; returns the number queued. */
   semantic_reindex(args: Record<string, never>): Promise<number>;
+  /**
+   * Desktop palette, so "System" can follow the window manager's colours.
+   * Null where there is no desktop palette to read (macOS, browser mock).
+   */
+  system_colors(args: Record<string, never>): Promise<SystemColors | null>;
 }

@@ -41,6 +41,7 @@ import { call } from "./ipc/commands";
 import { checkForUpdate } from "./ipc/updater";
 import { useInstallUpdate } from "./lib/useInstallUpdate";
 import { applyAccent, DEFAULT_ACCENT } from "./lib/accent";
+import { applySystemColors } from "./themes/system";
 import { applyFont } from "./lib/font";
 import { initSounds } from "./lib/sound";
 import { useDockBadge } from "./queries/dockBadge";
@@ -358,6 +359,7 @@ function useThemeSync() {
     const override =
       effectiveAccountId != null ? accountThemes?.[String(effectiveAccountId)] : undefined;
     const chosen = override && override !== "system" ? override : theme;
+    let alive = true;
     const apply = () => {
       const resolved = chosen === "system" ? (mq.matches ? "carbon" : "snow") : chosen;
       document.documentElement.dataset.theme = resolved;
@@ -367,11 +369,32 @@ function useThemeSync() {
       } catch {
         /* ignore */
       }
+      // "System" means the desktop's own palette where there is one (Plasma,
+      // Omarchy); macOS returns nothing and keeps this a plain light/dark
+      // follow. A desktop palette only tints a resolved base theme, so the
+      // shadow, AI and selection tokens stay ours.
+      if (chosen !== "system") {
+        applySystemColors(null);
+        return;
+      }
+      void call("system_colors", {})
+        .then((colors) => {
+          if (alive) applySystemColors(colors);
+        })
+        .catch(() => {
+          if (alive) applySystemColors(null);
+        });
     };
     apply();
     if (chosen === "system") {
       mq.addEventListener("change", apply);
-      return () => mq.removeEventListener("change", apply);
+      return () => {
+        alive = false;
+        mq.removeEventListener("change", apply);
+      };
     }
+    return () => {
+      alive = false;
+    };
   }, [theme, effectiveAccountId, accountThemes, accentColor]);
 }
