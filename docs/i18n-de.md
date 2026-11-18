@@ -1,8 +1,9 @@
 # Deutsche Übersetzung — Arbeitsauftrag
 
-Ziel: Comail vollständig auf Deutsch. `en` ist die Quelle, `de` ist vorbereitet und
-enthält noch die englischen Texte als Platzhalter (die Oberfläche bleibt dadurch
-benutzbar, statt leere Labels zu zeigen).
+Ziel: Comail vollständig auf Deutsch. `en` ist die Quelle, `de` ist übersetzt.
+Die wenigen Werte, die bewusst englisch bleiben (Produktnamen, Adressen,
+Formate, Suchsyntax), stehen als Liste im Paritätstest — alles andere muss
+übersetzt sein.
 
 ## Dateien
 
@@ -47,14 +48,18 @@ UTF-8, zwei Leerzeichen Einrückung, gültiges JSON.
 4. **Demo-Daten in `onboarding.preview`**: Das ist ein Objekt mit Beispieldaten
    für die Vorschau, kein Fließtext. Übersetzen: `title`, `tabs[].name`,
    `paletteItems[].title`/`section`, `labels.*`, `rows[].subject`, `rows[].snippet`,
-   `replyText`, `today`, `doneToast`, `undo`, `palettePlaceholder`.
-   **Nicht übersetzen**: Personennamen (`from`), Uhrzeiten (`time`), `group`,
-   `key`, `count`, `unread`, `labels`-Verweise in `rows[]`.
+   `replyText`, `today`, `doneToast`, `undo`, `palettePlaceholder` sowie die
+   Wochentagskürzel in `rows[].time` (`SAT` → `SA`). `time` ist Anzeigetext:
+   Uhrzeiten (`09:41`) bleiben, Wochentage werden übersetzt.
+   **Nicht übersetzen**: Personennamen (`from`), `group`, `key`, `count`,
+   `unread`, `labels`-Verweise in `rows[]`.
 5. **Keine Strukturänderung**: keine Keys hinzufügen, löschen, umbenennen,
    verschieben oder Arrays kürzen.
-6. **Keine leeren Werte**. Wenn ein Text im Deutschen identisch ist („Comail",
-   „IMAP"), bleibt der englische Text stehen — das ist in Ordnung und wird im
-   Fortschritt als offen gezählt.
+6. **Keine leeren Werte**. Ist ein Text im Deutschen identisch („Comail", „IMAP",
+   „Status"), bleibt er stehen — aber nur, wenn der Schlüssel in
+   `UNTRANSLATED_BY_DESIGN` (`src/i18n/localeParity.test.ts`) aufgeführt ist. Ein
+   neuer englischer Wert lässt den Test rot werden, statt still ausgeliefert zu
+   werden.
 
 ## Terminologie
 
@@ -87,6 +92,18 @@ Ein Begriff pro Sache, in allen Dateien gleich:
 | decision model | Entscheidungsmodell |
 | automation | Automatisierung |
 | search | Suche |
+| split (Regel) | Aufteilung |
+| AI | KI |
+| tier | Stufe |
+| provider | Anbieter |
+| backup (Anbieter) | Ersatz |
+| theme | Design |
+| attendee | Teilnehmende |
+| unsubscribe | Abbestellen |
+| message | Nachricht |
+| mail | E-Mail / E-Mails |
+| confidence | Konfidenz |
+| auto (Badge) | Automatisch |
 
 Marken und Protokolle bleiben: Comail, IMAP, SMTP, Gmail, iCloud, Google,
 Microsoft, Outlook, CalDAV, OAuth. „Email" wird zu „E-Mail" (mit Bindestrich).
@@ -133,12 +150,27 @@ node scripts/i18n-status.mjs de --missing
 
 ## Abnahme
 
-- `node scripts/i18n-status.mjs de` zeigt **1833/1833**
-- `pnpm exec vitest run src/i18n/localeParity.test.ts` grün (54 Tests)
+- `node scripts/i18n-status.mjs de` zeigt **1704/1833**. Die 129 restlichen Werte
+  stehen in `UNTRANSLATED_BY_DESIGN` (`src/i18n/localeParity.test.ts`):
+  Produktnamen, Adressen, Formate, Suchsyntax und Demo-Zeilen.
+- `pnpm exec vitest run src/i18n/localeParity.test.ts` grün: Struktur,
+  Platzhalter, Tags, leere Werte und „kein unbemerktes Englisch".
 - `pnpm typecheck` und `pnpm test` grün
 - Sichtprüfung in der App: `sh scripts/build-dev-app.sh`, installieren,
   Einstellungen → Sprache → Deutsch; die engen Stellen (Tab-Leiste,
   Befehlspalette, Einstellungszeilen, Toolbar-Buttons) auf Überlauf prüfen
+
+## Bewusst englisch
+
+- Beispiele für natürliche Zeitangaben (`common:timePopover.placeholder`,
+  `calendar:create.quickPlaceholder`): `src/lib/snooze.ts` parst nur englische
+  Schlüsselwörter. Ein deutsches Beispiel („morgen") würde nicht funktionieren —
+  englisch bleibt, bis es eine Keyword-Tabelle pro Sprache gibt.
+- Suchoperatoren (`common:search.ops.*`, `search.values.*`) sind Syntax.
+- `compose:replyPrefix` / `forwardPrefix` bleiben `Re:` / `Fwd:`, damit die
+  Betreff-Erkennung greift.
+- `compose:sendingIn` enthält `{s}` mit einfachen Klammern; `Toasts.tsx` ersetzt
+  das im Countdown. Nicht in `{{s}}` umwandeln.
 
 ## Nicht Teil des Auftrags
 
