@@ -1,0 +1,57 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+<defs>
+  <clipPath id="sq"><rect x="100" y="100" width="824" height="824" rx="185"/></clipPath>
+  <linearGradient id="edge" x1="0" y1="0" x2="0" y2="1">
+    <stop offset="0" stop-color="#fff" stop-opacity="0.22"/><stop offset=".5" stop-color="#fff" stop-opacity="0.077"/><stop offset="1" stop-color="#fff" stop-opacity="0.033"/>
+  </linearGradient>
+  <filter id="shadow" x="-10%" y="-10%" width="120%" height="125%">
+    <feGaussianBlur in="SourceAlpha" stdDeviation="14"/><feOffset dy="12"/>
+    <feComponentTransfer><feFuncA type="linear" slope=".32"/></feComponentTransfer>
+    <feMerge><feMergeNode/><feMergeNode in="SourceGraphic"/></feMerge>
+  </filter>
+  <radialGradient id="g" cx=".66" cy=".3" r=".95"><stop offset="0" stop-color="#8460d4"/><stop offset=".45" stop-color="#4b2f8f"/><stop offset="1" stop-color="#1c1233"/></radialGradient>
+  <clipPath id="rv"><path d="M 236 940
+ C 230 760 236 600 282 470
+ C 330 340 430 262 552 250
+ C 624 244 670 262 700 292
+ C 780 316 862 380 904 452
+ C 914 470 906 490 886 492
+ C 836 498 770 522 712 560
+ C 700 590 704 612 724 640
+ C 690 640 668 632 652 622
+ C 664 664 690 700 716 724
+ C 676 726 646 716 624 700
+ C 630 760 646 820 664 860
+ C 640 880 628 910 628 940 Z"/></clipPath>
+  <linearGradient id="sh1" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#b79cff" stop-opacity=".75"/><stop offset="1" stop-color="#8a63d2" stop-opacity="0"/></linearGradient>
+  <linearGradient id="sh2" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#8a63d2" stop-opacity=".45"/><stop offset="1" stop-color="#5f8ff0" stop-opacity="0"/></linearGradient>
+  <linearGradient id="beak" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#3a3542"/><stop offset=".55" stop-color="#211e27"/><stop offset="1" stop-color="#141218"/></linearGradient><linearGradient id="env" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fbfbfd"/><stop offset="1" stop-color="#dcdee5"/></linearGradient>
+</defs>
+<g filter="url(#shadow)"><rect x="100" y="100" width="824" height="824" rx="185" fill="url(#g)"/></g>
+<g clip-path="url(#sq)">
+  <g transform="translate(168 44) scale(.64)">
+  <path d="M 236 940
+ C 230 760 236 600 282 470
+ C 330 340 430 262 552 250
+ C 624 244 670 262 700 292
+ C 780 316 862 380 904 452
+ C 914 470 906 490 886 492
+ C 836 498 770 522 712 560
+ C 700 590 704 612 724 640
+ C 690 640 668 632 652 622
+ C 664 664 690 700 716 724
+ C 676 726 646 716 624 700
+ C 630 760 646 820 664 860
+ C 640 880 628 910 628 940 Z" fill="#121016"/>
+  <path d="M 292 520 C 334 382 436 288 552 274 C 612 268 652 280 680 300 C 600 298 498 326 418 396 C 366 440 324 482 292 520 Z" fill="url(#sh1)"/>
+  <path d="M 252 940 C 246 780 254 640 292 520 C 290 650 296 800 312 940 Z" fill="url(#sh2)"/>
+  <path d="M 694 288 C 780 316 862 380 904 452 C 914 470 906 490 886 492 C 836 498 770 522 712 560 C 670 500 662 380 694 288 Z" fill="url(#beak)"/>
+  <path d="M 700 300 C 780 326 852 384 892 448" fill="none" stroke="#fff" stroke-opacity=".22" stroke-width="10" stroke-linecap="round"/>
+  <path d="M 880 482 C 820 480 760 474 690 444" fill="none" stroke="#000" stroke-opacity=".7" stroke-width="9" stroke-linecap="round"/>
+  <circle cx="598" cy="352" r="27" fill="#c9b6ff"/>
+  <circle cx="598" cy="352" r="19" fill="#0b0a0e"/>
+  <circle cx="605" cy="345" r="6.5" fill="#fff"/></g>
+  <rect x="214" y="532" width="596" height="330" rx="46" fill="url(#env)"/>
+  <path d="M 252 566 L 512 742 L 772 566" fill="none" stroke="#b6b9c4" stroke-width="30" stroke-linecap="round" stroke-linejoin="round"/></g>
+<rect x="101.5" y="101.5" width="821" height="821" rx="183.5" fill="none" stroke="url(#edge)" stroke-width="3"/>
+</svg>
