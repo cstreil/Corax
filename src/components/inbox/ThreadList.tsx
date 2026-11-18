@@ -37,6 +37,9 @@ const EXPANDED_SHARE = 0.75;
  *  conversation inside is this much shorter than the row the virtualizer
  *  reserves - without the allowance the panel would be scrollable by 2px. */
 const PANEL_BORDER = 2;
+/** Pointer travel before a press in the gutter becomes a range sweep. Below
+ *  this the press is a plain checkbox click, so a shaky click never selects. */
+const SWEEP_THRESHOLD = 4;
 
 type ThreadListProps = {
   /** Flattened thread summaries in display order. */
@@ -239,12 +242,12 @@ export function ThreadList({
     else ctx.toggleStar();
   }, []);
 
-  // Press-and-drag sweeps a contiguous range. The gutter and the row body both
-  // start one; they differ only in what a no-move press means (see the two
-  // callers below). Virtualization unmounts off-screen rows, so the hovered
-  // index is derived from pointer Y against the scroll container rather than
-  // per-row events.
-  const beginSweep = useCallback((id: number, toggleOnTap: boolean) => {
+  // Press-and-drag in the gutter sweeps a contiguous range. Only the gutter
+  // starts one: the rest of the row is the open/collapse target, and a sweep
+  // there turned every slightly shaky click into a selection. Virtualization
+  // unmounts off-screen rows, so the hovered index is derived from pointer Y
+  // against the scroll container rather than per-row events.
+  const beginSweep = useCallback((id: number, startY: number) => {
     const el = scrollRef.current;
     dragRef.current = { startId: id, base: useUi.getState().selection, moved: false };
     useUi.getState().set({ selectAnchorId: id });
@@ -267,11 +270,14 @@ export function ThreadList({
     const onMove = (ev: MouseEvent) => {
       const drag = dragRef.current;
       if (!drag) return;
+      // A press that barely moves is a click, not a sweep. Without this the
+      // first mousemove of a shaky click already replaced the selection.
+      if (!drag.moved && Math.abs(ev.clientY - startY) < SWEEP_THRESHOLD) return;
+      drag.moved = true;
       const list = itemsRef.current;
       const startIdx = list.findIndex((it) => it.kind === "thread" && it.thread.id === drag.startId);
       if (startIdx < 0) return;
       const cur = itemIndexFromY(ev.clientY);
-      if (cur !== startIdx) drag.moved = true;
       const ids = list
         .slice(Math.min(startIdx, cur), Math.max(startIdx, cur) + 1)
         .flatMap((it) => (it.kind === "thread" ? [it.thread.id] : []));
@@ -295,7 +301,7 @@ export function ThreadList({
         };
         window.addEventListener("click", swallow, true);
         setTimeout(() => window.removeEventListener("click", swallow, true), 0);
-      } else if (toggleOnTap && drag) {
+      } else if (drag) {
         // A press with no movement in the gutter is a plain checkbox click.
         useUi.getState().toggleSelect(drag.startId);
       }
@@ -306,16 +312,8 @@ export function ThreadList({
   }, []);
 
   // Gutter press: sweep, or toggle this one row on a no-move tap.
-  const onGutterDown = useCallback((id: number) => beginSweep(id, true), [beginSweep]);
-
-  // Row-body press: drag over subjects/names to sweep a range. Modifier presses
-  // fall through to the click handler (Shift range / Cmd toggle), and a no-move
-  // press stays a plain click that opens the thread.
-  const onRowDown = useCallback(
-    (id: number, e: ReactMouseEvent) => {
-      if (e.button !== 0 || e.shiftKey || e.metaKey || e.ctrlKey) return;
-      beginSweep(id, false);
-    },
+  const onGutterDown = useCallback(
+    (id: number, e: ReactMouseEvent) => beginSweep(id, e.clientY),
     [beginSweep],
   );
 
@@ -557,7 +555,6 @@ export function ThreadList({
                   onRowHover={handleRowHover}
                   onToggleCheck={handleToggleCheck}
                   onGutterDown={onGutterDown}
-                  onRowDown={onRowDown}
                   jumpHint={jumpNumbers?.get(th.id)}
                   avatarUi={avatarUi}
                   photos={photos}
