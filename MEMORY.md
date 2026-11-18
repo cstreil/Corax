@@ -6,8 +6,9 @@
   umbenannt (alte URLs leiten 301 um). Details `FORK.md`, Fix-Begründungen `HANDOVER.md`.
 - Upstream v0.2.44 (`ded0898`) eingezogen → Branch `chore/merge-upstream-0.2.44` (50 Commits, PR #1 offen),
   darauf Rabe-Umbenennung, Shortcut `a`, Keyring-Migration, eigener Updater.
-- **v0.2.45 veröffentlicht** (2026-11-18, Tag auf `4416fb4`); Update-Test 0.2.44 → 0.2.45 in
-  `/Applications/Rabe.app` bestanden: Keychain bleibt, Sync verbindet ohne Passwortabfrage.
+- **v0.2.46 veröffentlicht** (2026-11-18): eigenes Rabe-Icon, Themes Glas/Graphit, dezenter
+  Antwortrahmen, `R`/`⇧R` statt `Enter`. Update-Test 0.2.44 → 0.2.45 in `/Applications/Rabe.app`
+  bestanden (Keychain bleibt, Sync ohne Passwortabfrage); 0.2.45 → 0.2.46 testet der Nutzer selbst.
 - Push über lokales `gh` (Account `cstreil`, HTTPS/Keychain); der GitHub-Connector pusht nicht. `gh` zielt
   im Fork sonst aufs Eltern-Repo → einmalig `gh repo set-default cstreil/Rabe`.
 - Zwei Instanzen, gleiches Binary, getrennte Daten: `de.streil.rabe` → `/Applications/Rabe.app`,
@@ -24,9 +25,9 @@
   `base64 0.22` lehnt Padding-Bits ab → eigene Engines mit `with_decode_allow_trailing_bits(true)`.
   QP-Heuristik nur `=3D` vor Anführungszeichen, Schwelle 2 (vorher ~1100 Fehlalarme pro Start).
 - HTML: Ammonia behält `<style>`/`class`; Grenze ist die iframe-CSP (`default-src 'none'`).
-- IMAP-Mailboxen sind modifiziertes UTF-7 (`mutf7.rs`), **keine** Unicode-Normalisierung des Schlüssels
-  (iCloud speichert Umlaute zerlegt; komponiert → `[NONEXISTENT]`, NFC nur in der Anzeige).
-- iCloud-IMAP lehnt parallele Verbindungen mit `[AUTHENTICATIONFAILED]` ab, obwohl das App-Passwort gilt.
+- IMAP-Mailboxen sind modifiziertes UTF-7 (`mutf7.rs`); Schlüssel **nicht** normalisieren (iCloud legt
+  Umlaute zerlegt ab, komponiert → `[NONEXISTENT]`; NFC nur in der Anzeige). iCloud lehnt parallele
+  Verbindungen mit `[AUTHENTICATIONFAILED]` ab, obwohl das App-Passwort gilt.
 
 ## Sync-Fixes
 - Zwei-Schritt-FETCH (BODYSTRUCTURE getrennt, `header_fetch_query(items, false)`, `attach_mime_plans` nur
@@ -40,6 +41,10 @@
 - Themes seit 2026-11-18: `snow` = „Glas" (hell, blauer Akzent `#2f62ff`), `carbon` = „Graphit"
   (dunkel, Akzent `#ff8d52`); Palette aus `Tasks/2026-11-18-mail-app-mockup`. IDs bewusst unverändert
   (localStorage, Unions, Locale-Keys) — nur Werte und Labels. Paper/Omarchy/KDE bleiben Entwurf.
+- Offene Mail = **eine ruhige Karte inklusive Kopf** (`border-hairline` + `shadow-card`); das Antwortziel
+  markiert nur `border-accent/40` mit 1-px-Ring (10 %). Kein 2-px-Akzentrahmen mehr (Commit `811a106`).
+- Icon seit 2026-11-18: Rabenkopf (Variante A) aus `design/icon/`; `pnpm tauri icon` erzeugt `src-tauri/icons/`,
+  Upstreams `Icon.icon` ist entfallen (kein `actool`/Icon Composer auf diesem Mac).
 - `inboxDefaultSplits` Default **aus**: eine ungeteilte Inbox; eigene Splits/Auto-Tabs erscheinen weiter.
 - Inline-Mailansicht: Mail klappt als Panel unter ihrer Zeile auf (Deckel 75 %, min. drei Zeilen,
   `ResizeObserver`); Klick auf die Kopfzeile klappt ein, `openThreadFull` öffnet die Vollansicht.
@@ -61,16 +66,20 @@
 
 ## Backup
 - `Tasks/2026-11-17-comail-mail-backup.nosync/` — 11744 `.eml`, 2,5 GB, `manifest.json` mit UIDVALIDITY;
-  `scripts/imap-backup.py` (nur lesend), Abgleich über Message-ID-Mengen. Letzter Abgleich: 0 fehlend.
+  `scripts/imap-backup.py` (nur lesend). Letzter Abgleich über Message-IDs: 0 fehlend.
 
 ## Offen
-- App-Icon ist noch das Upstream-Planeten-Icon (Dock/„Über"); `/Applications/Comail Dev.app` liegt noch da.
-- Eigenes „Passwort ändern" für IMAP-Konten fehlt (nur OAuth-Reauth); Snooze-Zeitwörter Deutsch offen.
-- cua: `open "/Applications/Rabe Dev.app"` nötig (`cua.activate` hilft nicht); Klicks ~1 Zeile höher als geschätzt
-  (Screenshot-Pixel × 1,043); gesperrter Desktop → `SESSION_LOCKED`.
-- MCP in beiden Instanzen aus (`mcpEnabled: false`, Port 47823).
+- Eigene Einstellungen fehlen: „Passwort ändern" für IMAP (nur OAuth-Reauth), deutsche Snooze-Zeitwörter.
+- Aufräum-Reste: `/Applications/Comail.app` (Upstream 0.2.41) und alte Dev-Daten (`com.deanoss.comail.dev`,
+  `de.streil.rabe.dev` je ~885 MB) stehen noch; `Comail Dev.app` liegt in `~/.Trash`.
+- cua: `open -a "/Applications/Rabe Dev.app"` nötig (`cua.activate` hilft nicht), Klicks ~1 Zeile höher als
+  geschätzt (Screenshot-Pixel × 1,043), gesperrter Desktop → `SESSION_LOCKED`; `screencapture -x -l <id>` als Ausweg.
+- MCP (Port 47823, Bearer-Token im Keyring je Instanz): Dev-Build an, DSH-Capability `rabe` hängt an
+  `$DSH_SECRET_COMAIL_MCP_TOKEN`; Freigaben Entwürfe/Organisieren/Senden ja, endgültig löschen nein.
+- Semantische Suche: Vektor in `message_embeddings` (f32, L2), beim Start in flachen RAM-Index (brute
+  force, ~1 ms); hybrid mit FTS5 über RRF. Dev-Instanz: multilinguales MiniLM, 11k Mails indiziert.
 - Selbst gesendete Mail an die eigene Adresse erscheint nur einmal (Message-ID-Dedupe).
 
 ## Umgebung
-- node 26.7.0, pnpm 10.7.0, cargo/rustc 1.99.1 via Homebrew, kein rustup, nur Xcode Command Line Tools.
-- `.nosync` hält Ordner aus iCloud *und* Syncthing heraus (bestätigt 2026-11-16).
+- node 26.7.0, pnpm 10.7.0, cargo/rustc 1.99.1 via Homebrew (kein rustup), nur Xcode Command Line Tools;
+  macOS 27.3 ohne `actool`. `.nosync` hält Ordner aus iCloud *und* Syncthing heraus.
