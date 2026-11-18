@@ -33,10 +33,31 @@ const TOKENS = [
   "--hairline-strong",
 ] as const;
 
-export function applySystemColors(colors: SystemColors | null): void {
+/** The two tokens carrying the accent, splittable from the rest. */
+const ACCENT_TOKENS: ReadonlySet<string> = new Set(["--accent", "--on-accent"]);
+
+export interface ApplySystemColorsOptions {
+  /**
+   * Whether this palette may set the accent. A user's own accent outranks the
+   * desktop's: when they picked one, `applyAccent` has already put it in place,
+   * so the overlay must leave it alone — and on the way out it must not remove
+   * it either. Defaults to `true`, which lets the desktop's accent through
+   * while the accent setting sits on its own default.
+   */
+  accent?: boolean;
+}
+
+export function applySystemColors(
+  colors: SystemColors | null,
+  options: ApplySystemColorsOptions = {},
+): void {
   const root = document.documentElement;
+  const withAccent = options.accent ?? true;
   if (!colors) {
-    for (const token of TOKENS) root.style.removeProperty(token);
+    for (const token of TOKENS) {
+      if (!withAccent && ACCENT_TOKENS.has(token)) continue;
+      root.style.removeProperty(token);
+    }
     return;
   }
   const set = (token: string, value: string) => root.style.setProperty(token, value);
@@ -46,8 +67,10 @@ export function applySystemColors(colors: SystemColors | null): void {
   set("--bg3", colors.bg3);
   set("--bg4", colors.bg4);
   set("--ink", triplet(colors.ink));
-  set("--accent", colors.accent);
-  set("--on-accent", colors.onAccent);
+  if (withAccent) {
+    set("--accent", colors.accent);
+    set("--on-accent", colors.onAccent);
+  }
   // Plasma's inactive foreground is the honest "muted" text; faint is that
   // pulled further towards the canvas so it still fade into the background.
   set("--text-muted", colors.inkMuted);

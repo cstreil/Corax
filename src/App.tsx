@@ -373,16 +373,20 @@ function useThemeSync() {
       // Omarchy); macOS returns nothing and keeps this a plain light/dark
       // follow. A desktop palette only tints a resolved base theme, so the
       // shadow, AI and selection tokens stay ours.
+      // The desktop's accent only fills in while the accent setting sits on its
+      // own default; a preset the user picked has already been applied just
+      // above and must survive both the overlay and its removal.
+      const withSystemAccent = accentColor === DEFAULT_ACCENT;
       if (chosen !== "system") {
-        applySystemColors(null);
+        applySystemColors(null, { accent: withSystemAccent });
         return;
       }
       void call("system_colors", {})
         .then((colors) => {
-          if (alive) applySystemColors(colors);
+          if (alive) applySystemColors(colors, { accent: withSystemAccent });
         })
         .catch(() => {
-          if (alive) applySystemColors(null);
+          if (alive) applySystemColors(null, { accent: withSystemAccent });
         });
     };
     apply();
