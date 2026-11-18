@@ -32,9 +32,9 @@
   },
   "theme": {
     "label": "Design",
-    "hint": "Snow ist hell, Carbon ist dunkel.",
-    "snow": "Snow",
-    "carbon": "Carbon",
+    "hint": "Glas ist hell, Graphit ist dunkel.",
+    "snow": "Glas",
+    "carbon": "Graphit",
     "system": "System"
   },
   "language": {

@@ -32,9 +32,9 @@
   },
   "theme": {
     "label": "Theme",
-    "hint": "Snow is light, Carbon is dark.",
-    "snow": "Snow",
-    "carbon": "Carbon",
+    "hint": "Glass is light, Graphite is dark.",
+    "snow": "Glass",
+    "carbon": "Graphite",
     "system": "System"
   },
   "language": {

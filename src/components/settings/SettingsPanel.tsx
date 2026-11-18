@@ -433,7 +433,7 @@ export function SettingsPanel() {
     {
       tab: "appearance",
       label: t("settings:theme.label"),
-      keywords: "appearance dark light snow carbon color",
+      keywords: "appearance dark light glass graphite glas graphit snow carbon color",
     },
     {
       tab: "appearance",

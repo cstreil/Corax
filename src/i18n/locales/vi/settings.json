@@ -32,9 +32,9 @@
   },
   "theme": {
     "label": "Giao diện",
-    "hint": "Snow là sáng, Carbon là tối.",
-    "snow": "Snow",
-    "carbon": "Carbon",
+    "hint": "Kính là sáng, Than chì là tối.",
+    "snow": "Kính",
+    "carbon": "Than chì",
     "system": "Hệ thống"
   },
   "language": {

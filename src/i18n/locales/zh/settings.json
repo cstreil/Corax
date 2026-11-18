@@ -32,9 +32,9 @@
   },
   "theme": {
     "label": "主题",
-    "hint": "雪白为浅色，碳黑为深色。",
-    "snow": "雪白",
-    "carbon": "碳黑",
+    "hint": "玻璃为浅色，石墨为深色。",
+    "snow": "玻璃",
+    "carbon": "石墨",
     "system": "跟随系统"
   },
   "language": {

@@ -32,9 +32,9 @@
   },
   "theme": {
     "label": "Tema",
-    "hint": "Snow es claro, Carbon es oscuro.",
-    "snow": "Snow",
-    "carbon": "Carbon",
+    "hint": "Cristal es claro, Grafito es oscuro.",
+    "snow": "Cristal",
+    "carbon": "Grafito",
     "system": "Sistema"
   },
   "language": {
