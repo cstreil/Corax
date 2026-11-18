@@ -47,7 +47,7 @@
   "sendingBadge": "Wird gesendet …",
   "sendFailedBadge": "Nicht gesendet",
   "sendFailedTitle": "Nachricht nicht gesendet",
-  "sendFailedHint": "Diese Nachricht wurde noch nicht gesendet. Comail versucht es automatisch weiter. Schlägt es dauerhaft fehl, melde dich erneut bei dem Konto an.",
+  "sendFailedHint": "Diese Nachricht wurde noch nicht gesendet. Rabe versucht es automatisch weiter. Schlägt es dauerhaft fehl, melde dich erneut bei dem Konto an.",
   "msgTo": "an",
   "msgCc": "Cc",
   "details": {
@@ -84,7 +84,7 @@
       "download": "Herunterladen",
       "downloaded": "{{name}} gespeichert",
       "noPreviewTitle": "Keine Vorschau verfügbar",
-      "unsupported": "Für diesen Dateityp gibt es in Comail noch keine Vorschau. Öffne die Datei in ihrer App oder speichere eine Kopie.",
+      "unsupported": "Für diesen Dateityp gibt es in Rabe noch keine Vorschau. Öffne die Datei in ihrer App oder speichere eine Kopie.",
       "tooLargeTitle": "Zu groß für die Vorschau",
       "tooLarge": "So große Dateien öffnen sich in ihrer eigenen App schneller.",
       "pdfFailed": "Dieses PDF konnte nicht dargestellt werden",

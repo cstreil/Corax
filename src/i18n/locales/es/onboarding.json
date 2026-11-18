@@ -51,13 +51,13 @@
     "continue": "Continuar",
     "skip": "Omitir",
     "welcome": {
-      "title": "Te damos la bienvenida a Comail.",
+      "title": "Te damos la bienvenida a Rabe.",
       "body": "Una bandeja de entrada rápida, pensada para el teclado. Conecta una cuenta, elige un aspecto, aprende tres teclas y listo. Cerca de un minuto.",
       "cta": "Empezar"
     },
     "connect": {
       "title": "Trae tu bandeja de entrada.",
-      "body": "Comail se comunica directamente con tu proveedor. Tu contraseña y tu correo nunca salen de este ordenador.",
+      "body": "Rabe se comunica directamente con tu proveedor. Tu contraseña y tu correo nunca salen de este ordenador.",
       "imap": "Otro proveedor (IMAP)",
       "waiting": "Esperando a tu navegador…",
       "waitingHint": "Termina de iniciar sesión y vuelve aquí.",
@@ -78,7 +78,7 @@
     },
     "shortcuts": {
       "title": "Aprende las teclas.",
-      "body": "Comail está pensado para manejarse con el teclado. Prueba cada una: la bandeja de la derecha es un entorno de prueba y nada afecta a tu correo.",
+      "body": "Rabe está pensado para manejarse con el teclado. Prueba cada una: la bandeja de la derecha es un entorno de prueba y nada afecta a tu correo.",
       "press": "Pulsa",
       "groups": {
         "navigate": "Moverse",
@@ -102,7 +102,7 @@
       "snoozeShort": "Posponer",
       "replyShort": "Responder",
       "paletteShort": "Paleta de comandos",
-      "allDone": "Ya conoces lo básico. Pulsa ? en cualquier lugar de Comail para ver todos los atajos.",
+      "allDone": "Ya conoces lo básico. Pulsa ? en cualquier lugar de Rabe para ver todos los atajos.",
       "progress": "{{n}} de {{total}} probados",
       "then": "luego",
       "summarize": "Resumir la conversación",

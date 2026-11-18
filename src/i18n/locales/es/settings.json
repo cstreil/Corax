@@ -191,7 +191,7 @@
     "automation": {
       "newTitle": "Nueva automatización",
       "editTitle": "Editar automatización",
-      "editorHint": "Describe todo el flujo de trabajo en lenguaje natural. Comail lo interpretará y validará antes de que se pueda guardar.",
+      "editorHint": "Describe todo el flujo de trabajo en lenguaje natural. Rabe lo interpretará y validará antes de que se pueda guardar.",
       "promptLabel": "Describe la automatización",
       "promptPlaceholder": "Cuando un correo sea una factura o un recibo de un proveedor, añade la etiqueta Finanzas, muévelo a Importante y añade [FACTURA] al asunto.",
       "promptHint": "Incluye tanto con qué correos debe coincidir como cada acción que se ejecutará, en el orden que quieras.",
@@ -258,7 +258,7 @@
       "title": "Configuración paso a paso",
       "googleTitle": "Google (Gmail)",
       "openGoogle": "Abrir Google Cloud Console",
-      "g1": "Crea un proyecto: en console.cloud.google.com abre el selector de proyectos de la barra superior, pulsa Nuevo proyecto, ponle nombre (p. ej. Comail), Crear y selecciónalo. Luego abre el menú y ve a APIs y servicios.",
+      "g1": "Crea un proyecto: en console.cloud.google.com abre el selector de proyectos de la barra superior, pulsa Nuevo proyecto, ponle nombre (p. ej. Rabe), Crear y selecciónalo. Luego abre el menú y ve a APIs y servicios.",
       "g2": "Pantalla de consentimiento de OAuth: elige Externo (Interno solo si tienes una organización de Workspace), rellena el nombre de la app y tu correo como contacto de soporte y de desarrollador, y añade tu propia dirección de Gmail en Usuarios de prueba.",
       "g3": "Ámbitos: pulsa Agregar o quitar ámbitos, pega https://mail.google.com/ en el cuadro de entrada manual y añádelo. Es el único ámbito que Google acepta para IMAP/SMTP XOAUTH2; no necesitas habilitar la API de Gmail.",
       "g4": "Credenciales: Crear credenciales, ID de cliente de OAuth, tipo de aplicación App de escritorio. Los clientes de escritorio aceptan automáticamente el bucle local http://127.0.0.1, así que no hay URI de redirección que configurar.",
@@ -267,11 +267,11 @@
       "g7": "Para sincronizar el calendario (Conectar Google Calendar): en el mismo proyecto habilita la API de Google Calendar (APIs y servicios, Biblioteca, busca Google Calendar API, Habilitar) y en la pantalla de consentimiento añade el ámbito https://www.googleapis.com/auth/calendar. Sin ambos, la conexión falla con un error del servidor de calendario.",
       "msTitle": "Microsoft (Outlook / 365)",
       "openMs": "Abrir Microsoft Entra",
-      "m1": "En entra.microsoft.com (o portal.azure.com) ve a Registros de aplicaciones, Nuevo registro. Llámala Comail: los usuarios ven este nombre en la pantalla de consentimiento.",
-      "m2": "Tipos de cuenta admitidos: elige la opción multiinquilino que también incluye cuentas personales de Microsoft (cualquier directorio de organización + personales). Es obligatorio: Comail inicia sesión por el punto de conexión compartido /common y una app de un solo inquilino falla con el error AADSTS50194. Se puede corregir después en Autenticación.",
+      "m1": "En entra.microsoft.com (o portal.azure.com) ve a Registros de aplicaciones, Nuevo registro. Llámala Rabe: los usuarios ven este nombre en la pantalla de consentimiento.",
+      "m2": "Tipos de cuenta admitidos: elige la opción multiinquilino que también incluye cuentas personales de Microsoft (cualquier directorio de organización + personales). Es obligatorio: Rabe inicia sesión por el punto de conexión compartido /common y una app de un solo inquilino falla con el error AADSTS50194. Se puede corregir después en Autenticación.",
       "m3": "URI de redirección: elige la plataforma Aplicaciones móviles y de escritorio (no Web), valor http://localhost. La variante Web espera un secreto y falla con un error de redirección; los puertos de bucle local se aceptan luego automáticamente.",
       "m4": "Permisos de API: Agregar un permiso, Microsoft Graph, y luego Permisos delegados (no Permisos de aplicación; si al buscar email aparecen APIs sin relación, estás en el cuadro de Aplicación). Marca IMAP.AccessAsUser.All, SMTP.Send, offline_access, openid y email, y pulsa Agregar permisos.",
-      "m5": "No hay ninguna clave ni secreto que crear: omite Certificados y secretos (Comail es un cliente público). Copia el ID de aplicación (cliente) de la página Información general en el campo de abajo y deja vacío el secreto de cliente de Microsoft.",
+      "m5": "No hay ninguna clave ni secreto que crear: omite Certificados y secretos (Rabe es un cliente público). Copia el ID de aplicación (cliente) de la página Información general en el campo de abajo y deja vacío el secreto de cliente de Microsoft.",
       "m6": "Solo buzones de trabajo o escuela: si el inicio de sesión termina con \"Se necesita aprobación del administrador\", un administrador del inquilino debe dar su consentimiento una vez con Conceder consentimiento de administrador en la página de permisos de API. Las cuentas personales de Outlook.com nunca lo necesitan.",
       "msNote": "¿Cuenta personal de Outlook.com / Hotmail / Live? Aun así registras la app aquí. Inicia sesión en el portal con tu cuenta personal (es gratis, no necesitas suscripción de Azure) y elige la opción multiinquilino + personal en el paso 2. La cuenta con la que te registras y el buzón que conectas pueden ser distintos.",
       "docsHint": "¿Prefieres la guía completa con capturas de pantalla y solución de problemas?",
@@ -740,7 +740,7 @@
     "custom": "Color personalizado"
   },
   "font": {
-    "hint": "La tipografía de Comail. El cuerpo de los mensajes conserva sus propias fuentes.",
+    "hint": "La tipografía de Rabe. El cuerpo de los mensajes conserva sus propias fuentes.",
     "system": "Sistema",
     "custom": "Fuente de Google personalizada",
     "customPlaceholder": "Cualquier fuente de Google, p. ej. Poppins",
@@ -853,7 +853,7 @@
   },
   "decision": {
     "section": "Modelo de decisión",
-    "intro": "Respuestas tipadas de sí/no y de elegir una opción para las categorías de IA y las comprobaciones de IA de reglas y divisiones, mediante TypeSafe Jev, la Decisions API de OpenAI o un endpoint compatible. Todo sigue funcionando sin ellos: Comail pregunta al modelo de chat (API, local o Apple en el dispositivo) y, sin ninguna IA, las condiciones y la clasificación integrada siguen funcionando.",
+    "intro": "Respuestas tipadas de sí/no y de elegir una opción para las categorías de IA y las comprobaciones de IA de reglas y divisiones, mediante TypeSafe Jev, la Decisions API de OpenAI o un endpoint compatible. Todo sigue funcionando sin ellos: Rabe pregunta al modelo de chat (API, local o Apple en el dispositivo) y, sin ninguna IA, las condiciones y la clasificación integrada siguen funcionando.",
     "providerLabel": "Proveedor",
     "provider": {
       "off": "Desactivado",

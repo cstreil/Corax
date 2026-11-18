@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Comail",
+  "productName": "Rabe",
   "version": "0.2.44",
-  "identifier": "com.deanoss.comail",
+  "identifier": "de.streil.rabe",
   "build": {
     "beforeDevCommand": "pnpm dev",
     "devUrl": "http://localhost:1420",
@@ -14,7 +14,7 @@
     "withGlobalTauri": true,
     "windows": [
       {
-        "title": "Comail",
+        "title": "Rabe",
         "width": 1200,
         "height": 800,
         "minWidth": 720,

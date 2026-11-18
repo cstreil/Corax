@@ -7,8 +7,8 @@
   **PR #1** gegen `fork/sync-fixes` (MERGEABLE/CLEAN, offen).
 - Push über lokales `gh` (Account `cstreil`, HTTPS/Keychain); der GitHub-Connector pusht nicht. `gh` zielt
   im Fork sonst aufs Eltern-Repo → einmalig `gh repo set-default cstreil/comail`.
-- Zwei Instanzen, gleiches Binary, getrennte Daten: `com.deanoss.comail` → `/Applications/Comail.app`,
-  `…comail.dev` → `Comail Dev.app`. Upstream-Release-App deinstalliert (liegt in `~/.Trash`).
+- Zwei Instanzen, gleiches Binary, getrennte Daten: `de.streil.rabe` → `/Applications/Rabe.app`,
+  `de.streil.rabe.dev` → `Rabe Dev.app`. Upstream-Release-App deinstalliert (liegt in `~/.Trash`).
 
 ## Technik
 - Tauri 2: Rust-Core `src-tauri/crates/comail-core` (Tauri-frei) + Adapter + React/TS `src/`; ~58k Zeilen
@@ -50,8 +50,8 @@
   zurückgestellt (danach Platzhalter in `common:timePopover`/`calendar:create` umstellen).
 
 ## Bauen
-- `sh scripts/build-dev-app.sh` → `src-tauri/target/release/bundle/macos/Comail Dev.app` (installiert nicht
-  selbst, dann `ditto` nach `/Applications`); `sh scripts/build-local-app.sh` → `/Applications/Comail.app`.
+- `sh scripts/build-dev-app.sh` → `src-tauri/target/release/bundle/macos/Rabe Dev.app` (installiert nicht
+  selbst, dann `ditto` nach `/Applications`); `sh scripts/build-local-app.sh` → `/Applications/Rabe.app`.
 - Signatur: echte `Apple Development`-Identität (Team-ID `2XSHYS8HMR`), Fallback `comail-dev`.
 - Das Dev-Skript patcht `tauri.conf.json` und stellt sie per `trap` zurück: während des Builds ist der
   Arbeitsbaum schmutzig, nicht committen. `pnpm dev:isolated` = Hot-Reload-Instanz.
@@ -63,8 +63,8 @@
 ## Offen
 - **Updater-Endpoint** zeigt auf `NextOSP/comail/releases/latest` → eine Fork-Release-Version ersetzt sich
   selbst durch Upstream. Auf Fork umbiegen oder abschalten.
-- Release-DB (user_version 35) wandert erst beim nächsten Release-Lauf auf 39; `/Applications/Comail.app` 0.2.41.
-- cua: `open -a "Comail Dev"` nötig (`cua.activate` hilft nicht); Klicks ~1 Zeile höher als geschätzt
+- Release-DB (user_version 35) wandert erst beim nächsten Release-Lauf auf 39; `/Applications/Rabe.app` 0.2.41.
+- cua: `open "/Applications/Rabe Dev.app"` nötig (`cua.activate` hilft nicht); Klicks ~1 Zeile höher als geschätzt
   (Screenshot-Pixel × 1,043); gesperrter Desktop → `SESSION_LOCKED`.
 - MCP in beiden Instanzen aus (`mcpEnabled: false`, Port 47823).
 - Selbst gesendete Mail an die eigene Adresse erscheint nur einmal (Message-ID-Dedupe).

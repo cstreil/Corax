@@ -16,8 +16,8 @@ zusätzlich in `MEMORY.md`.
 
 ## Aktueller Stand (2026-11-17)
 
-Dev-Instanz (`com.deanoss.comail.dev`, Datenverzeichnis
-`~/Library/Application Support/com.deanoss.comail.dev`):
+Dev-Instanz (`de.streil.rabe.dev`, Datenverzeichnis
+`~/Library/Application Support/de.streil.rabe.dev`):
 
 ```
 Mails            11015      (vollständig, siehe Verifikation)
@@ -29,7 +29,7 @@ Session-Verluste     0      (vor dem Fix: 96)
 Content-Fehler       0
 ```
 
-Die Release-Instanz (`com.deanoss.comail`, `/Applications/Comail.app`) nutzt
+Die Release-Instanz (`de.streil.rabe`, `/Applications/Rabe.app`) nutzt
 dasselbe Binary mit der Basiskonfiguration und ein eigenes Datenverzeichnis.
 
 ## Änderungen und ihre Begründung
@@ -93,7 +93,7 @@ teilen:
 
 - `COMAIL_DATA_DIR` und `COMAIL_KEYRING_SERVICE` als Overrides.
 - `isolate_instance()` in `lib.rs` leitet beides aus einem Bundle-Identifier
-  ≠ `com.deanoss.comail` ab. Läuft vor `init_logging()`, damit auch das Log
+  ≠ `de.streil.rabe` ab. Läuft vor `init_logging()`, damit auch das Log
   im richtigen Verzeichnis landet.
 
 ### 7. Build- und Dev-Skripte
@@ -101,7 +101,7 @@ teilen:
 | Datei | Zweck |
 |---|---|
 | `scripts/build-local-app.sh` | Release-Build aus dem Fork, installiert nach `/Applications` |
-| `scripts/build-dev-app.sh` | `Comail Dev.app` (Release-Profil, Dev-Identifier) |
+| `scripts/build-dev-app.sh` | `Rabe Dev.app` (Release-Profil, Dev-Identifier) |
 | `scripts/dev-isolated.sh` | `tauri dev` mit Dev-Overlay |
 | `scripts/imap-backup.py` | rein lesendes IMAP-Vollbackup als `.eml` |
 | `src-tauri/tauri.dev.conf.json` | Dev-Overlay: Identifier, Name, Updater aus |
@@ -341,8 +341,8 @@ Ein Fehler dort kostet nur die Büroklammer, nie den Header-Batch.
 ```bash
 cd "Projekte/comail.nosync"
 
-sh scripts/build-local-app.sh   # → /Applications/Comail.app
-sh scripts/build-dev-app.sh     # → Comail Dev.app, danach nach /Applications kopieren
+sh scripts/build-local-app.sh   # → /Applications/Rabe.app
+sh scripts/build-dev-app.sh     # → Rabe Dev.app, danach nach /Applications kopieren
 pnpm dev:isolated               # Hot-Reload-Dev-Instanz
 ```
 
@@ -380,12 +380,15 @@ App 11012 eindeutige, **0 fehlend**.
 3. **MCP ist aus** in beiden Instanzen (`mcpEnabled: false`, Port 47823). Für
    Agenten-Zugriff in den Settings aktivieren; bei parallelem Betrieb braucht
    die zweite Instanz einen anderen Port.
-4. **Keychain-Freigabe nach Signaturwechsel** (Punkt 10): die vorhandenen
-   Einträge unter Service `com.deanoss.comail.dev` tragen noch die alte
-   CDHash-Partition. Nach dem ersten Start mit der Apple-Signatur einmal
-   „Immer erlauben" — danach sollte es halten. Falls nicht, müssen die Einträge
-   einmal neu angelegt werden (Passwort im Konto erneut eintragen).
-   Stand 2026-11-17: 0 Keychain-Abfragen im Log, das Thema ist durch.
+4. **Keychain nach der Umbenennung** (2026-11-18): Mit dem Wechsel auf den
+   Identifier `de.streil.rabe.dev` wandert auch der Keyring-Service. Der
+   iCloud-Zugang des Dev-Builds liegt weiter unter dem alten Service
+   `com.deanoss.comail.dev` und wird nicht mehr gefunden — einmal
+   Kontoeinstellungen öffnen und das App-Passwort neu eintragen, danach hält
+   es. Die Release-Instanz ist nicht betroffen: deren Service ist die feste
+   Konstante `comail`, unabhängig vom Identifier. Falls im Keyring zusätzlich
+   ein KI-Schlüssel lag (`0:ai_api_key`), den ebenfalls einmal neu setzen.
+   Stand vorher (Punkt 10): 0 Keychain-Abfragen im Log, das Thema war durch.
 
 ## Fallstricke
 

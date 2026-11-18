@@ -1,5 +1,5 @@
 #!/bin/sh
-# Baut Comail.app aus dem Fork und installiert sie nach /Applications.
+# Baut Rabe.app aus dem Fork und installiert sie nach /Applications.
 #
 # Zwei lokale Eigenheiten werden behandelt:
 #  - Ohne volles Xcode fehlen die Siri-Intents-Metadaten
@@ -30,12 +30,12 @@ PY
 
 pnpm tauri build --config src-tauri/tauri.local.conf.json --bundles app
 
-APP=src-tauri/target/release/bundle/macos/Comail.app
-rm -rf /Applications/Comail.app
-cp -R "$APP" /Applications/Comail.app
-xattr -cr /Applications/Comail.app
-codesign --force --sign "comail-dev" --identifier "com.deanoss.comail" \
-  --timestamp=none /Applications/Comail.app
+APP=src-tauri/target/release/bundle/macos/Rabe.app
+rm -rf /Applications/Rabe.app
+cp -R "$APP" /Applications/Rabe.app
+xattr -cr /Applications/Rabe.app
+codesign --force --sign "comail-dev" --identifier "de.streil.rabe" \
+  --timestamp=none /Applications/Rabe.app
 
 echo
-echo "Installiert: /Applications/Comail.app"
+echo "Installiert: /Applications/Rabe.app"

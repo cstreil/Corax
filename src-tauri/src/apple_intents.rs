@@ -48,7 +48,7 @@ mod ffi {
         tauri::async_runtime::spawn(async move {
             let answer = match app {
                 Some(app) => super::handle(&app, &request).await,
-                None => super::reply(false, "Comail is still starting up."),
+                None => super::reply(false, "Rabe is still starting up."),
             };
             let text = CString::new(answer.to_string().replace('\0', "")).unwrap_or_default();
             reply(ctx as *mut c_void, text.as_ptr());
@@ -73,7 +73,7 @@ async fn handle(app: &AppHandle, request: &str) -> Value {
     let req: Value = serde_json::from_str(request).unwrap_or_default();
     let arg = |key: &str| req[key].as_str().unwrap_or("").trim().to_string();
     let Some(state) = app.try_state::<AppState>() else {
-        return reply(false, "Comail is still starting up. Try again in a moment.");
+        return reply(false, "Rabe is still starting up. Try again in a moment.");
     };
     let core = state.core.clone();
     match req["action"].as_str().unwrap_or("") {
@@ -96,7 +96,7 @@ async fn handle(app: &AppHandle, request: &str) -> Value {
                     "I didn't find a verification code in the last {CODE_MAX_AGE_MINUTES} minutes."
                 ),
             ),
-            Err(e) => reply(false, format!("Comail couldn't read your mail: {e}")),
+            Err(e) => reply(false, format!("Rabe couldn't read your mail: {e}")),
         },
         "unread" => match core.unread_counts(None).await {
             Ok(counts) => {
@@ -108,11 +108,11 @@ async fn handle(app: &AppHandle, request: &str) -> Value {
                 };
                 json!({ "ok": true, "dialog": dialog, "number": n })
             }
-            Err(e) => reply(false, format!("Comail couldn't count your mail: {e}")),
+            Err(e) => reply(false, format!("Rabe couldn't count your mail: {e}")),
         },
         "catchUp" => match core.inbox_brief().await {
             Ok(text) => json!({ "ok": true, "dialog": text, "value": text }),
-            Err(e) => reply(false, format!("Comail couldn't catch you up: {e}")),
+            Err(e) => reply(false, format!("Rabe couldn't catch you up: {e}")),
         },
         "ask" => {
             let question = arg("question");
@@ -127,9 +127,9 @@ async fn handle(app: &AppHandle, request: &str) -> Value {
                 }
                 Err(comail_core::error::CoreError::AiNotConfigured) => reply(
                     false,
-                    "Set up an AI provider in Comail's settings first - Apple Intelligence works with no key.",
+                    "Set up an AI provider in Rabe's settings first - Apple Intelligence works with no key.",
                 ),
-                Err(e) => reply(false, format!("Comail couldn't answer that: {e}")),
+                Err(e) => reply(false, format!("Rabe couldn't answer that: {e}")),
             }
         }
         "compose" => {
@@ -140,9 +140,9 @@ async fn handle(app: &AppHandle, request: &str) -> Value {
             let query = arg("query");
             crate::show_main(app);
             let _ = app.emit("intent:search", query);
-            reply(true, "Searching Comail.")
+            reply(true, "Searching Rabe.")
         }
-        other => reply(false, format!("Comail doesn't know how to \"{other}\".")),
+        other => reply(false, format!("Rabe doesn't know how to \"{other}\".")),
     }
 }
 

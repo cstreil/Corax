@@ -51,13 +51,13 @@
     "continue": "Weiter",
     "skip": "Überspringen",
     "welcome": {
-      "title": "Willkommen bei Comail.",
+      "title": "Willkommen bei Rabe.",
       "body": "Eine schnelle Inbox, gemacht für die Tastatur. Konto verbinden, Aussehen wählen, drei Tasten lernen, fertig. Dauert etwa eine Minute.",
       "cta": "Los geht’s"
     },
     "connect": {
       "title": "Hol deine Inbox dazu.",
-      "body": "Comail spricht direkt mit deinem Anbieter. Dein Passwort und deine E-Mails verlassen diesen Computer nie.",
+      "body": "Rabe spricht direkt mit deinem Anbieter. Dein Passwort und deine E-Mails verlassen diesen Computer nie.",
       "imap": "Anderer Anbieter (IMAP)",
       "waiting": "Warten auf deinen Browser …",
       "waitingHint": "Schließ die Anmeldung ab und komm dann hierher zurück.",
@@ -78,7 +78,7 @@
     },
     "shortcuts": {
       "title": "Lern die Tasten.",
-      "body": "Comail ist dafür gebaut, mit der Tastatur bedient zu werden. Probier jede Taste aus: Die Inbox rechts ist eine Spielwiese, deine E-Mails bleiben unberührt.",
+      "body": "Rabe ist dafür gebaut, mit der Tastatur bedient zu werden. Probier jede Taste aus: Die Inbox rechts ist eine Spielwiese, deine E-Mails bleiben unberührt.",
       "press": "Drücke",
       "groups": {
         "navigate": "Bewegen",
@@ -102,7 +102,7 @@
       "snoozeShort": "Zurückstellen",
       "replyShort": "Antworten",
       "paletteShort": "Befehlspalette",
-      "allDone": "Die Grundlagen sitzen. Drück überall in Comail ?, um alle Tastenkürzel zu sehen.",
+      "allDone": "Die Grundlagen sitzen. Drück überall in Rabe ?, um alle Tastenkürzel zu sehen.",
       "progress": "{{n}} von {{total}} ausprobiert",
       "then": "dann",
       "summarize": "Unterhaltung zusammenfassen",
