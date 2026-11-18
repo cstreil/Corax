@@ -22,11 +22,20 @@ const USER_SCROLL_EVENTS = ["wheel", "touchstart", "keydown", "mousedown"] as co
 
 export function ConversationScreen({
   threadId,
+  inline = false,
   onOpenFull,
+  onContentHeight,
 }: {
   threadId: number;
+  /** Rendered as the inbox list's inline panel: no back link, no keyboard
+   *  footer, tighter padding, and the panel sizes itself to the content. */
+  inline?: boolean;
   /** Inline panel only: leave the list and show this conversation full screen. */
   onOpenFull?: () => void;
+  /** Inline panel only: the conversation's natural height, so the panel can
+   *  size itself to it (the caller caps it). Carries the thread id so a report
+   *  from a conversation that was just replaced can't size the new panel. */
+  onContentHeight?: (threadId: number, height: number) => void;
 }) {
   const { t } = useTranslation();
   const { data, isLoading, isError } = useThread(threadId);
@@ -58,6 +67,15 @@ export function ConversationScreen({
     }
   }, [focusedMessageId]);
 
+  // The conversation's own scroll container. In the inline panel the panel is
+  // sized to the conversation, so a short thread has no scroller of its own -
+  // and scrolling then would move the list instead of the panel.
+  const scrollerRef = useRef<HTMLDivElement>(null);
+  const ownScroller = () => {
+    const el = scrollerRef.current;
+    return el && el.scrollHeight > el.clientHeight + 1 ? el : null;
+  };
+
   // Ref on the newest (last) message so the count header can jump to it on long
   // threads. We walk up from it to find the actual scroll container (the
   // overflow-y-auto wrapper isn't reliably the scroller at runtime) and scroll
@@ -66,6 +84,13 @@ export function ConversationScreen({
   const scrollToLatest = () => {
     const target = lastMsgRef.current;
     if (!target) return;
+    // Inline panel: only the panel may scroll. Walking up from the message
+    // would drag the whole list when the thread fits inside its panel.
+    if (inline) {
+      const own = ownScroller();
+      if (own) own.scrollTop = own.scrollHeight;
+      return;
+    }
     // Belt-and-suspenders, because the real scroll container differs between
     // the Tauri webview and the browser, and native `behavior:"smooth"` is
     // unreliable there:
@@ -99,7 +124,6 @@ export function ConversationScreen({
   // would yank a reader back to the top). The real scroller differs between the
   // Tauri webview and the browser, so clear the wrapper, any overflowing
   // ancestor, and the document - the reverse of scrollToLatest.
-  const scrollerRef = useRef<HTMLDivElement>(null);
   const scrollResetFor = useRef<number | null>(null);
   useLayoutEffect(() => {
     if (!data || scrollResetFor.current === threadId) return;
@@ -107,15 +131,22 @@ export function ConversationScreen({
     if (!el) return;
     scrollResetFor.current = threadId;
     el.scrollTop = 0;
+    // Inline panel: stop at the panel. Walking up from here would reset the
+    // list's own scroll position and yank the user to the top of the inbox.
+    if (inline) return;
     for (let a: HTMLElement | null = el.parentElement; a; a = a.parentElement)
       if (a.scrollHeight > a.clientHeight + 1) a.scrollTop = 0;
     const doc = document.scrollingElement as HTMLElement | null;
     if (doc) doc.scrollTop = 0;
-  }, [data, threadId]);
+  }, [data, threadId, inline]);
 
   useEffect(() => {
     if (!data || autoScrolledFor.current === threadId) return;
     autoScrolledFor.current = threadId;
+    // Inline panel: the panel is sized to the conversation, so a thread that
+    // fits has nothing to bring into view - and scrolling here would move the
+    // list instead. Only a thread that overflows its capped panel scrolls.
+    if (inline && !ownScroller()) return;
     // The first unread IS the first message: the layout effect already parked us
     // at the top, which is where new mail should start. Only threads with read
     // history above the new mail need centering to pull it above the fold.
@@ -161,6 +192,21 @@ export function ConversationScreen({
       stop();
     };
   }, [data, threadId]);
+
+  // Report the conversation's natural height so the inline panel can size
+  // itself to it. Message bodies render into iframes that grow well after
+  // first paint, so this keeps observing instead of measuring once.
+  const contentRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!onContentHeight) return;
+    const el = contentRef.current;
+    if (!el) return;
+    const report = () => onContentHeight(threadId, el.offsetHeight);
+    const ro = new ResizeObserver(report);
+    ro.observe(el);
+    report();
+    return () => ro.disconnect();
+  }, [onContentHeight, data, threadId]);
 
   // Hide the draft that's open in the inline composer so it isn't double-rendered.
   const editingDraftId = useUi((s) => s.editingDraftId);
@@ -301,16 +347,25 @@ export function ConversationScreen({
           a fresh node is born at scrollTop 0, independent of how the engine
           times scroll clamping while async iframe bodies grow in. */}
       <div key={threadId} ref={scrollerRef} className="min-w-0 flex-1 overflow-y-auto">
-      <div className="mx-auto flex max-w-[860px] flex-col gap-4 px-6 py-6 pb-24">
+      <div
+        ref={contentRef}
+        // The panel is sized to this element, so it carries no bottom gutter
+        // for a footer it doesn't have.
+        className={`mx-auto flex max-w-[860px] flex-col gap-4 px-6 ${inline ? "py-4 pb-6" : "py-6 pb-24"}`}
+      >
         <header className="flex items-start justify-between gap-4">
           <div>
-            <button
-              className="mb-2 flex items-center gap-1.5 text-[12px] text-ink-faint hover:text-ink-muted"
-              onClick={() => openThread(null)}
-            >
-              ← {t("thread:back")}
-              <kbd className="co-kbd !text-[10px]">Esc</kbd>
-            </button>
+            {/* The panel is closed by clicking its row or Esc; a back link
+                there would only repeat what the list already offers. */}
+            {!inline && (
+              <button
+                className="mb-2 flex items-center gap-1.5 text-[12px] text-ink-faint hover:text-ink-muted"
+                onClick={() => openThread(null)}
+              >
+                ← {t("thread:back")}
+                <kbd className="co-kbd !text-[10px]">Esc</kbd>
+              </button>
+            )}
             <h1 className="text-[23px] leading-tight font-semibold tracking-tight text-ink">
               {data.thread.subject || t("thread:noSubject")}
               {data.thread.isStarred && <span className="ml-2 align-middle text-[16px] text-star">★</span>}
@@ -394,25 +449,42 @@ export function ConversationScreen({
           </InlineComposerAnchor>
         )}
 
-        <footer className="mt-2 flex items-center gap-2 text-[12px] text-ink-faint">
-          <kbd className="co-kbd">↵</kbd> {t("thread:footer.replyAll")} · <kbd className="co-kbd">R</kbd> {t("thread:footer.reply")} ·{" "}
-          <kbd className="co-kbd">F</kbd> {t("thread:footer.forward")} · <kbd className="co-kbd">E</kbd> {t("thread:footer.done")} ·{" "}
-          <kbd className="co-kbd">H</kbd> {t("thread:footer.snooze")} · <kbd className="co-kbd">{MOD_LABEL}J</kbd> {t("thread:footer.summarize")} ·{" "}
-          <kbd className="co-kbd">↑</kbd>
-          <kbd className="co-kbd">↓</kbd> {t("thread:footer.message")} · <kbd className="co-kbd">J</kbd>
-          <kbd className="co-kbd">K</kbd> {t("thread:footer.nextPrev")}
-        </footer>
+        {/* The keyboard hints belong to the full-screen view; in the panel they
+            would sit at the bottom of a box the user is already reading. */}
+        {!inline && (
+          <footer className="mt-2 flex items-center gap-2 text-[12px] text-ink-faint">
+            <kbd className="co-kbd">↵</kbd> {t("thread:footer.replyAll")} · <kbd className="co-kbd">R</kbd> {t("thread:footer.reply")} ·{" "}
+            <kbd className="co-kbd">F</kbd> {t("thread:footer.forward")} · <kbd className="co-kbd">E</kbd> {t("thread:footer.done")} ·{" "}
+            <kbd className="co-kbd">H</kbd> {t("thread:footer.snooze")} · <kbd className="co-kbd">{MOD_LABEL}J</kbd> {t("thread:footer.summarize")} ·{" "}
+            <kbd className="co-kbd">↑</kbd>
+            <kbd className="co-kbd">↓</kbd> {t("thread:footer.message")} · <kbd className="co-kbd">J</kbd>
+            <kbd className="co-kbd">K</kbd> {t("thread:footer.nextPrev")}
+          </footer>
+        )}
       </div>
       </div>
     </div>
   );
 }
 
-/** Scrolls the inline reply into view when it appears. */
+/** Scrolls the inline reply into view when it appears. The panel grows to fit
+ *  the composer, so the first scroll can land short - keep re-aligning while
+ *  the layout settles. */
 function InlineComposerAnchor({ children }: { children: React.ReactNode }) {
   const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
-    ref.current?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    const el = ref.current;
+    if (!el) return;
+    const scroll = (smooth: boolean) =>
+      el.scrollIntoView({ block: "nearest", behavior: smooth ? "smooth" : "auto" });
+    const ro = new ResizeObserver(() => scroll(false));
+    ro.observe(el);
+    scroll(true);
+    const stop = window.setTimeout(() => ro.disconnect(), 800);
+    return () => {
+      ro.disconnect();
+      window.clearTimeout(stop);
+    };
   }, []);
   return <div ref={ref}>{children}</div>;
 }

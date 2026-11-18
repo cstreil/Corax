@@ -24,8 +24,13 @@ import { ThreadRow, type AccountMeta, type QuickAction } from "./ThreadRow";
 // shows a full page of mail instead of a handful of tall rows.
 const ROW_HEIGHT = 40;
 const AVATAR_ROW_HEIGHT = 42;
-/** Share of the visible list an opened thread's panel may take. */
+/** Most of the visible list an opened thread's panel may take; a shorter
+ *  conversation opens a shorter panel. */
 const EXPANDED_SHARE = 0.75;
+/** The panel's own top and bottom hairline. They are real borders, so the
+ *  conversation inside is this much shorter than the row the virtualizer
+ *  reserves - without the allowance the panel would be scrollable by 2px. */
+const PANEL_BORDER = 2;
 
 type ThreadListProps = {
   /** Flattened thread summaries in display order. */
@@ -365,10 +370,12 @@ export function ThreadList({
 
   const scrollRef = useRef<HTMLDivElement>(null);
 
-  // The opened thread's panel is the list's only taller item. Its height is a
-  // share of the visible list, so it has to be measured rather than expressed
-  // as a percentage: the item is absolutely positioned inside the sized
-  // spacer, where a percentage max-height has no scroller to resolve against.
+  // The opened thread's panel is the list's only taller item. It is sized to
+  // the conversation's own height, capped at a share of the visible list, so a
+  // short mail opens a short panel instead of a mostly empty one. Both numbers
+  // have to be measured rather than expressed as percentages: the item is
+  // absolutely positioned inside the sized spacer, where a percentage
+  // max-height has no scroller to resolve against.
   const [viewportHeight, setViewportHeight] = useState(0);
   useEffect(() => {
     const el = scrollRef.current;
@@ -378,7 +385,29 @@ export function ThreadList({
     setViewportHeight(el.clientHeight);
     return () => ro.disconnect();
   }, []);
-  const expandedHeight = Math.max(rowHeight, Math.round(viewportHeight * EXPANDED_SHARE));
+  /** Natural height of the open conversation, reported by the panel itself.
+   *  Keyed by thread: a report that lands while the panel is switching threads
+   *  must not size the new one, and there is no reset to race against. */
+  const [panelContent, setPanelContent] = useState<{ threadId: number; height: number } | null>(null);
+  const handlePanelContentHeight = useCallback(
+    (threadId: number, height: number) =>
+      setPanelContent((cur) =>
+        cur?.threadId === threadId && cur.height === height ? cur : { threadId, height },
+      ),
+    [],
+  );
+  const panelContentHeight =
+    panelContent != null && panelContent.threadId === expandedThreadId ? panelContent.height : null;
+  const maxPanelHeight = Math.round(viewportHeight * EXPANDED_SHARE);
+  // Until the conversation reports its height (it loads first, then its iframes
+  // grow), open at a modest share rather than at the full cap.
+  const expandedHeight = Math.max(
+    rowHeight * 3,
+    Math.min(
+      panelContentHeight == null ? Math.round(viewportHeight * 0.4) : panelContentHeight + PANEL_BORDER,
+      maxPanelHeight,
+    ),
+  );
 
   const virtualizer = useVirtualizer({
     count: items.length,
@@ -483,7 +512,9 @@ export function ThreadList({
                   <div className="co-hairline-t co-hairline-b flex h-full flex-col overflow-hidden bg-bg0">
                     <ConversationScreen
                       threadId={item.thread.id}
+                      inline
                       onOpenFull={() => useUi.getState().openThreadFull(item.thread.id)}
+                      onContentHeight={handlePanelContentHeight}
                     />
                   </div>
                 </div>
