@@ -1,8 +1,15 @@
 # MEMORY — comail (eigener Fork)
 
 ## Stand
-- Fork von https://github.com/NextOSP/comail, Branch `master` @ `d2384cd`, Version 0.2.41.
-- Remote `upstream` = Original; `origin` ist frei für den eigenen Fork.
+- Fork von https://github.com/NextOSP/comail. Eigener Fork: https://github.com/cstreil/comail
+  (public, AGPL-3.0-only). `origin` = eigener Fork, `upstream` = Original.
+- Arbeit auf `fork/sync-fixes` (Basis `upstream/master` @ `d2384cd`, v0.2.41). Fork-`master`
+  steht auf v0.2.44; GitHub meldet den Arbeitsbranch als diverged (21 ahead, 37 behind).
+- **Merge von v0.2.44 aufgeschoben bis nach der deutschen Übersetzung** (Entscheidung 2026-11-18).
+  Erwartete Konflikte: `imap/mod.rs` (+460 Zeilen Upstream), `sync/engine.rs` (+852),
+  `imap/identity.rs`, dazu 4 neue Keys in `en/settings.json` (macht `de` kurzzeitig unvollständig).
+- Push läuft über das lokale `gh` (Account `cstreil`, HTTPS/Keychain); der GitHub-Connector
+  legt Repos an, macht aber kein `git push`.
 - Ausführliche Übergabe (Änderungen, Begründungen, Verifikation, offene Punkte): `HANDOVER.md`.
 - Zwei Instanzen, gleiches Binary, getrennte Daten:
   - `com.deanoss.comail` → `/Applications/Comail.app`, Daten `~/Library/Application Support/comail`
