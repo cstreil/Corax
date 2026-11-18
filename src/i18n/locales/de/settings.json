@@ -4,7 +4,7 @@
   "section": {
     "stats": "Statistik",
     "ai": "KI",
-    "aiAutomation": "Regeln & Automatisierungen",
+    "aiAutomation": "Automatisierung",
     "ragSearch": "RAG-Suche",
     "oauthApps": "OAuth-Apps",
     "accounts": "Konten",
@@ -13,7 +13,7 @@
     "labels": "Labels",
     "sync": "Synchronisierung",
     "appearance": "Darstellung",
-    "notifications": "Benachrichtigungen",
+    "notifications": "Mitteilungen",
     "reading": "Lesen",
     "compose": "Verfassen",
     "calendar": "Kalender",

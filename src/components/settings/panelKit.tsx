@@ -159,8 +159,8 @@ export function SettingsGroup({
   return (
     <section className="mb-6">
       {(title || actions) && (
-        <div className="mb-2 flex items-end justify-between gap-4">
-          <div className="min-w-0">
+        <div className="mb-2 flex flex-wrap items-end justify-between gap-x-4 gap-y-2">
+          <div className="min-w-[10rem] flex-1">
             {title && (
               <h3 className="flex items-center gap-2 text-xs font-semibold tracking-[0.12em] text-ink-faint uppercase">
                 {title}
@@ -169,7 +169,7 @@ export function SettingsGroup({
             )}
             {description && <p className="mt-1 text-xs text-ink-faint">{description}</p>}
           </div>
-          {actions && <div className="flex shrink-0 items-center gap-2">{actions}</div>}
+          {actions && <div className="ml-auto flex shrink-0 items-center gap-2">{actions}</div>}
         </div>
       )}
       <div
