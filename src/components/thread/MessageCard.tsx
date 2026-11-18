@@ -121,11 +121,12 @@ export function MessageCard({
   return (
     <article
       ref={ref}
-      // Square, uniform hairline - no left accent bar. The selected message
-      // (reply target) reads clearly via a solid accent border plus a soft
-      // accent ring, so it's obvious which message a reply will go to.
+      // Square, uniform hairline - no left accent bar. The reply target is
+      // marked by a tinted hairline and a faint ring, not a solid accent
+      // frame: the card should read as one calm sheet (see the mockups),
+      // and the composer plus the header pill already say where a reply goes.
       className={`co-fade-in overflow-hidden border bg-bg1 shadow-card ${
-        focused ? "border-accent ring-2 ring-accent/40" : "border-hairline"
+        focused ? "border-accent/40 ring-1 ring-accent/10" : "border-hairline"
       }`}
     >
       <header
