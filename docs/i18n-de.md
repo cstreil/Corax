@@ -93,8 +93,8 @@ Microsoft, Outlook, CalDAV, OAuth. „Email" wird zu „E-Mail" (mit Bindestrich
 
 ## Stil
 
-- **Anrede: „du"** (Vorgabe; falls der Nutzer „Sie" wünscht, vorher klären —
-  nachträglich zu ändern ist teuer). Possessiv: „dein Posteingang".
+- **Anrede: „du"** — vom Nutzer bestätigt (2026-11-18). Possessiv: „dein
+  Posteingang", nie „Sie/Ihr".
 - Sachlich, knapp, keine Floskeln. Imperativ für Aktionen („Archivieren",
   „Weiterleiten"), nicht „Du kannst …".
 - Die englischen Texte sind kurz. Deutsch ist ~30 % länger: Bei Buttons, Tabs und
