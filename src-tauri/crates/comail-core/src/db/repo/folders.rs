@@ -57,6 +57,9 @@ pub struct Folder {
     /// history walk reached the bottom. `backfill_done` alone is not enough:
     /// older builds set it before the reconcile ran.
     pub backfill_reconciled: bool,
+    /// While set and in the future, a failed reconcile is not retried. Keeps a
+    /// permanently failing folder from reconnecting on every sync tick.
+    pub backfill_reconcile_retry_at: Option<i64>,
 }
 
 fn from_row(row: &Row) -> rusqlite::Result<Folder> {
@@ -74,6 +77,7 @@ fn from_row(row: &Row) -> rusqlite::Result<Folder> {
         backfill_cursor: row.get("backfill_cursor")?,
         backfill_done: row.get::<_, i64>("backfill_done")? != 0,
         backfill_reconciled: row.get::<_, i64>("backfill_reconciled")? != 0,
+        backfill_reconcile_retry_at: row.get("backfill_reconcile_retry_at")?,
     })
 }
 
@@ -316,11 +320,21 @@ pub fn set_backfill(conn: &Connection, id: i64, cursor: Option<i64>, done: bool)
 }
 
 /// Record that the folder's UID list was reconciled against the server. Only
-/// then is `backfill_done` trustworthy.
+/// then is `backfill_done` trustworthy. Clears a pending retry hold.
 pub fn mark_backfill_reconciled(conn: &Connection, id: i64) -> Result<()> {
     conn.execute(
-        "UPDATE folders SET backfill_reconciled = 1 WHERE id = ?1",
+        "UPDATE folders SET backfill_reconciled = 1, backfill_reconcile_retry_at = NULL
+         WHERE id = ?1",
         params![id],
+    )?;
+    Ok(())
+}
+
+/// Hold the folder's reconcile back until `at` (epoch ms). `None` clears it.
+pub fn set_backfill_reconcile_retry(conn: &Connection, id: i64, at: Option<i64>) -> Result<()> {
+    conn.execute(
+        "UPDATE folders SET backfill_reconcile_retry_at = ?2 WHERE id = ?1",
+        params![id, at],
     )?;
     Ok(())
 }
@@ -339,7 +353,7 @@ pub fn reset_uid_mappings(conn: &Connection, id: i64) -> Result<()> {
     conn.execute(
         "UPDATE folders SET last_seen_uid = 0, uidnext = NULL, highestmodseq = NULL,
                             backfill_cursor = NULL, backfill_done = 0,
-                            backfill_reconciled = 0
+                            backfill_reconciled = 0, backfill_reconcile_retry_at = NULL
          WHERE id = ?1",
         params![id],
     )?;

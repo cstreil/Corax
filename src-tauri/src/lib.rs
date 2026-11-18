@@ -25,22 +25,49 @@ fn isolate_instance(identifier: &str) {
         // Falling back to the release data directory would open the release
         // SQLite database with a dev build's migrations - data loss on the
         // daily driver. Abort instead of sharing it silently.
-        let Some(dir) = comail_core::config::platform_data_dir().map(|d| d.join(identifier)) else {
-            panic!(
-                "dev instance {identifier}: no platform data directory; refusing to share the release database"
+        let Some(dir) = dev_data_dir(identifier) else {
+            abort_dev_instance(
+                "Comail (dev): no platform data directory. Aborting instead of sharing \
+                 the release database.",
             );
         };
         if let Err(error) = std::fs::create_dir_all(&dir) {
-            panic!(
-                "dev instance {identifier}: cannot create data directory {}: {error}; refusing to share the release database",
+            abort_dev_instance(&format!(
+                "Comail (dev): cannot create data directory {}: {error}. Aborting \
+                 instead of sharing the release database.",
                 dir.display()
-            );
+            ));
         }
         std::env::set_var("COMAIL_DATA_DIR", &dir);
     }
     if std::env::var_os("COMAIL_KEYRING_SERVICE").is_none() {
         std::env::set_var("COMAIL_KEYRING_SERVICE", identifier);
     }
+}
+
+/// Data directory for a non-release build, or `None` for the release build.
+fn dev_data_dir(identifier: &str) -> Option<std::path::PathBuf> {
+    if identifier == RELEASE_IDENTIFIER {
+        return None;
+    }
+    comail_core::config::platform_data_dir().map(|dir| dir.join(identifier))
+}
+
+/// Report a fatal dev-instance setup failure where the user can see it. This
+/// runs before logging and before any window exists, so a Finder launch would
+/// otherwise die without a message.
+fn abort_dev_instance(message: &str) -> ! {
+    eprintln!("{message}");
+    #[cfg(target_os = "macos")]
+    {
+        let escaped = message.replace('\\', "\\\\").replace('"', "\\\"");
+        let script = format!("display alert \"Comail (dev)\" message \"{escaped}\" as critical");
+        let _ = std::process::Command::new("osascript")
+            .arg("-e")
+            .arg(script)
+            .spawn();
+    }
+    std::process::exit(1);
 }
 
 pub(crate) fn show_main(app: &tauri::AppHandle) {
@@ -512,4 +539,20 @@ pub fn run() {
                 show_main(_app);
             }
         });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{dev_data_dir, RELEASE_IDENTIFIER};
+
+    #[test]
+    fn release_build_keeps_the_shared_data_dir() {
+        assert!(dev_data_dir(RELEASE_IDENTIFIER).is_none());
+    }
+
+    #[test]
+    fn dev_build_gets_its_own_directory() {
+        let dir = dev_data_dir("com.deanoss.comail.dev").expect("dev data dir");
+        assert!(dir.ends_with("com.deanoss.comail.dev"));
+    }
 }

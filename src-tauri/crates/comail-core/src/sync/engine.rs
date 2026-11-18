@@ -2180,7 +2180,7 @@ async fn run_history_backfill(
                 {
                     continue;
                 }
-                if !needs_history_work(&folder) {
+                if !needs_history_work(&folder, now_ms()) {
                     continue;
                 }
                 if session.is_none() {
@@ -2319,10 +2319,22 @@ async fn retry_one_header_failure(
     Ok(true)
 }
 
+/// How long a folder waits after a failed reconcile before it is tried again.
+/// Without it a folder whose reconcile keeps failing reconnects, runs
+/// `UID SEARCH ALL` and re-fetches on every sync tick.
+const RECONCILE_RETRY_MS: i64 = 15 * 60 * 1000;
+
 /// Whether the history worker still has work for this folder. `backfill_done`
 /// alone is not "finished": folders finished by older builds were marked done
-/// before the UID list was reconciled, so they get one more pass.
-fn needs_history_work(folder: &Folder) -> bool {
+/// before the UID list was reconciled, so they get one more pass. A folder
+/// inside its retry hold is skipped until the hold expires.
+fn needs_history_work(folder: &Folder, now: i64) -> bool {
+    if folder
+        .backfill_reconcile_retry_at
+        .is_some_and(|at| at > now)
+    {
+        return false;
+    }
     folder.backfill_cursor.is_none() || !folder.backfill_done || !folder.backfill_reconciled
 }
 
@@ -2497,7 +2509,20 @@ async fn finish_backfill(
     session: &mut Session,
     folder: &Folder,
 ) -> Result<()> {
-    fill_missing_uids(ctx, config, session, folder).await?;
+    if let Err(error) = fill_missing_uids(ctx, config, session, folder).await {
+        // The error still goes up so the caller drops the session, but the
+        // folder is held back: a reconcile that keeps failing must not
+        // reconnect and re-fetch on every tick.
+        let fid = folder.id;
+        let retry_at = now_ms() + RECONCILE_RETRY_MS;
+        let _ = ctx
+            .db
+            .write(move |conn| {
+                repo::folders::set_backfill_reconcile_retry(conn, fid, Some(retry_at))
+            })
+            .await;
+        return Err(error);
+    }
     let fid = folder.id;
     ctx.db
         .write(move |conn| {
@@ -4666,6 +4691,7 @@ mod backfill_reconcile_tests {
     fn folder_marked_done_by_an_older_build_still_needs_work() {
         let conn = crate::db::testutil::conn();
         crate::db::testutil::seed_account(&conn);
+        let now = 1_000_000;
         // Migration 036 leaves pre-existing folders unreconciled, so a folder
         // that an older build marked done is picked up once more.
         conn.execute(
@@ -4674,16 +4700,37 @@ mod backfill_reconcile_tests {
         )
         .unwrap();
         assert!(!folder(&conn).backfill_reconciled);
-        assert!(needs_history_work(&folder(&conn)));
+        assert!(needs_history_work(&folder(&conn), now));
 
         repo::folders::mark_backfill_reconciled(&conn, 1).unwrap();
-        assert!(!needs_history_work(&folder(&conn)));
+        assert!(!needs_history_work(&folder(&conn), now));
 
         // A UIDVALIDITY reset starts the folder over, reconcile included.
         repo::folders::reset_uid_mappings(&conn, 1).unwrap();
         let reset = folder(&conn);
         assert!(!reset.backfill_done);
         assert!(!reset.backfill_reconciled);
-        assert!(needs_history_work(&reset));
+        assert!(needs_history_work(&reset, now));
+    }
+
+    #[test]
+    fn a_failed_reconcile_holds_the_folder_back_until_the_retry_expires() {
+        let conn = crate::db::testutil::conn();
+        crate::db::testutil::seed_account(&conn);
+        conn.execute(
+            "UPDATE folders SET backfill_cursor = 1, backfill_done = 1 WHERE id = 1",
+            [],
+        )
+        .unwrap();
+        let now = 1_000_000;
+        repo::folders::set_backfill_reconcile_retry(&conn, 1, Some(now + 60_000)).unwrap();
+        assert!(!needs_history_work(&folder(&conn), now));
+        assert!(needs_history_work(&folder(&conn), now + 60_000));
+
+        // A successful reconcile clears the hold.
+        repo::folders::mark_backfill_reconciled(&conn, 1).unwrap();
+        let done = folder(&conn);
+        assert_eq!(done.backfill_reconcile_retry_at, None);
+        assert!(!needs_history_work(&done, now));
     }
 }
