@@ -43,6 +43,17 @@
 - `config.rs` / `accounts/credentials.rs`: `COMAIL_DATA_DIR`, `COMAIL_KEYRING_SERVICE`.
 - `src-tauri/src/lib.rs`: `isolate_instance()` leitet beides aus dem Bundle-Identifier ab.
 
+## Code-Review (2026-11-18, Gruppe „Code Review", Auditor)
+- Zwei Runden über `upstream/master..HEAD`. **Sicherheit freigegeben:** die iframe-CSP
+  (`default-src 'none'`, Sandbox ohne `allow-scripts`) trägt als Grenze, auch mit `<style>`/`class`.
+- `565ada5` (Nacharbeit): `done` erst nach dem Abgleich (`folders.backfill_reconciled`, Migration 036);
+  `attach_mime_plans` schluckt nur `No`/`Bad`; TMPDIR-Block raus; `initial_backfill` startet bei
+  UIDNEXT; QP-Soft-Break nur bei 60–76 Zeichen Zeilenlänge und ohne `=` davor.
+- `4089252`: `folders.backfill_reconcile_retry_at` (Migration 037) hält einen Ordner nach
+  fehlgeschlagenem Abgleich 15 min zurück (`RECONCILE_RETRY_MS`); `isolate_instance` meldet den
+  Grund per Alert und stderr, dann `exit(1)`.
+- Akzeptiertes Restrisiko: eine einzelne Base64-Endzeile mit 60–76 Zeichen zählt als QP-Marker.
+
 ## Bauen
 - `sh scripts/build-local-app.sh` → `/Applications/Comail.app`
 - `sh scripts/build-dev-app.sh` → `Comail Dev.app`
@@ -65,16 +76,20 @@
   sobald es welche gibt, steht ein „Inbox"-Tab davor. Ohne eigene Tabs verschwindet die Tab-Leiste.
   Umgesetzt in `lib/splitOrder.ts` (`inboxTabOrder(..., defaultSplits)`), `SplitTabs`, `Sidebar`,
   `keyboard/context.ts`, `InboxScreen` (setzt -1/-2 auf null zurück).
-- Inline-Mailansicht (2026-11-17, `e26761e`): eine geöffnete Mail ersetzt die Liste nicht mehr,
-  sondern klappt als Panel unter ihrer eigenen Zeile auf (75 % Viewport-Höhe, mind. eine Zeile).
-  `listItems.ts` hat dafür den Item-Typ `expanded` + `indexAtOffset` (Zeilen sind nicht mehr
-  gleich hoch, Pointer→Index liest die gemessenen Offsets). Klick auf die Kopfzeile klappt ein.
-  `ui.threadFullView` + `openThreadFull` schalten die alte Vollansicht (Button im Panel-Kopf);
-  `openThread` setzt das Flag zurück, damit Klick/Enter/J/K/Auto-Advance inline bleiben.
+- Inline-Mailansicht (2026-11-17, `e26761e` + `a3cff71`): eine geöffnete Mail ersetzt die Liste nicht
+  mehr, sondern klappt als Panel unter ihrer eigenen Zeile auf. Höhe = Inhaltshöhe, gedeckelt bei 75 %
+  der Liste, Untergrenze drei Zeilen; das Panel meldet sie per `ResizeObserver` nach oben, der Report
+  trägt die Thread-ID (kein Reset-Effekt, der mit dem Kind-Effekt rennt). `listItems.ts` hat dafür den
+  Item-Typ `expanded` + `indexAtOffset` (Zeilen sind nicht mehr gleich hoch, Pointer→Index liest die
+  gemessenen Offsets). Klick auf die Kopfzeile klappt ein. `ui.threadFullView` + `openThreadFull`
+  schalten die alte Vollansicht (Button im Panel-Kopf); `openThread` setzt das Flag zurück, damit
+  Klick/Enter/J/K/Auto-Advance inline bleiben. Im Panel kein Back-Link und keine Tastatur-Fußzeile.
 
 ## Offen
-- Inline-Panel: Kosmetik fehlt noch („← Back"-Knopf und Tastatur-Fußzeile im Panel, Inhaltshöhe
-  statt fester 75 %, Antworten inline). Grundfunktion vom Nutzer abgenommen 2026-11-17.
+- **cua ist defekt** und blockiert die Selbstprüfung der UI: `params` kommt als JSON-String statt als
+  Objekt an (`Invalid input: expected object, received string`), bei jeder Methode. Andere Werkzeuge
+  mit verschachtelten Objekten funktionieren, also liegt es am 22-Zweige-`oneOf`-Schema. `dsh-cua`
+  liegt gepackt in `app.asar`; nur `dsh-experimental-cua-macos` ist entpackt.
 - MCP in beiden Instanzen aus (`mcpEnabled: false`, Port 47823).
 - Embeddings laufen nach dem Body-Requeue noch nach (~1100 offen, ~300/Minute).
 - Selbst gesendete Mail an die eigene Adresse erscheint nur **einmal** (Message-ID-Dedupe), und zwar
