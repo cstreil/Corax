@@ -74,8 +74,10 @@
   `de.streil.rabe.dev` je ~885 MB) stehen noch; `Comail Dev.app` liegt in `~/.Trash`.
 - cua: `open -a "/Applications/Rabe Dev.app"` nötig (`cua.activate` hilft nicht), Klicks ~1 Zeile höher als
   geschätzt (Screenshot-Pixel × 1,043), gesperrter Desktop → `SESSION_LOCKED`; `screencapture -x -l <id>` als Ausweg.
-- MCP (Port 47823, Bearer-Token im Keyring je Instanz): Dev-Build an, DSH-Capability `rabe` hängt an
-  `$DSH_SECRET_COMAIL_MCP_TOKEN`; Freigaben Entwürfe/Organisieren/Senden ja, endgültig löschen nein.
+- MCP (Port 47823), Token im Keyring je Instanz: **Release = Service `comail`**, Dev = `de.streil.rabe.dev`
+  (`isolate_instance` setzt den Service nur für Nicht-Release-Builds). DSH-Capability `rabe` läuft über
+  `~/.dsh/bin/rabe-mcp-shim.py` (stdio → HTTP, liest den Token der laufenden Instanz, erneuert ihn bei 401).
+  Freigaben Release: Entwürfe ja, Organisieren/Senden aus → 17 Tools statt 19.
 - Semantische Suche: Vektor in `message_embeddings` (f32, L2), beim Start in flachen RAM-Index (brute
   force, ~1 ms); hybrid mit FTS5 über RRF. Dev-Instanz: multilinguales MiniLM, 11k Mails indiziert.
 - Selbst gesendete Mail an die eigene Adresse erscheint nur einmal (Message-ID-Dedupe).
