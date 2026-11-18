@@ -1022,6 +1022,12 @@ pub struct Settings {
     pub load_remote_images: bool,
     #[serde(default = "default_ai_base_url")]
     pub ai_base_url: String,
+    /// OpenRouter only: route chat and decision requests to providers with
+    /// zero data retention that don't collect prompts (`provider.zdr` +
+    /// `provider.data_collection: "deny"`). Requests for a model with no such
+    /// provider fail instead of falling back.
+    #[serde(default = "default_true")]
+    pub ai_zero_retention: bool,
     #[serde(default = "default_ai_model")]
     pub ai_model: String,
     /// Per-tier model ids, all sharing `ai_base_url` + the stored API key. An
@@ -1061,6 +1067,10 @@ pub struct Settings {
     /// Registry key of the local embedding model (see `embed::registry`).
     #[serde(default = "default_embedding_model")]
     pub embedding_model: String,
+    /// Suggest AI quick replies when a reply composer opens. Each suggestion
+    /// request sends the thread to the chat model; off makes no request.
+    #[serde(default = "default_true")]
+    pub ai_quick_replies: bool,
     /// When true, AI drafts are written in the user's learned voice.
     #[serde(default)]
     pub voice_drafting: bool,
@@ -1385,6 +1395,7 @@ impl Default for Settings {
             undo_send_seconds: 10,
             load_remote_images: true,
             ai_base_url: default_ai_base_url(),
+            ai_zero_retention: true,
             ai_model: default_ai_model(),
             ai_model_instant: String::new(),
             ai_model_cheap: String::new(),
@@ -1399,6 +1410,7 @@ impl Default for Settings {
             ms_client_secret: String::new(),
             embedding_backend: default_embedding_backend(),
             embedding_model: default_embedding_model(),
+            ai_quick_replies: true,
             voice_drafting: false,
             voice_profile: String::new(),
             voice_learned_at: 0,
@@ -1709,5 +1721,7 @@ mod tests {
         assert!(s.auto_labels_enabled);
         assert!(s.signatures.is_empty());
         assert_eq!(s.ai_base_url, crate::ai::DEFAULT_BASE_URL);
+        assert!(s.ai_zero_retention);
+        assert!(s.ai_quick_replies);
     }
 }

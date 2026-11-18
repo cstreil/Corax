@@ -37,9 +37,14 @@ const MIGRATIONS: &[&str] = &[
     include_str!("migrations/033_folder_role_repairs.sql"),
     include_str!("migrations/034_stable_identity_attempts.sql"),
     include_str!("migrations/035_restore_non_trash_roles.sql"),
+    // Fork migrations 036-038. Upstream also created a 036 in v0.2.42, so its
+    // migration is appended as 039: databases of this fork already sit at 38
+    // and must not be renumbered, or their columns and repair markers would be
+    // applied twice (or not at all).
     include_str!("migrations/036_backfill_reconciled.sql"),
     include_str!("migrations/037_backfill_reconcile_retry.sql"),
     include_str!("migrations/038_mutf7_folder_names.sql"),
+    include_str!("migrations/039_rescan_skipped_headers.sql"),
 ];
 
 pub fn run(conn: &mut Connection) -> Result<()> {
@@ -58,6 +63,38 @@ pub fn run(conn: &mut Connection) -> Result<()> {
             tx.pragma_update(None, "user_version", target)?;
             tx.commit()?;
             tracing::info!("applied db migration {target}");
+        }
+    }
+    ensure_folder_sync_columns(conn)?;
+    Ok(())
+}
+
+/// A database that ran upstream 0.2.42-0.2.44 sits at `user_version` 36, so the
+/// fork's 036 (which adds `backfill_reconciled`) is skipped while 037 still runs.
+/// Renumbering the fork's migrations would break every database that is already
+/// past 36, so the columns are made idempotent instead.
+fn ensure_folder_sync_columns(conn: &Connection) -> Result<()> {
+    for (column, ddl) in [
+        (
+            "backfill_reconciled",
+            "ALTER TABLE folders ADD COLUMN backfill_reconciled INTEGER NOT NULL DEFAULT 0",
+        ),
+        (
+            "backfill_reconcile_retry_at",
+            "ALTER TABLE folders ADD COLUMN backfill_reconcile_retry_at INTEGER",
+        ),
+    ] {
+        let exists: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM pragma_table_info('folders') WHERE name = ?1",
+            [column],
+            |row| row.get(0),
+        )?;
+        if exists == 0 {
+            conn.execute(ddl, [])?;
+            tracing::warn!(
+                column,
+                "added a fork column an upstream database did not have"
+            );
         }
     }
     Ok(())
@@ -111,6 +148,81 @@ mod tests {
             tx.pragma_update(None, "user_version", target).unwrap();
             tx.commit().unwrap();
         }
+    }
+
+    #[test]
+    fn run_adds_fork_columns_to_a_database_from_an_upstream_release() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        run_through(&mut conn, 35);
+        // Upstream 0.2.42-0.2.44 applied its own migration 036, so a database
+        // that comes from there reports version 36 and this fork's 036 never
+        // runs. The columns it adds have to be repaired, or the sync code
+        // fails on a missing column.
+        conn.pragma_update(None, "user_version", 36).unwrap();
+
+        run(&mut conn).unwrap();
+
+        let column = |name: &str| -> i64 {
+            conn.query_row(
+                "SELECT COUNT(*) FROM pragma_table_info('folders') WHERE name = ?1",
+                [name],
+                |row| row.get(0),
+            )
+            .unwrap()
+        };
+        assert_eq!(column("backfill_reconciled"), 1);
+        assert_eq!(column("backfill_reconcile_retry_at"), 1);
+        let version: i64 = conn
+            .query_row("PRAGMA user_version", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(version, MIGRATIONS.len() as i64);
+    }
+
+    #[test]
+    fn migration_039_rewinds_scan_markers_to_saved_mail() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        conn.pragma_update(None, "foreign_keys", "ON").unwrap();
+        run_through(&mut conn, 35);
+        crate::db::testutil::seed_account(&conn);
+        conn.execute_batch(
+            "UPDATE accounts SET provider = 'microsoft' WHERE id = 1;
+             INSERT INTO accounts (id, email, provider, auth_kind, username,
+                 imap_host, imap_port, smtp_host, smtp_port, created_at)
+             VALUES (2,'g@test.dev','gmail','oauth2','g','h',993,'h',587,0);
+             -- 1: scanned past its newest saved message. 2: history walk in
+             -- progress below its oldest saved message. 3: nothing saved.
+             -- 4: up to date. 5: a Gmail folder, untouched.
+             UPDATE folders SET last_seen_uid = 222, backfill_cursor = 1, backfill_done = 1
+             WHERE id = 1;
+             INSERT INTO folders (id, account_id, imap_name, last_seen_uid, backfill_cursor,
+                                  backfill_done)
+             VALUES (2,1,'Archive',90,40,0),
+                    (3,1,'Sent Items',500,1,1),
+                    (4,1,'Junk Email',30,1,1),
+                    (5,2,'[Gmail]/All Mail',900,1,1);
+             INSERT INTO messages (account_id, folder_id, uid, date) VALUES
+                 (1,1,100,0),(1,1,120,0),
+                 (1,2,60,0),(1,2,90,0),
+                 (1,3,NULL,0),
+                 (1,4,30,0),
+                 (2,5,10,0);",
+        )
+        .unwrap();
+        run(&mut conn).unwrap();
+        let state =
+            |id: i64| {
+                conn.query_row(
+                "SELECT last_seen_uid, backfill_cursor, backfill_done FROM folders WHERE id = ?1",
+                params![id],
+                |r| Ok((r.get::<_, i64>(0)?, r.get::<_, Option<i64>>(1)?, r.get::<_, bool>(2)?)),
+            )
+            .unwrap()
+            };
+        assert_eq!(state(1), (120, Some(1), true));
+        assert_eq!(state(2), (90, Some(60), false));
+        assert_eq!(state(3), (0, None, false));
+        assert_eq!(state(4), (30, Some(1), true));
+        assert_eq!(state(5), (900, Some(1), true));
     }
 
     #[test]
