@@ -85,8 +85,9 @@
 - Werkzeuge: `node scripts/i18n-status.mjs [de] [--missing]`; `docs/i18n-de.md` (Regeln, Glossar,
   Abnahme). Die maschinell übersetzten Sprachen dürfen Keys verpassen (Fallback auf Englisch).
 - `@types/node` fehlt absichtlich: Tests nutzen `import.meta.glob`, keine Node-APIs.
-- Offener Produktfehler: `src/lib/snooze.ts` parst nur englische Zeitwörter („tomorrow",
-  „monday 9am") — ein deutsches „morgen" funktioniert nicht, eine Keyword-Tabelle fehlt.
+- `src/lib/snooze.ts` parst nur englische Zeitwörter („tomorrow", „monday 9am"); ein deutsches
+  „morgen" funktioniert nicht. Deutsche Keyword-Tabelle vom Nutzer am 2026-11-18 zurückgestellt,
+  später nachziehen (danach Platzhalter in `common:timePopover`/`calendar:create` umstellen).
 
 ## Offen
 - cua: `cua.activate` holt Comail nicht nach vorn (erst `open -a "Comail Dev"`); Klicks landen ~1 Zeile
