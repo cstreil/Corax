@@ -1,12 +1,13 @@
-# MEMORY — comail (eigener Fork)
+# MEMORY — Rabe (Fork von comail)
 
 ## Stand
-- Fork von NextOSP/comail: https://github.com/cstreil/comail (public, AGPL-3.0-only); `origin` = Fork,
-  `upstream` = Original, Arbeit auf `fork/sync-fixes`. Details `FORK.md`, Fix-Begründungen `HANDOVER.md`.
+- Fork von NextOSP/comail: https://github.com/cstreil/Rabe (public, AGPL-3.0-only); `origin` = Fork,
+  `upstream` = Original, Arbeit auf `fork/sync-fixes`. Repo am 2026-11-18 von `comail` in `Rabe`
+  umbenannt (alte URLs leiten 301 um). Details `FORK.md`, Fix-Begründungen `HANDOVER.md`.
 - Upstream v0.2.44 (`ded0898`) eingezogen → Branch `chore/merge-upstream-0.2.44`, 44 Commits / 62 Dateien,
   **PR #1** gegen `fork/sync-fixes` (MERGEABLE/CLEAN, offen).
 - Push über lokales `gh` (Account `cstreil`, HTTPS/Keychain); der GitHub-Connector pusht nicht. `gh` zielt
-  im Fork sonst aufs Eltern-Repo → einmalig `gh repo set-default cstreil/comail`.
+  im Fork sonst aufs Eltern-Repo → einmalig `gh repo set-default cstreil/Rabe`.
 - Zwei Instanzen, gleiches Binary, getrennte Daten: `de.streil.rabe` → `/Applications/Rabe.app`,
   `de.streil.rabe.dev` → `Rabe Dev.app`. Upstream-Release-App deinstalliert (liegt in `~/.Trash`).
 

@@ -11,7 +11,7 @@
 #     (erzeugen: pnpm tauri signer generate -w ~/.tauri/rabe-updater.key)
 #     Der passende Public Key steht in src-tauri/tauri.conf.json; ohne ihn
 #     lehnt jede installierte App das Update ab.
-#   - gh ist als cstreil angemeldet und cstreil/comail ist das Ziel.
+#   - gh ist als cstreil angemeldet und cstreil/Rabe ist das Ziel.
 #
 # Die Version kommt aus tauri.conf.json. Vor jedem Release dort hochziehen —
 # der Updater vergleicht Semver, gleiche Version heißt „kein Update".
@@ -59,7 +59,7 @@ import json, pathlib, sys
 from datetime import datetime, timezone
 
 version, signature = sys.argv[1], sys.argv[2]
-url = f"https://github.com/cstreil/comail/releases/download/v{version}/Rabe.app.tar.gz"
+url = f"https://github.com/cstreil/Rabe/releases/download/v{version}/Rabe.app.tar.gz"
 manifest = {
     "version": version,
     "notes": f"Rabe {version}",
@@ -82,13 +82,16 @@ if [ "$PUBLISH" = 0 ]; then
 fi
 
 # 5. Release anlegen. Existiert der Tag schon, bricht gh ab — dann Version
-#    hochziehen statt überschreiben.
+#    hochziehen statt überschreiben. --target pinnt den Tag auf den gebauten
+#    Commit: ohne das landet er auf dem Default-Branch (fork/sync-fixes), der
+#    den Build gar nicht enthält. Der Commit muss dafür gepusht sein.
 gh release create "$TAG" \
-  --repo cstreil/comail \
+  --repo cstreil/Rabe \
+  --target "$(git rev-parse HEAD)" \
   --title "Rabe $VERSION" \
   --notes "Rabe $VERSION — signiertes Update für macOS (Apple Silicon)." \
   "$ARCHIVE" "$ARCHIVE.sig" "$DIST/latest.json"
 
 echo
 echo "Veröffentlicht: $TAG"
-echo "Feed: https://github.com/cstreil/comail/releases/latest/download/latest.json"
+echo "Feed: https://github.com/cstreil/Rabe/releases/latest/download/latest.json"

@@ -109,7 +109,7 @@ teilen:
 
 Der Updater ist in der Release-App **an**: `tauri.conf.json` trägt unseren
 Public Key und den Endpoint
-`https://github.com/cstreil/comail/releases/latest/download/latest.json`. Der
+`https://github.com/cstreil/Rabe/releases/latest/download/latest.json`. Der
 private Schlüssel liegt unter `~/.tauri/rabe-updater.key` (außerhalb des Repos,
 `chmod 600`), ohne ihn kann niemand ein Update bauen, das eine installierte App
 annimmt.
