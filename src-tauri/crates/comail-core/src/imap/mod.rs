@@ -14,6 +14,8 @@ use std::time::Duration;
 use tokio::net::TcpStream;
 use tokio_rustls::TlsConnector;
 
+pub mod mutf7;
+
 // async-imap with runtime-tokio speaks tokio's AsyncRead/AsyncWrite natively.
 pub type ImapStream = tokio_rustls::client::TlsStream<TcpStream>;
 pub type ReconcileStamp = ((Option<i64>, Option<i64>, u32), std::time::Instant);
@@ -303,7 +305,9 @@ async fn list_folders_inner(session: &mut Session) -> Result<Vec<RemoteFolder>> 
                 .map(|a| format!("{a:?}").to_lowercase())
                 .collect();
             out.push(RemoteFolder {
-                name: name.name().to_string(),
+                // The wire form is modified UTF-7; everything downstream (the
+                // folders table, the sidebar, role detection) wants UTF-8.
+                name: mutf7::decode(name.name()),
                 delimiter: name.delimiter().map(|d| d.to_string()),
                 attributes,
             });
@@ -325,7 +329,7 @@ pub async fn select(session: &mut Session, folder: &str) -> Result<SelectedFolde
 
 async fn select_inner(session: &mut Session, folder: &str) -> Result<SelectedFolder> {
     let mb = session
-        .select(folder)
+        .select(mutf7::encode(folder))
         .await
         .map_err(|e| CoreError::Imap(e.to_string()))?;
     Ok(SelectedFolder {
@@ -1010,7 +1014,7 @@ pub async fn append(session: &mut Session, folder: &str, raw: &[u8], seen: bool)
 async fn append_inner(session: &mut Session, folder: &str, raw: &[u8], seen: bool) -> Result<()> {
     let flags = if seen { Some("(\\Seen)") } else { None };
     session
-        .append(folder, flags, None, raw)
+        .append(mutf7::encode(folder), flags, None, raw)
         .await
         .map_err(|e| CoreError::Imap(e.to_string()))?;
     Ok(())
@@ -1027,7 +1031,7 @@ pub async fn create_folder(session: &mut Session, name: &str) -> Result<()> {
 
 async fn create_folder_inner(session: &mut Session, name: &str) -> Result<()> {
     session
-        .create(name)
+        .create(mutf7::encode(name))
         .await
         .map_err(|e| CoreError::Imap(e.to_string()))
 }

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { runAiCommand } from "../../lib/aiCommand";
-import { folderLeafName, isUserFolder } from "../../lib/folders";
+import { displayFolderName, folderLeafName, isUserFolder } from "../../lib/folders";
 import { commandScore } from "../../keyboard/commandScore";
 import { buildCommandContext } from "../../keyboard/context";
 import { getCommands, shortcutFor, type Command } from "../../keyboard/registry";
@@ -71,7 +71,13 @@ export function CommandPalette() {
         titleKey: "commands:title.goToFolder",
         title: () => i18n.t("commands:title.goToFolder", { name: leaf }),
         // Match on the leaf name, the full path, and natural "go to …" phrasings.
-        aliases: [leaf, f.imapName, `folder ${leaf}`, `go to ${leaf}`, `go to folder ${leaf}`],
+        aliases: [
+          leaf,
+          displayFolderName(f.imapName),
+          `folder ${leaf}`,
+          `go to ${leaf}`,
+          `go to folder ${leaf}`,
+        ],
         keys: [],
         section: "Go to",
         run: () => useUi.getState().selectFolder(f.id),

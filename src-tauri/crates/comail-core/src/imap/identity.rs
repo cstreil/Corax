@@ -113,12 +113,15 @@ fn validate_uid_set(set: &str) -> Result<()> {
 }
 
 fn quoted_mailbox(target: &str) -> Result<String> {
+    // Reject injections on the caller's text: encoding would hide a control
+    // character inside a base64 run.
     if target.bytes().any(|b| b.is_ascii_control()) {
         return Err(CoreError::ActionRejected("Invalid target mailbox".into()));
     }
+    let wire = super::mutf7::encode(target);
     Ok(format!(
         "\"{}\"",
-        target.replace('\\', "\\\\").replace('"', "\\\"")
+        wire.replace('\\', "\\\\").replace('"', "\\\"")
     ))
 }
 

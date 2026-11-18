@@ -5,6 +5,7 @@ import { commandScore } from "../../keyboard/commandScore";
 import { buildCommandContext } from "../../keyboard/context";
 import { findCachedSummary, performThreadAction } from "../../queries/actions";
 import { useFolders } from "../../queries/hooks";
+import { displayFolderName } from "../../lib/folders";
 import { useUi } from "../../stores/ui";
 import { Modal } from "../ui/Modal";
 
@@ -19,7 +20,7 @@ const VIEW_ROLE: Partial<Record<View, string>> = {
 };
 
 function folderLabel(f: FolderInfo): string {
-  return f.imapName.replace(/^\[Gmail\]\//, "");
+  return displayFolderName(f.imapName.replace(/^\[Gmail\]\//, ""));
 }
 
 /** Global move-to-folder popover, opened by V (targets stored in the ui store). */

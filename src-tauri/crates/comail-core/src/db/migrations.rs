@@ -39,6 +39,7 @@ const MIGRATIONS: &[&str] = &[
     include_str!("migrations/035_restore_non_trash_roles.sql"),
     include_str!("migrations/036_backfill_reconciled.sql"),
     include_str!("migrations/037_backfill_reconcile_retry.sql"),
+    include_str!("migrations/038_mutf7_folder_names.sql"),
 ];
 
 pub fn run(conn: &mut Connection) -> Result<()> {
@@ -51,10 +52,48 @@ pub fn run(conn: &mut Connection) -> Result<()> {
             if target == 33 {
                 crate::db::repo::folders::normalize_roles(&tx, None)?;
             }
+            if target == 38 {
+                decode_folder_names(&tx)?;
+            }
             tx.pragma_update(None, "user_version", target)?;
             tx.commit()?;
             tracing::info!("applied db migration {target}");
         }
+    }
+    Ok(())
+}
+
+/// Revision 38: older builds stored `folders.imap_name` exactly as it arrived on
+/// the wire, which for IMAP4rev1 is modified UTF-7. Names are decoded at the
+/// IMAP boundary now, so the rows written before that have to be rewritten or
+/// the first sync after the upgrade would see a "new" folder for every name
+/// containing an escape and re-download it as a duplicate.
+///
+/// `decode` is idempotent, so a name that was already UTF-8 is left untouched.
+/// A collision would collapse two mailboxes into one key; the transaction is
+/// rolled back instead of guessing which one survives.
+fn decode_folder_names(conn: &Connection) -> Result<()> {
+    let rows: Vec<(i64, String)> = {
+        let mut stmt = conn.prepare("SELECT id, imap_name FROM folders")?;
+        let rows = stmt
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
+            .collect::<rusqlite::Result<_>>()?;
+        rows
+    };
+    for (id, raw) in rows {
+        let decoded = crate::imap::mutf7::decode(&raw);
+        if decoded == raw {
+            continue;
+        }
+        conn.execute(
+            "UPDATE folders SET imap_name = ?1 WHERE id = ?2",
+            rusqlite::params![decoded, id],
+        )
+        .map_err(|e| {
+            crate::error::CoreError::Other(format!(
+                "migration 38: folder {id} cannot be rewritten to {decoded:?}: {e}"
+            ))
+        })?;
     }
     Ok(())
 }
@@ -564,5 +603,38 @@ mod tests {
                  WHERE c.email = 'kim@acme.com' AND c.name = 'Kim'"),
             (1, 0, 200)
         );
+    }
+
+    #[test]
+    fn migration_038_rewrites_wire_form_folder_names() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        run_through(&mut conn, 37);
+        // ID 1 is the INBOX this seeds; the wire-form names get their own ids.
+        crate::db::testutil::seed_account(&conn);
+        conn.execute_batch(
+            "INSERT INTO folders(id,account_id,imap_name,role) VALUES
+               (101,1,'finanzen/anwa&Awg-lte',NULL),
+               (102,1,'familie &- wohnung',NULL),
+               (103,1,'kommerz/ka&Awg-ufe',NULL);",
+        )
+        .unwrap();
+
+        run(&mut conn).unwrap();
+
+        let name = |id: i64| -> String {
+            conn.query_row("SELECT imap_name FROM folders WHERE id = ?1", [id], |r| {
+                r.get(0)
+            })
+            .unwrap()
+        };
+        assert_eq!(name(101), "finanzen/anwa\u{308}lte");
+        assert_eq!(name(102), "familie & wohnung");
+        assert_eq!(name(103), "kommerz/ka\u{308}ufe");
+        assert_eq!(name(1), "INBOX");
+
+        // Running it again must not touch anything: decode is idempotent.
+        decode_folder_names(&conn).unwrap();
+        assert_eq!(name(101), "finanzen/anwa\u{308}lte");
+        assert_eq!(name(102), "familie & wohnung");
     }
 }

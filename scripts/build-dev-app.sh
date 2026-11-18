@@ -50,9 +50,19 @@ if [ -z "$SIGN_IDENTITY" ] && security find-certificate -c "comail-dev" >/dev/nu
   SIGN_IDENTITY="comail-dev"
 fi
 if [ -n "$SIGN_IDENTITY" ]; then
-  xattr -cr "$APP"
+  # Sign a copy outside the iCloud work tree. fileprovider keeps
+  # com.apple.FinderInfo on bundles in there, and codesign rejects that with
+  # "resource fork, Finder information, or similar detritus not allowed" - the
+  # build then silently kept tauri's ad-hoc signature and every rebuild asked
+  # the keychain for the IMAP password again.
+  SIGN_DIR="$(mktemp -d)"
+  ditto "$APP" "$SIGN_DIR/Comail Dev.app"
+  xattr -cr "$SIGN_DIR/Comail Dev.app"
   codesign --force --sign "$SIGN_IDENTITY" --identifier "com.deanoss.comail.dev" \
-    --timestamp=none "$APP"
+    --timestamp=none "$SIGN_DIR/Comail Dev.app"
+  rm -rf "$APP"
+  ditto "$SIGN_DIR/Comail Dev.app" "$APP"
+  rm -rf "$SIGN_DIR"
   echo "Signiert mit: $SIGN_IDENTITY"
 else
   echo "Warnung: keine Signatur-Identität gefunden - App bleibt ad-hoc signiert." >&2
