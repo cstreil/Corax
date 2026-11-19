@@ -1,0 +1,7 @@
+[bindings.swift]
+# Names the Swift side imports: the C module (`RabeFFI`) is the static library's
+# headers, the generated Swift wrappers land in `RabeBindings`.
+module_name = "RabeBindings"
+ffi_module_name = "RabeFFI"
+ffi_module_filename = "RabeFFI"
+cdylib_name = "rabe_uniffi"

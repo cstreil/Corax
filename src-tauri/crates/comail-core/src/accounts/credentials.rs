@@ -5,11 +5,20 @@ use crate::error::{CoreError, Result};
 
 const SERVICE: &str = "comail";
 
-/// Services this app wrote credentials under before it was renamed. The dev
-/// instance keys its entries by bundle identifier, which changed when the app
-/// became Rabe, so its stored passwords would otherwise be orphaned. A legacy
-/// entry is adopted by the current service the first time a slot is read.
-const LEGACY_SERVICES: &[&str] = &["com.deanoss.comail.dev"];
+/// The one legacy rename this fork adopts: the pre-rename dev build wrote its
+/// credentials under the upstream bundle identifier, the renamed dev build
+/// under `de.streil.rabe.dev`. Adopting means reading the old service once and
+/// copying the secret to the new one; the old entry is left in place.
+///
+/// This is deliberately a single explicit pair, not a list applied to every
+/// non-release service: the native host runs as `de.streil.rabe.native` and the
+/// sandbox as `de.streil.rabe.native.sandbox`, and neither may read (or copy)
+/// the dev build's credentials. An unknown service adopts nothing at all, so it
+/// can never touch a keychain entry it does not own - which is also what keeps
+/// a fresh instance from triggering a keychain access prompt.
+const LEGACY_DEV_SERVICE: &str = "com.deanoss.comail.dev";
+/// The renamed dev service the legacy entry is adopted into.
+const RENAMED_DEV_SERVICE: &str = "de.streil.rabe.dev";
 
 /// Keyring service name. `COMAIL_KEYRING_SERVICE` overrides it so an isolated
 /// dev instance never reads, overwrites or deletes the installed release's
@@ -21,8 +30,14 @@ fn service() -> String {
         .unwrap_or_else(|| SERVICE.to_string())
 }
 
-/// Read one secret from a pre-rename service and copy it under `current`, so
-/// the adoption happens once. `fetch` returns `None` for a missing or unreadable
+/// Read one secret from the pre-rename dev service and copy it under
+/// `current`, so the adoption happens once.
+///
+/// Only `current == de.streil.rabe.dev` adopts anything: the entries live in
+/// `com.deanoss.comail.dev` and are read exactly once per slot. Every other
+/// service - the release `comail`, the native host's services, the sandbox,
+/// a test service, the legacy service itself - gets `None` without reading any
+/// other keychain entry. `fetch` returns `None` for a missing or unreadable
 /// entry; `save` stores the found secret under `current`.
 ///
 /// Chunk-split values (a Windows-only layout, see `MAX_SECRET_UTF16`) are left
@@ -33,20 +48,15 @@ fn adopt_legacy(
     fetch: impl Fn(&str, &str) -> Option<String>,
     save: impl Fn(&str),
 ) -> Option<String> {
-    for name in LEGACY_SERVICES {
-        if *name == current {
-            continue;
-        }
-        let Some(secret) = fetch(name, user) else {
-            continue;
-        };
-        if secret.starts_with(CHUNK_MARKER) {
-            continue;
-        }
-        save(&secret);
-        return Some(secret);
+    if current != RENAMED_DEV_SERVICE {
+        return None;
     }
-    None
+    let secret = fetch(LEGACY_DEV_SERVICE, user)?;
+    if secret.starts_with(CHUNK_MARKER) {
+        return None;
+    }
+    save(&secret);
+    Some(secret)
 }
 
 pub enum Slot {
@@ -353,5 +363,56 @@ mod tests {
             |_| panic!("must not save"),
         );
         assert!(secret.is_none());
+    }
+
+    #[test]
+    fn no_other_service_adopts_the_dev_credentials() {
+        // The native host, its sandbox, the release app and the upstream
+        // release service must not read `com.deanoss.comail.dev` at all: a
+        // fresh instance that never had credentials must not inherit the dev
+        // build's (and must not prompt for keychain access to them).
+        for current in [
+            "de.streil.rabe.native",
+            "de.streil.rabe.native.sandbox",
+            "de.streil.rabe.native.test",
+            "comail",
+            "de.streil.rabe",
+            "com.deanoss.comail",
+            "",
+        ] {
+            let secret = adopt_legacy(
+                current,
+                "1:password",
+                |_, _| panic!("{current} must not read any legacy service"),
+                |_| panic!("{current} must not save"),
+            );
+            assert!(secret.is_none(), "{current:?} adopted a credential");
+        }
+    }
+
+    #[test]
+    fn the_mapping_is_exactly_dev_to_dev() {
+        // The other direction of the pair: the renamed dev service is the only
+        // reader, and it reads the pre-rename dev service - nothing else.
+        let reads = std::cell::RefCell::new(Vec::new());
+        let secret = adopt_legacy(
+            "de.streil.rabe.dev",
+            "0:mcp_token",
+            |service, user| {
+                reads
+                    .borrow_mut()
+                    .push((service.to_string(), user.to_string()));
+                (service == "com.deanoss.comail.dev").then(|| "dev-secret".to_string())
+            },
+            |_| {},
+        );
+        assert_eq!(secret.as_deref(), Some("dev-secret"));
+        assert_eq!(
+            reads.into_inner(),
+            vec![(
+                "com.deanoss.comail.dev".to_string(),
+                "0:mcp_token".to_string()
+            )]
+        );
     }
 }
