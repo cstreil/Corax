@@ -84,7 +84,7 @@
       "download": "Télécharger",
       "downloaded": "{{name}} enregistré",
       "noPreviewTitle": "Aucun aperçu disponible",
-      "unsupported": "Comail ne peut pas encore afficher ce type de fichier. Ouvrez-le dans son app ou enregistrez une copie.",
+      "unsupported": "Rabe ne peut pas encore afficher ce type de fichier. Ouvrez-le dans son app ou enregistrez une copie.",
       "tooLargeTitle": "Trop volumineux pour l’aperçu",
       "tooLarge": "Les fichiers aussi lourds s’ouvrent plus vite dans leur propre app.",
       "pdfFailed": "Impossible d’afficher ce PDF",

@@ -32,9 +32,9 @@
   },
   "theme": {
     "label": "Theme",
-    "hint": "Snow is light, Carbon is dark.",
-    "snow": "Snow",
-    "carbon": "Carbon",
+    "hint": "Glass is light, Graphite is dark.",
+    "snow": "Glass",
+    "carbon": "Graphite",
     "system": "System"
   },
   "language": {
@@ -125,6 +125,10 @@
     "modelHintEmpty": "Type a model id, or pick one once the endpoint list loads.",
     "modelsFailed": "Couldn't load the model list: {{error}}. Type a model id instead.",
     "modelPlaceholder": "anthropic/claude-sonnet",
+    "zeroRetentionLabel": "Zero data retention",
+    "zeroRetentionHint": "Send OpenRouter chat and decision requests only to providers that don't store or train on your mail. Models with no such provider stop working until you turn this off.",
+    "quickRepliesLabel": "Suggested replies",
+    "quickRepliesHint": "When you open a reply, send the conversation to the AI for up to 3 one-tap replies. Off sends nothing and shows standard replies.",
     "providerLabel": "Provider",
     "providerHint": "Presets fill the base URL; pick Custom endpoint to use any OpenAI-compatible URL. Local servers need no API key.",
     "customProvider": "Custom endpoint",
@@ -187,7 +191,7 @@
     "automation": {
       "newTitle": "New automation",
       "editTitle": "Edit automation",
-      "editorHint": "Describe the whole workflow in plain language. Comail will interpret and validate it before anything can be saved.",
+      "editorHint": "Describe the whole workflow in plain language. Rabe will interpret and validate it before anything can be saved.",
       "promptLabel": "Describe the automation",
       "promptPlaceholder": "When an email is an invoice or receipt from a vendor, add the Finance label, move it to Important, and add [INVOICE] to the subject.",
       "promptHint": "Include both what the email should match and every action to run, in the order you want them.",
@@ -254,7 +258,7 @@
       "title": "Step-by-step setup",
       "googleTitle": "Google (Gmail)",
       "openGoogle": "Open Google Cloud Console",
-      "g1": "Create a project: at console.cloud.google.com open the project picker in the top bar, click New project, name it (e.g. Comail), Create, then select it. Then open the menu and go to APIs & Services.",
+      "g1": "Create a project: at console.cloud.google.com open the project picker in the top bar, click New project, name it (e.g. Rabe), Create, then select it. Then open the menu and go to APIs & Services.",
       "g2": "OAuth consent screen: choose External (Internal only if you have a Workspace org), fill in the app name and your email for the support + developer contact, then add your own Gmail address under Test users.",
       "g3": "Scopes: click Add or remove scopes, paste https://mail.google.com/ into the manual entry box and add it. That is the only scope Google accepts for IMAP/SMTP XOAUTH2; you do not need to enable the Gmail API.",
       "g4": "Credentials: Create credentials, OAuth client ID, application type Desktop app. Desktop clients accept the http://127.0.0.1 loopback automatically, so there is no redirect URI to configure.",
@@ -263,11 +267,11 @@
       "g7": "For calendar sync (Connect Google Calendar): in the same project enable the Google Calendar API (APIs & Services, Library, search Google Calendar API, Enable), and on the consent screen add the scope https://www.googleapis.com/auth/calendar. Without both, connecting fails with a calendar server error.",
       "msTitle": "Microsoft (Outlook / 365)",
       "openMs": "Open Microsoft Entra",
-      "m1": "At entra.microsoft.com (or portal.azure.com) go to App registrations, New registration. Name it Comail: users see this name on the consent screen.",
-      "m2": "Supported account types: pick the multitenant option that also includes personal Microsoft accounts (Any org directory + personal). Required: Comail signs in via the shared /common endpoint, and a single-tenant app fails with error AADSTS50194. Fixable later under Authentication.",
+      "m1": "At entra.microsoft.com (or portal.azure.com) go to App registrations, New registration. Name it Rabe: users see this name on the consent screen.",
+      "m2": "Supported account types: pick the multitenant option that also includes personal Microsoft accounts (Any org directory + personal). Required: Rabe signs in via the shared /common endpoint, and a single-tenant app fails with error AADSTS50194. Fixable later under Authentication.",
       "m3": "Redirect URI: choose platform Mobile and desktop applications (not Web), value http://localhost. The Web variant expects a secret and fails with a redirect mismatch; loopback ports are then accepted automatically.",
       "m4": "API permissions: Add a permission, Microsoft Graph, then Delegated permissions (not Application; if searching email shows unrelated APIs you are in the Application box). Tick IMAP.AccessAsUser.All, SMTP.Send, offline_access, openid, and email, then Add permissions.",
-      "m5": "No key or secret to create: skip Certificates & secrets (Comail is a public client). Copy the Application (client) ID from the Overview page into the field below, and leave the Microsoft client secret empty.",
+      "m5": "No key or secret to create: skip Certificates & secrets (Rabe is a public client). Copy the Application (client) ID from the Overview page into the field below, and leave the Microsoft client secret empty.",
       "m6": "Work or school mailboxes only: if sign-in ends with \"Need admin approval\", a tenant admin must consent once via Grant admin consent on the API permissions page. Personal Outlook.com accounts never need this.",
       "msNote": "Personal Outlook.com / Hotmail / Live account? You still register the app here. Sign into the portal with your personal account (it is free, no Azure subscription needed) and pick the multitenant + personal option in step 2. The account you register with and the mailbox you connect can be different.",
       "docsHint": "Prefer the full walkthrough with screenshots and troubleshooting?",
@@ -738,7 +742,7 @@
     "custom": "Custom color"
   },
   "font": {
-    "hint": "The typeface used across Comail. Message bodies keep their own fonts.",
+    "hint": "The typeface used across Rabe. Message bodies keep their own fonts.",
     "system": "System",
     "custom": "Custom Google Font",
     "customPlaceholder": "Any Google Font, e.g. Poppins",
@@ -851,7 +855,7 @@
   },
   "decision": {
     "section": "Decision model",
-    "intro": "Typed yes/no and pick-one answers for AI categories and the AI checks in rules and splits, from TypeSafe Jev, OpenAI's Decisions API or a compatible endpoint. Everything keeps working without them: Comail asks the chat model (API, local or Apple on-device), and with no AI at all, conditions and built-in sorting still run.",
+    "intro": "Typed yes/no and pick-one answers for AI categories and the AI checks in rules and splits, from TypeSafe Jev, OpenAI's Decisions API or a compatible endpoint. Everything keeps working without them: Rabe asks the chat model (API, local or Apple on-device), and with no AI at all, conditions and built-in sorting still run.",
     "providerLabel": "Provider",
     "provider": {
       "off": "Off",

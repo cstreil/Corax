@@ -62,6 +62,8 @@ export interface CommandCtx {
   moveCursor: (delta: number) => void;
   openSelected: () => void;
   nextMessage: (delta: number) => void;
+  /** Open the in-app preview of the focused message's first attachment. */
+  openAttachment: () => void;
   cycleSplit: (delta: number) => void;
   /** Jump straight to the inbox split tab at `index` (0 = Important, …). */
   gotoSplitTab: (index: number) => void;
@@ -352,6 +354,34 @@ export function buildCommandContext(targetsOverride?: number[]): CommandCtx {
     state.set({ focusedMessageId: ids[next], messageCursorSource: "keyboard" });
   };
 
+  /** Preview the focused message's attachments; inline images are skipped the
+   *  same way the message footer skips them. */
+  const openAttachment = () => {
+    const state = useUi.getState();
+    if (state.openThreadId == null) return;
+    const detail = queryClient.getQueryData<ThreadDetail>([
+      "thread",
+      state.openThreadId,
+    ]);
+    if (!detail || detail.messages.length === 0) return;
+    const focused =
+      state.focusedMessageId != null
+        ? detail.messages.find((m) => m.id === state.focusedMessageId)
+        : undefined;
+    const message = focused ?? detail.messages[detail.messages.length - 1];
+    const files = message.attachments.filter((a) => !a.isInline);
+    if (files.length === 0) return;
+    state.set({
+      attachmentPreview: {
+        items: files,
+        index: 0,
+        from: message.from,
+        date: message.date,
+        subject: message.subject,
+      },
+    });
+  };
+
   const cycleSplit = (delta: number) => {
     const state = useUi.getState();
     if (state.view !== "inbox") return;
@@ -487,6 +517,7 @@ export function buildCommandContext(targetsOverride?: number[]): CommandCtx {
         undoSendSeconds: 10,
         loadRemoteImages: false,
         aiBaseUrl: "",
+        aiZeroRetention: true,
         aiModel: "",
         aiModelInstant: "",
         aiModelCheap: "",
@@ -501,6 +532,7 @@ export function buildCommandContext(targetsOverride?: number[]): CommandCtx {
         msClientSecret: "",
         embeddingBackend: "local",
         embeddingModel: "bge-small-en-v1.5",
+        aiQuickReplies: true,
         voiceDrafting: false,
         voiceProfile: "",
         voiceLearnedAt: 0,
@@ -575,6 +607,7 @@ export function buildCommandContext(targetsOverride?: number[]): CommandCtx {
     moveCursor,
     openSelected,
     nextMessage,
+    openAttachment,
     cycleSplit,
     gotoSplitTab,
     compose,

@@ -16,8 +16,8 @@ zusätzlich in `MEMORY.md`.
 
 ## Aktueller Stand (2026-11-17)
 
-Dev-Instanz (`com.deanoss.comail.dev`, Datenverzeichnis
-`~/Library/Application Support/com.deanoss.comail.dev`):
+Dev-Instanz (`de.streil.rabe.dev`, Datenverzeichnis
+`~/Library/Application Support/de.streil.rabe.dev`):
 
 ```
 Mails            11015      (vollständig, siehe Verifikation)
@@ -29,7 +29,7 @@ Session-Verluste     0      (vor dem Fix: 96)
 Content-Fehler       0
 ```
 
-Die Release-Instanz (`com.deanoss.comail`, `/Applications/Comail.app`) nutzt
+Die Release-Instanz (`de.streil.rabe`, `/Applications/Rabe.app`) nutzt
 dasselbe Binary mit der Basiskonfiguration und ein eigenes Datenverzeichnis.
 
 ## Änderungen und ihre Begründung
@@ -93,19 +93,26 @@ teilen:
 
 - `COMAIL_DATA_DIR` und `COMAIL_KEYRING_SERVICE` als Overrides.
 - `isolate_instance()` in `lib.rs` leitet beides aus einem Bundle-Identifier
-  ≠ `com.deanoss.comail` ab. Läuft vor `init_logging()`, damit auch das Log
+  ≠ `de.streil.rabe` ab. Läuft vor `init_logging()`, damit auch das Log
   im richtigen Verzeichnis landet.
 
 ### 7. Build- und Dev-Skripte
 
 | Datei | Zweck |
 |---|---|
-| `scripts/build-local-app.sh` | Release-Build aus dem Fork, installiert nach `/Applications` |
-| `scripts/build-dev-app.sh` | `Comail Dev.app` (Release-Profil, Dev-Identifier) |
+| `scripts/build-local-app.sh` | Release-Build aus dem Fork, signiert, installiert nach `/Applications` |
+| `scripts/release-fork.sh` | baut, packt `Rabe.app.tar.gz`, signiert und legt das GitHub-Release mit `latest.json` an |
+| `scripts/build-dev-app.sh` | `Rabe Dev.app` (Release-Profil, Dev-Identifier) |
 | `scripts/dev-isolated.sh` | `tauri dev` mit Dev-Overlay |
 | `scripts/imap-backup.py` | rein lesendes IMAP-Vollbackup als `.eml` |
 | `src-tauri/tauri.dev.conf.json` | Dev-Overlay: Identifier, Name, Updater aus |
-| `src-tauri/tauri.local.conf.json` | lokaler Build: Updater-Endpoints und -Artefakte aus |
+
+Der Updater ist in der Release-App **an**: `tauri.conf.json` trägt unseren
+Public Key und den Endpoint
+`https://github.com/cstreil/Rabe/releases/latest/download/latest.json`. Der
+private Schlüssel liegt unter `~/.tauri/rabe-updater.key` (außerhalb des Repos,
+`chmod 600`), ohne ihn kann niemand ein Update bauen, das eine installierte App
+annimmt.
 
 `build-local-app.sh` und `build-dev-app.sh` entfernen für den Build
 `bundle.macOS.files` aus `tauri.conf.json` und stellen die Datei per `trap`
@@ -341,8 +348,8 @@ Ein Fehler dort kostet nur die Büroklammer, nie den Header-Batch.
 ```bash
 cd "Projekte/comail.nosync"
 
-sh scripts/build-local-app.sh   # → /Applications/Comail.app
-sh scripts/build-dev-app.sh     # → Comail Dev.app, danach nach /Applications kopieren
+sh scripts/build-local-app.sh   # → /Applications/Rabe.app
+sh scripts/build-dev-app.sh     # → Rabe Dev.app, danach nach /Applications kopieren
 pnpm dev:isolated               # Hot-Reload-Dev-Instanz
 ```
 
@@ -380,12 +387,18 @@ App 11012 eindeutige, **0 fehlend**.
 3. **MCP ist aus** in beiden Instanzen (`mcpEnabled: false`, Port 47823). Für
    Agenten-Zugriff in den Settings aktivieren; bei parallelem Betrieb braucht
    die zweite Instanz einen anderen Port.
-4. **Keychain-Freigabe nach Signaturwechsel** (Punkt 10): die vorhandenen
-   Einträge unter Service `com.deanoss.comail.dev` tragen noch die alte
-   CDHash-Partition. Nach dem ersten Start mit der Apple-Signatur einmal
-   „Immer erlauben" — danach sollte es halten. Falls nicht, müssen die Einträge
-   einmal neu angelegt werden (Passwort im Konto erneut eintragen).
-   Stand 2026-11-17: 0 Keychain-Abfragen im Log, das Thema ist durch.
+4. **Keychain nach der Umbenennung** (2026-11-18): Mit dem Wechsel auf den
+   Identifier `de.streil.rabe.dev` wandert der Keyring-Service. `credentials::load`
+   übernimmt einen vorhandenen Eintrag aus dem alten Service
+   (`com.deanoss.comail.dev`) beim ersten Lesen automatisch und legt ihn unter
+   dem neuen Namen ab; die alte Kopie bleibt liegen und wird nicht mehr gelesen.
+   Die Release-Instanz ist nicht betroffen, ihr Service ist die feste Konstante
+   `comail`. Belegt: nach dem Umzug „receive: connected; IDLE push enabled" ohne
+   Umgebungsvariable, Eintrag `1:password` unter `de.streil.rabe.dev`.
+   Grund für die Migration: `Bearbeiten` im Konto kennt kein Passwortfeld, und
+   `reauth_account` ist reiner OAuth-Flow — für IMAP-Konten gab es keinen Weg,
+   ein Passwort neu zu hinterlegen. Offene Lücke: ein eigenes „Passwort ändern"
+   für IMAP-Konten fehlt weiterhin.
 
 ## Fallstricke
 

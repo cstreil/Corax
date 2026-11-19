@@ -1,43 +1,43 @@
 {
   "permanentDelete": {
-    "title": "Delete permanently",
-    "confirm_one": "Permanently delete the messages in Trash from {{count}} selected conversation? Messages outside Trash will be kept. This cannot be undone.",
-    "confirm_other": "Permanently delete the messages in Trash from {{count}} selected conversations? Messages outside Trash will be kept. This cannot be undone.",
-    "pending": "Permanently deleting…",
-    "done": "Permanently deleted.",
-    "offline": "You’re offline. Permanent deletion will resume when you reconnect.",
-    "paused": "Permanent deletion is paused. Sign in to your account again to continue.",
-    "failed": "Permanent deletion could not complete: {{detail}}",
-    "retrying": "Permanent deletion is being retried: {{detail}}. The messages stay hidden until the server confirms."
+    "title": "Endgültig löschen",
+    "confirm_one": "Die Nachrichten im Papierkorb aus {{count}} ausgewählten Unterhaltung endgültig löschen? Nachrichten außerhalb des Papierkorbs bleiben erhalten. Das lässt sich nicht rückgängig machen.",
+    "confirm_other": "Die Nachrichten im Papierkorb aus {{count}} ausgewählten Unterhaltungen endgültig löschen? Nachrichten außerhalb des Papierkorbs bleiben erhalten. Das lässt sich nicht rückgängig machen.",
+    "pending": "Wird endgültig gelöscht …",
+    "done": "Endgültig gelöscht.",
+    "offline": "Du bist offline. Das endgültige Löschen wird fortgesetzt, sobald du wieder verbunden bist.",
+    "paused": "Das endgültige Löschen ist pausiert. Melde dich erneut bei deinem Konto an, um fortzufahren.",
+    "failed": "Endgültiges Löschen fehlgeschlagen: {{detail}}",
+    "retrying": "Endgültiges Löschen wird wiederholt: {{detail}}. Die Nachrichten bleiben ausgeblendet, bis der Server bestätigt."
   },
   "dateGroup": {
-    "today": "Today",
-    "yesterday": "Yesterday",
-    "thisWeek": "This Week",
-    "thisMonth": "This Month"
+    "today": "Heute",
+    "yesterday": "Gestern",
+    "thisWeek": "Diese Woche",
+    "thisMonth": "Diesen Monat"
   },
   "view": {
     "inbox": "Inbox",
-    "starred": "Starred",
-    "snoozed": "Snoozed",
-    "sent": "Sent",
-    "drafts": "Drafts",
-    "done": "Done",
-    "trash": "Trash",
+    "starred": "Markiert",
+    "snoozed": "Zurückgestellt",
+    "sent": "Gesendet",
+    "drafts": "Entwürfe",
+    "done": "Erledigt",
+    "trash": "Papierkorb",
     "spam": "Spam",
-    "all": "All Mail"
+    "all": "Alle E-Mails"
   },
   "reauthBanner": {
-    "message": "{{email}} is signed out and can't check mail.",
-    "action": "Sign in with {{provider}} again",
-    "waiting": "Waiting for {{provider}}… (click to cancel)",
-    "openSettings": "Open account settings"
+    "message": "{{email}} ist abgemeldet und kann keine E-Mails abrufen.",
+    "action": "Erneut mit {{provider}} anmelden",
+    "waiting": "Warten auf {{provider}} … (zum Abbrechen klicken)",
+    "openSettings": "Kontoeinstellungen öffnen"
   },
   "syncState": {
-    "idle": "idle",
-    "syncing": "syncing",
-    "error": "error",
-    "needs_reauth": "needs reauth",
+    "idle": "inaktiv",
+    "syncing": "synchronisiert",
+    "error": "Fehler",
+    "needs_reauth": "Neuanmeldung nötig",
     "offline": "offline"
   },
   "unit": {
@@ -46,315 +46,315 @@
     "megabytes": "MB"
   },
   "action": {
-    "done": "Done",
-    "snooze": "Snooze",
-    "star": "Star",
-    "read": "Read",
-    "trash": "Trash",
+    "done": "Erledigt",
+    "snooze": "Zurückstellen",
+    "star": "Markieren",
+    "read": "Gelesen",
+    "trash": "Papierkorb",
     "spam": "Spam",
-    "clear": "Clear",
-    "deselect": "Deselect",
-    "close": "Close",
-    "back": "Back",
-    "cancel": "Cancel",
-    "dismiss": "Dismiss",
-    "undo": "Undo"
+    "clear": "Leeren",
+    "deselect": "Auswahl aufheben",
+    "close": "Schließen",
+    "back": "Zurück",
+    "cancel": "Abbrechen",
+    "dismiss": "Ausblenden",
+    "undo": "Rückgängig"
   },
   "topbar": {
-    "search": "Search",
+    "search": "Suche",
     "offline": "Offline",
-    "syncing": "Syncing",
-    "checkingMail": "Checking mail…",
-    "syncMail": "Check for new mail",
-    "syncMailAccount": "Check {{account}} for new mail",
-    "syncFailed": "Couldn't check mail: {{detail}}",
-    "switchAccount": "Switch account",
-    "inboxUpToDate": "Inbox up to date",
-    "backgroundTitle": "{{done}} of {{total}} complete · {{failed}} failed",
-    "backgroundFailed": "{{count}} failed",
+    "syncing": "Synchronisiert",
+    "checkingMail": "E-Mails werden abgerufen …",
+    "syncMail": "Nach neuen E-Mails suchen",
+    "syncMailAccount": "{{account}} auf neue E-Mails prüfen",
+    "syncFailed": "E-Mails konnten nicht abgerufen werden: {{detail}}",
+    "switchAccount": "Konto wechseln",
+    "inboxUpToDate": "Inbox ist aktuell",
+    "backgroundTitle": "{{done}} von {{total}} abgeschlossen · {{failed}} fehlgeschlagen",
+    "backgroundFailed": "{{count}} fehlgeschlagen",
     "background": {
-      "headers": "Syncing history",
-      "content": "Caching mail",
-      "indexing": "Indexing mail",
-      "retrying": "Retrying sync",
-      "mixed": "Finishing background sync"
+      "headers": "Verlauf wird synchronisiert",
+      "content": "E-Mails werden zwischengespeichert",
+      "indexing": "E-Mails werden indexiert",
+      "retrying": "Synchronisierung wird wiederholt",
+      "mixed": "Hintergrundsynchronisierung wird abgeschlossen"
     },
-    "waitingForChord": "Waiting for chord",
-    "compose": "Compose",
-    "composeWithShortcut": "Compose ({{shortcut}})",
-    "settings": "Settings",
-    "settingsWithShortcut": "Settings ({{shortcut}})",
-    "allAccounts": "All accounts",
-    "menu": "Mailboxes",
-    "calendar": "Calendar (0 today, 2 week)",
-    "mail": "Mail"
+    "waitingForChord": "Warte auf Tastenfolge",
+    "compose": "Verfassen",
+    "composeWithShortcut": "Verfassen ({{shortcut}})",
+    "settings": "Einstellungen",
+    "settingsWithShortcut": "Einstellungen ({{shortcut}})",
+    "allAccounts": "Alle Konten",
+    "menu": "Postfächer",
+    "calendar": "Kalender",
+    "mail": "E-Mail"
   },
-  "loading": "Loading…",
-  "selectedCount": "{{count}} selected",
-  "undoSuffix": "{{label}} · Z to undo",
+  "loading": "Wird geladen …",
+  "selectedCount": "{{count}} ausgewählt",
+  "undoSuffix": "{{label}} · Z zum Rückgängigmachen",
   "palette": {
-    "placeholder": "Type a command…",
-    "empty": "No matching commands"
+    "placeholder": "Befehl eingeben …",
+    "empty": "Keine passenden Befehle"
   },
   "search": {
-    "placeholder": "Search mail…",
-    "try": "Try",
-    "emptyHint": "Search across every account, folder, and message.",
-    "noResults": "No results for “{{query}}”",
-    "toggleHint": "Switch Search / Ask AI - ⌘/Ctrl+J",
-    "aiFilter": "AI filter",
-    "aiFilterHint": "Describe what you want in plain words, then press {{shortcut}} and AI writes the filter",
-    "aiFilterWorking": "Writing a filter…",
-    "aiFilterAnswer": "Or type an answer…",
-    "aiFilterFailed": "Couldn't make a filter: {{error}}",
-    "aiFilterCancel": "Cancel",
-    "aiFilterSettings": "Open AI settings",
-    "modeSearch": "Search",
-    "modeAsk": "Ask AI",
-    "askPlaceholder": "Ask anything about your mailbox…",
-    "askIntro": "Ask a question like “what did Alice say about the Q3 budget?” and get an answer grounded in your mail, with sources.",
-    "sources": "Sources",
-    "searchingMailbox": "Searching your mailbox…",
-    "readingSources_one": "Reading {{count}} source…",
-    "readingSources_other": "Reading {{count}} sources…",
-    "askFailed": "Ask failed. Make sure AI is configured in Settings.",
-    "previewFallbackTitle": "Conversation",
-    "openFull": "Open full",
-    "closePreview": "Close preview",
-    "previewFailed": "Couldn't load this conversation.",
+    "placeholder": "E-Mails durchsuchen …",
+    "try": "Ausprobieren",
+    "emptyHint": "Durchsucht alle Konten, Ordner und Nachrichten.",
+    "noResults": "Keine Ergebnisse für „{{query}}“",
+    "toggleHint": "Zwischen Suche und KI fragen wechseln: ⌘/Strg+J",
+    "aiFilter": "KI-Filter",
+    "aiFilterHint": "Beschreibe in eigenen Worten, was du suchst, und drück {{shortcut}}. Die KI schreibt dann den Filter.",
+    "aiFilterWorking": "Filter wird erstellt …",
+    "aiFilterAnswer": "Oder gib eine Antwort ein …",
+    "aiFilterFailed": "Filter konnte nicht erstellt werden: {{error}}",
+    "aiFilterCancel": "Abbrechen",
+    "aiFilterSettings": "KI-Einstellungen öffnen",
+    "modeSearch": "Suche",
+    "modeAsk": "KI fragen",
+    "askPlaceholder": "Frag etwas zu deinem Postfach …",
+    "askIntro": "Stell eine Frage wie „Was hat Alice zum Budget für Q3 gesagt?“ und erhalte eine Antwort aus deinen E-Mails, mit Quellen.",
+    "sources": "Quellen",
+    "searchingMailbox": "Postfach wird durchsucht …",
+    "readingSources_one": "{{count}} Quelle wird gelesen …",
+    "readingSources_other": "{{count}} Quellen werden gelesen …",
+    "askFailed": "Die Anfrage ist fehlgeschlagen. Prüfe, ob die KI in den Einstellungen eingerichtet ist.",
+    "previewFallbackTitle": "Unterhaltung",
+    "openFull": "Vollständig öffnen",
+    "closePreview": "Vorschau schließen",
+    "previewFailed": "Diese Unterhaltung konnte nicht geladen werden.",
     "ops": {
-      "from": "Sender name or email (from:me for mail you sent)",
-      "to": "Recipient name or email",
-      "label": "Has this label",
-      "subject": "Words or \"phrase\" in the subject",
-      "body": "Words or \"phrase\" in the body",
-      "in": "Folder: inbox, sent, archive…",
+      "from": "Name oder E-Mail des Absenders (from:me für deine gesendeten E-Mails)",
+      "to": "Name oder E-Mail des Empfängers",
+      "label": "Hat dieses Label",
+      "subject": "Wörter oder \"Phrase\" im Betreff",
+      "body": "Wörter oder \"Phrase\" im Text",
+      "in": "Ordner: inbox, sent, archive …",
       "is": "unread, read, starred, replied",
-      "has": "attachment or label",
-      "last": "Recent: 7d, 2w, month, today",
-      "after": "On or after a date, YYYY-MM-DD",
-      "before": "Before a date, YYYY-MM-DD",
-      "between": "Date range, YYYY-MM-DD:YYYY-MM-DD",
-      "olderThan": "Older than: 30d, 1y",
-      "sort": "newest, oldest or relevance",
-      "exclude": "Drop results with a word (or -word)"
+      "has": "attachment oder label",
+      "last": "Zeitraum: 7d, 2w, month, today",
+      "after": "Am oder nach einem Datum, JJJJ-MM-TT",
+      "before": "Vor einem Datum, JJJJ-MM-TT",
+      "between": "Datumsbereich, JJJJ-MM-TT:JJJJ-MM-TT",
+      "olderThan": "Älter als: 30d, 1y",
+      "sort": "newest, oldest oder relevance",
+      "exclude": "Ergebnisse mit einem Wort ausschließen (oder -wort)"
     },
     "values": {
       "in": {
         "inbox": "Inbox",
-        "sent": "Sent",
-        "drafts": "Drafts",
-        "archive": "Archive",
-        "trash": "Trash",
+        "sent": "Gesendet",
+        "drafts": "Entwürfe",
+        "archive": "Archiv",
+        "trash": "Papierkorb",
         "spam": "Spam"
       },
       "is": {
-        "unread": "Unread",
-        "read": "Read",
-        "starred": "Starred",
-        "replied": "Replied"
+        "unread": "Ungelesen",
+        "read": "Gelesen",
+        "starred": "Markiert",
+        "replied": "Beantwortet"
       },
       "has": {
-        "attachment": "Attachment",
-        "label": "Any label"
+        "attachment": "Anhang",
+        "label": "Beliebiges Label"
       },
       "sort": {
-        "newest": "Newest first",
-        "oldest": "Oldest first",
-        "relevance": "Best match"
+        "newest": "Neueste zuerst",
+        "oldest": "Älteste zuerst",
+        "relevance": "Beste Treffer"
       },
       "last": {
-        "today": "Today",
-        "7d": "Last 7 days",
-        "30d": "Last 30 days",
-        "90d": "Last 90 days",
-        "1y": "Last year"
+        "today": "Heute",
+        "7d": "Letzte 7 Tage",
+        "30d": "Letzte 30 Tage",
+        "90d": "Letzte 90 Tage",
+        "1y": "Letztes Jahr"
       },
       "older_than": {
-        "30d": "More than 30 days ago",
-        "90d": "More than 90 days ago",
-        "1y": "More than a year ago"
+        "30d": "Vor mehr als 30 Tagen",
+        "90d": "Vor mehr als 90 Tagen",
+        "1y": "Vor mehr als einem Jahr"
       },
       "from": {
-        "me": "Mail you sent"
+        "me": "Von dir gesendet"
       }
     },
     "chip": {
-      "from": "From",
-      "to": "To",
+      "from": "Von",
+      "to": "An",
       "label": "Label",
       "in": "In",
-      "is": "Is",
-      "has": "Has",
-      "subject": "Subject",
-      "body": "Body",
-      "exclude": "Without",
-      "after": "After",
-      "before": "Before",
-      "between": "Between",
-      "last": "Last",
-      "older_than": "Older than",
-      "sort": "Sort"
+      "is": "Ist",
+      "has": "Hat",
+      "subject": "Betreff",
+      "body": "Text",
+      "exclude": "Ohne",
+      "after": "Nach",
+      "before": "Vor",
+      "between": "Zwischen",
+      "last": "Letzte",
+      "older_than": "Älter als",
+      "sort": "Sortierung"
     },
     "span": {
-      "hours_one": "{{count}} hour",
-      "hours_other": "{{count}} hours",
-      "days_one": "{{count}} day",
-      "days_other": "{{count}} days",
-      "weeks_one": "{{count}} week",
-      "weeks_other": "{{count}} weeks",
-      "months_one": "{{count}} month",
-      "months_other": "{{count}} months",
-      "years_one": "{{count}} year",
-      "years_other": "{{count}} years"
+      "hours_one": "{{count}} Stunde",
+      "hours_other": "{{count}} Stunden",
+      "days_one": "{{count}} Tag",
+      "days_other": "{{count}} Tage",
+      "weeks_one": "{{count}} Woche",
+      "weeks_other": "{{count}} Wochen",
+      "months_one": "{{count}} Monat",
+      "months_other": "{{count}} Monate",
+      "years_one": "{{count}} Jahr",
+      "years_other": "{{count}} Jahre"
     },
     "explain": {
-      "lead": "Emails",
-      "leadSent": "Emails you sent",
-      "me": "me",
-      "from": "from {{v}}",
-      "to": "to {{v}}",
-      "label": "labeled {{v}}",
+      "lead": "E-Mails",
+      "leadSent": "Von dir gesendete E-Mails",
+      "me": "mir",
+      "from": "von {{v}}",
+      "to": "an {{v}}",
+      "label": "mit Label {{v}}",
       "in": "in {{v}}",
       "is": {
-        "unread": "that are unread",
-        "read": "that are read",
-        "starred": "that are starred",
-        "replied": "you replied to"
+        "unread": "die ungelesen sind",
+        "read": "die gelesen sind",
+        "starred": "die markiert sind",
+        "replied": "auf die du geantwortet hast"
       },
       "has": {
-        "attachment": "with attachments",
-        "label": "with a label"
+        "attachment": "mit Anhängen",
+        "label": "mit einem Label"
       },
-      "today": "from today",
-      "todayShort": "today",
-      "last": "from the last {{span}}",
-      "olderThan": "older than {{span}}",
-      "between": "between {{from}} and {{to}}",
-      "after": "since {{date}}",
-      "before": "before {{date}}",
-      "containing": "containing {{terms}}",
-      "subject": "with {{v}} in the subject",
-      "body": "with {{v}} in the body",
-      "without": "without {{v}}",
+      "today": "von heute",
+      "todayShort": "heute",
+      "last": "jünger als {{span}}",
+      "olderThan": "älter als {{span}}",
+      "between": "zwischen {{from}} und {{to}}",
+      "after": "seit {{date}}",
+      "before": "vor {{date}}",
+      "containing": "mit {{terms}}",
+      "subject": "mit {{v}} im Betreff",
+      "body": "mit {{v}} im Text",
+      "without": "ohne {{v}}",
       "sort": {
-        "relevance": "best match first",
-        "newest": "newest first",
-        "oldest": "oldest first"
+        "relevance": "beste Treffer zuerst",
+        "newest": "neueste zuerst",
+        "oldest": "älteste zuerst"
       },
       "sentence": "{{what}}, {{order}}."
     },
     "warn": {
-      "unknown_operator": "“{{token}}” isn't a search filter",
-      "bad_value": "“{{token}}” isn't a valid value",
-      "unknown_label": "No label named “{{token}}”",
-      "use": "Use {{fix}}"
+      "unknown_operator": "„{{token}}“ ist kein Suchfilter",
+      "bad_value": "„{{token}}“ ist kein gültiger Wert",
+      "unknown_label": "Kein Label namens „{{token}}“",
+      "use": "Verwende {{fix}}"
     },
     "group": {
-      "partial": "Partial matches - not every word",
-      "similar": "Related - no exact keyword match",
-      "similarHint": "Found by meaning"
+      "partial": "Teiltreffer: nicht alle Wörter",
+      "similar": "Ähnlich: kein exakter Stichworttreffer",
+      "similarHint": "Nach Bedeutung gefunden"
     },
     "reason": {
-      "subject": "Subject",
-      "sender": "Sender",
+      "subject": "Betreff",
+      "sender": "Absender",
       "content": "Text",
-      "partial": "Partial",
-      "similar": "Similar"
+      "partial": "Teilweise",
+      "similar": "Ähnlich"
     },
     "help": {
-      "title": "Search filters",
-      "examples": "Examples",
-      "ex1": "recent inbox mail from Alice",
-      "ex2": "invoices with an attachment",
-      "ex3": "your sent mail, oldest first",
-      "ex4": "unread mail labeled Work",
-      "ex5": "an exact phrase within a date range",
-      "ex6": "mail without a word"
+      "title": "Suchfilter",
+      "examples": "Beispiele",
+      "ex1": "aktuelle E-Mails von Alice in der Inbox",
+      "ex2": "Rechnungen mit Anhang",
+      "ex3": "deine gesendeten E-Mails, älteste zuerst",
+      "ex4": "ungelesene E-Mails mit dem Label Work",
+      "ex5": "eine exakte Phrase in einem Zeitraum",
+      "ex6": "E-Mails ohne ein bestimmtes Wort"
     },
-    "removeFilter": "Remove {{label}}",
-    "noResultsHint": "Nothing matches every filter. Try removing one:"
+    "removeFilter": "{{label}} entfernen",
+    "noResultsHint": "Nichts passt zu allen Filtern. Entferne einen davon:"
   },
   "shortcutHelp": {
-    "title": "Keyboard shortcuts",
-    "escToClose": "Esc to close",
-    "then": "then"
+    "title": "Tastenkürzel",
+    "escToClose": "Esc zum Schließen",
+    "then": "dann"
   },
   "move": {
-    "title": "Move to folder",
-    "placeholder": "Filter folders…",
-    "noMatches": "No matching folders",
-    "loading": "Loading folders…",
-    "movedTo": "Moved to {{folder}}"
+    "title": "In Ordner verschieben",
+    "placeholder": "Ordner filtern …",
+    "noMatches": "Keine passenden Ordner",
+    "loading": "Ordner werden geladen …",
+    "movedTo": "Nach {{folder}} verschoben"
   },
   "label": {
     "title": "Labels",
-    "placeholder": "Filter or create a label…",
-    "none": "No labels yet",
-    "create": "Create “{{name}}”",
-    "createFailed": "Couldn't create label"
+    "placeholder": "Label filtern oder anlegen …",
+    "none": "Noch keine Labels",
+    "create": "„{{name}}“ anlegen",
+    "createFailed": "Label konnte nicht angelegt werden"
   },
   "snoozePopover": {
-    "snoozeUntil": "Snooze until",
-    "snoozed": "Snoozed",
-    "snoozedUntil": "Snoozed until {{label}}"
+    "snoozeUntil": "Zurückstellen bis",
+    "snoozed": "Zurückgestellt",
+    "snoozedUntil": "Zurückgestellt bis {{label}}"
   },
   "timePopover": {
-    "placeholder": "Try \"tomorrow\", \"2h\", \"monday 9am\"…",
-    "keepTyping": "Keep typing…"
+    "placeholder": "Z. B. „tomorrow“, „2h“, „monday 9am“ …",
+    "keepTyping": "Weiter tippen …"
   },
   "snoozeFmt": {
-    "today": "Today, {{time}}",
-    "tomorrow": "Tomorrow, {{time}}",
+    "today": "Heute, {{time}}",
+    "tomorrow": "Morgen, {{time}}",
     "dateAt": "{{date}}, {{time}}"
   },
   "snoozePreset": {
-    "later today": "Later today",
-    "tonight": "Tonight",
-    "tomorrow": "Tomorrow",
-    "this weekend": "This weekend",
-    "next week": "Next week"
+    "later today": "Später heute",
+    "tonight": "Heute Abend",
+    "tomorrow": "Morgen",
+    "this weekend": "Dieses Wochenende",
+    "next week": "Nächste Woche"
   },
   "splitTabs": {
-    "tabToSwitch": "Tab to switch",
-    "label": "Inbox tabs",
-    "newMail": "new mail",
-    "unread_one": "{{count}} unread",
-    "unread_other": "{{count}} unread"
+    "tabToSwitch": "Tab zum Wechseln",
+    "label": "Inbox-Tabs",
+    "newMail": "neue E-Mails",
+    "unread_one": "{{count}} ungelesen",
+    "unread_other": "{{count}} ungelesen"
   },
   "threadRow": {
-    "hasAttachments": "Has attachments",
-    "attachment": "Attachment",
-    "starred": "Starred",
-    "select": "Select",
-    "deselect": "Deselect"
+    "hasAttachments": "Mit Anhängen",
+    "attachment": "Anhang",
+    "starred": "Markiert",
+    "select": "Auswählen",
+    "deselect": "Auswahl aufheben"
   },
   "contextMenu": {
-    "open": "Open",
-    "markRead": "Mark as read",
-    "markUnread": "Mark as unread",
-    "star": "Star",
-    "unstar": "Unstar",
-    "archive": "Archive",
-    "snooze": "Snooze...",
-    "move": "Move to...",
-    "label": "Label...",
-    "trash": "Trash",
-    "spam": "Mark as spam"
+    "open": "Öffnen",
+    "markRead": "Als gelesen markieren",
+    "markUnread": "Als ungelesen markieren",
+    "star": "Markieren",
+    "unstar": "Markierung entfernen",
+    "archive": "Archivieren",
+    "snooze": "Zurückstellen …",
+    "move": "Verschieben nach …",
+    "label": "Label …",
+    "trash": "In den Papierkorb",
+    "spam": "Als Spam markieren"
   },
   "sidebar": {
-    "pin": "Pin menu",
-    "unpin": "Unpin menu",
-    "snippets": "Snippets",
-    "splits": "Split inbox rules",
+    "pin": "Menü anheften",
+    "unpin": "Menü lösen",
+    "snippets": "Textbausteine",
+    "splits": "Regeln der geteilten Inbox",
     "labels": "Labels",
-    "folders": "Folders",
-    "manageLabels": "Manage labels",
-    "settings": "Settings",
-    "accountSettings": "Account settings",
-    "calendar": "Calendar"
+    "folders": "Ordner",
+    "manageLabels": "Labels verwalten",
+    "settings": "Einstellungen",
+    "accountSettings": "Kontoeinstellungen",
+    "calendar": "Kalender"
   },
   "notification": {
-    "newMessages": "{{count}} new messages"
+    "newMessages": "{{count}} neue Nachrichten"
   }
 }

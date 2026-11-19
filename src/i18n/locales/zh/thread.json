@@ -84,7 +84,7 @@
       "download": "下载",
       "downloaded": "已保存 {{name}}",
       "noPreviewTitle": "无法预览",
-      "unsupported": "Comail 暂不支持预览此类文件。请用对应应用打开，或保存副本。",
+      "unsupported": "Rabe 暂不支持预览此类文件。请用对应应用打开，或保存副本。",
       "tooLargeTitle": "文件太大，无法预览",
       "tooLarge": "这么大的文件用对应应用打开会更快。",
       "pdfFailed": "无法显示此 PDF",

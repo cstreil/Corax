@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Comail</title>
+    <title>Rabe</title>
     <script>
       // Apply the last-known theme, accent and font before first paint to avoid a flash.
       (function () {
@@ -16,7 +16,7 @@
         }
         document.documentElement.dataset.theme = theme;
         document.documentElement.style.backgroundColor =
-          theme === "carbon" ? "#141413" : "#faf9f7";
+          theme === "carbon" ? "#0b0b0d" : "#eef1f7";
         try {
           var accent = localStorage.getItem("comail:accent");
           if (accent) document.documentElement.style.setProperty("--accent", accent);

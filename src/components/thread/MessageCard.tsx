@@ -121,11 +121,12 @@ export function MessageCard({
   return (
     <article
       ref={ref}
-      // Square, uniform hairline - no left accent bar. The selected message
-      // (reply target) reads clearly via a solid accent border plus a soft
-      // accent ring, so it's obvious which message a reply will go to.
+      // Square, uniform hairline - no left accent bar. The reply target is
+      // marked by a tinted hairline and a faint ring, not a solid accent
+      // frame: the card should read as one calm sheet (see the mockups),
+      // and the composer plus the header pill already say where a reply goes.
       className={`co-fade-in overflow-hidden border bg-bg1 shadow-card ${
-        focused ? "border-accent ring-2 ring-accent/40" : "border-hairline"
+        focused ? "border-accent/40 ring-1 ring-accent/10" : "border-hairline"
       }`}
     >
       <header
@@ -571,8 +572,11 @@ function HtmlBody({ html: fullHtml, messageId }: { html: string; messageId: numb
     // hosts serving them invariably support.
     const imgSrc = loadRemoteImages ? "data: cid: http: https:" : "data: cid:";
     const upgrade = loadRemoteImages ? "; upgrade-insecure-requests" : "";
+    // no-referrer: remote images and CSS backgrounds (when loading is on)
+    // don't tell the sender's servers which app or page fetched them.
     return `<!doctype html><html><head><meta charset="utf-8">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src ${imgSrc}${upgrade}">
+<meta name="referrer" content="no-referrer">
 <base target="_top">
 <style>
   :root { color-scheme: ${scheme}; }
@@ -853,6 +857,7 @@ function HtmlBody({ html: fullHtml, messageId }: { html: string; messageId: numb
         // on_navigation backstop intercepts and opens in the OS browser if the
         // JS click handler below didn't already.
         sandbox="allow-same-origin allow-top-navigation-by-user-activation"
+        referrerPolicy="no-referrer"
         srcDoc={srcDoc}
         onLoad={onLoad}
         // Hidden with opacity (not visibility) while unmeasured: WebKit skips

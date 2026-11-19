@@ -86,7 +86,7 @@
     "settingsWithShortcut": "Settings ({{shortcut}})",
     "allAccounts": "All accounts",
     "menu": "Mailboxes",
-    "calendar": "Calendar (0 today, 2 week)",
+    "calendar": "Calendar",
     "mail": "Mail"
   },
   "loading": "Loading…",

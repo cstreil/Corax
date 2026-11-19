@@ -51,13 +51,13 @@
     "continue": "Continue",
     "skip": "Skip",
     "welcome": {
-      "title": "Welcome to Comail.",
+      "title": "Welcome to Rabe.",
       "body": "A fast, keyboard-first inbox. Connect an account, pick a look, learn three keys, and you're in. About a minute.",
       "cta": "Get started"
     },
     "connect": {
       "title": "Bring your inbox.",
-      "body": "Comail talks to your provider directly. Your password and mail never leave this computer.",
+      "body": "Rabe talks to your provider directly. Your password and mail never leave this computer.",
       "imap": "Other provider (IMAP)",
       "waiting": "Waiting for your browser…",
       "waitingHint": "Finish signing in, then come back here.",
@@ -78,7 +78,7 @@
     },
     "shortcuts": {
       "title": "Learn the keys.",
-      "body": "Comail is built to be driven from the keyboard. Try each one, the inbox on the right is a sandbox and nothing touches your mail.",
+      "body": "Rabe is built to be driven from the keyboard. Try each one, the inbox on the right is a sandbox and nothing touches your mail.",
       "press": "Press",
       "groups": {
         "navigate": "Move around",
@@ -102,7 +102,7 @@
       "snoozeShort": "Snooze",
       "replyShort": "Reply",
       "paletteShort": "Command bar",
-      "allDone": "You've got the basics. Press ? anywhere in Comail to see every shortcut.",
+      "allDone": "You've got the basics. Press ? anywhere in Rabe to see every shortcut.",
       "progress": "{{n}} of {{total}} tried",
       "then": "then",
       "summarize": "Summarize the conversation",

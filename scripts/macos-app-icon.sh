@@ -13,12 +13,32 @@
 #   pnpm tauri build --config src-tauri/gen/app-icon/tauri.icon.conf.json
 #
 # Local `tauri build -v` does not need this. Drop it once tauri fixes actool.
+#
+# The fork has no Icon.icon any more: the app icon is a plain icon.icns built
+# from design/icon/rabe-icon-1024.png with `pnpm tauri icon`, and upstream's
+# Icon Composer package (the old planet) was removed with the rebrand. Without
+# Icon Composer we cannot author a Liquid Glass .icon, so the script writes an
+# overlay without Assets.car and leaves the icns in charge. Without this check
+# a CI machine that does have actool would put the upstream art back.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
 out=src-tauri/gen/app-icon
 rm -rf "$out"
 mkdir -p "$out"
+
+if [ ! -d src-tauri/icons/Icon.icon ]; then
+  python3 - <<'PY'
+import json
+
+conf = json.load(open("src-tauri/tauri.conf.json"))
+overlay = {"bundle": {"icon": [i for i in conf["bundle"]["icon"] if not i.endswith(".icon")]}}
+with open("src-tauri/gen/app-icon/tauri.icon.conf.json", "w") as f:
+    json.dump(overlay, f, indent=2)
+PY
+  echo "app icon: no Icon.icon, icon.icns only ($out/tauri.icon.conf.json)"
+  exit 0
+fi
 
 actool src-tauri/icons/Icon.icon --compile "$out" \
   --output-format human-readable-text --notices --warnings --errors \

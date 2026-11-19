@@ -1,9 +1,10 @@
 # Fork notes
 
-This repository is a fork of [NextOSP/comail](https://github.com/NextOSP/comail), kept for
-daily use. Upstream is the product; this fork carries targeted fixes and one UI change on top
-of it. Nothing here is a rewrite — the architecture, the crate layout and the build stay the
-upstream ones.
+**Rabe** is a fork of [NextOSP/comail](https://github.com/NextOSP/comail), kept for daily use.
+Upstream is the product; this fork carries targeted fixes, one UI change and a German
+localization on top of it, under its own app name and bundle identifier (`de.streil.rabe`).
+Nothing here is a rewrite — the architecture, the crate layout, the Rust crate names and the
+build stay the upstream ones.
 
 ## What differs from upstream
 
@@ -32,22 +33,25 @@ them; labels and rules can still be turned into tabs or splits.
 **Inline conversation panel.** Opening a thread expands it inside the list instead of replacing
 the list, sized to the conversation up to 75% of the viewport. A "Full view" button keeps the
 old full-screen reading mode one click away. Selection is toggled from the left gutter only; the
-rest of the row expands and collapses.
+rest of the row expands and collapses. Inside a conversation, `a` opens the in-app preview of the
+focused message's first attachment (arrow keys page through the rest, `o` opens it externally).
 
-**German localization.** `src/i18n/locales/de/` is under construction. The tooling that keeps it
-honest is general: `pnpm i18n:status`, and a parity test that refuses to drop placeholders,
-inline tags or keys.
+**German localization.** `src/i18n/locales/de/` covers 1708 of 1837 strings, informal address
+throughout. The tooling that keeps it honest is general: `pnpm i18n:status`, and a parity test
+that refuses to drop placeholders, inline tags or keys.
+
+## Name and identity
+
+The app is called **Rabe** and ships as `de.streil.rabe` (the dev build as `de.streil.rabe.dev`),
+so an install of it can sit next to upstream Comail instead of colliding with it. What stayed
+upstream-shaped is deliberately unchanged: the Rust crates are still `comail` / `comail-core`,
+the data directory is still `~/Library/Application Support/comail`, the database is still
+`comail.db`, and the MCP server still announces itself as `comail` in AI client configs — those
+are internal names and protocol identities, not branding.
 
 ## Upstream state
 
-- Based on upstream `d2384cd` (v0.2.41).
-- Upstream has moved to v0.2.44 (37 commits). **Not merged yet.**
-- Expect conflicts when it is: `src-tauri/crates/comail-core/src/imap/mod.rs` (+460 lines
-  upstream), `sync/engine.rs` (+852), `imap/identity.rs`, plus four new keys in
-  `src/i18n/locales/en/settings.json` that every other locale then has to add.
-
-The merge is deliberately ordered after the German translation so the translation is not
-invalidated halfway through by new source keys.
+- Based on upstream `ded0898` (v0.2.44), merged into `fork/sync-fixes`.
 
 ## Building
 
@@ -62,8 +66,8 @@ cargo test -p comail-core            # Rust
 sh scripts/build-dev-app.sh          # macOS dev bundle: build + sign
 ```
 
-`build-dev-app.sh` produces `src-tauri/target/release/bundle/macos/Comail Dev.app` with its own
-bundle identifier (`com.deanoss.comail.dev`), its own data directory and its own keyring service,
+`build-dev-app.sh` produces `src-tauri/target/release/bundle/macos/Rabe Dev.app` with its own
+bundle identifier (`de.streil.rabe.dev`), its own data directory and its own keyring service,
 so it runs next to an installed release build. It signs with an available "Apple Development"
 identity — a stable signature keeps the keychain grant for stored IMAP credentials across
 rebuilds — and it does **not** install the bundle; copy it to `/Applications` yourself.

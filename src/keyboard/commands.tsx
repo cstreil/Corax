@@ -670,6 +670,15 @@ export const ALL_COMMANDS: Command[] = [
     hiddenInPalette: true,
   },
   {
+    id: "open-attachment",
+    titleKey: "commands:title.openAttachment",
+    aliases: ["attachment", "attachments", "attach", "preview attachment", "view attachment"],
+    keys: ["a"],
+    section: "Navigation",
+    when: (ctx) => noOverlay(ctx) && ctx.inConversation,
+    run: (ctx) => ctx.openAttachment(),
+  },
+  {
     id: "go-inbox",
     titleKey: "commands:title.goInbox",
     aliases: ["inbox"],
@@ -773,14 +782,14 @@ export const ALL_COMMANDS: Command[] = [
     run: (ctx) => ctx.compose("reply"),
   },
   {
-    // Enter with text selected in the thread: quote that passage instead of a
+    // Shift+R with text selected in the thread: quote that passage instead of a
     // plain reply-all. Listed before reply-all so it wins when a selection
     // exists; falls through to reply-all otherwise. Works whether or not a
     // composer is already open (insert into it, else open a reply).
     id: "quote-selection",
     titleKey: "commands:title.quoteSelection",
     aliases: ["quote selection", "reply with quote"],
-    keys: ["enter"],
+    keys: ["shift+r"],
     section: "Compose",
     when: (ctx) =>
       ctx.inConversation && !ctx.paletteOpen && !ctx.panelOpen && threadSelectionText() != null,
@@ -796,8 +805,8 @@ export const ALL_COMMANDS: Command[] = [
     id: "reply-all",
     titleKey: "commands:title.replyAll",
     aliases: ["respond all"],
-    keys: ["enter"],
-    shortcut: "↵",
+    keys: ["shift+r"],
+    shortcut: "⇧R",
     section: "Compose",
     when: (ctx) => noOverlay(ctx) && ctx.inConversation,
     run: (ctx) => ctx.compose("reply_all"),

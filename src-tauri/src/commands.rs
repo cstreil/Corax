@@ -743,6 +743,16 @@ pub async fn semantic_reindex(state: State<'_, AppState>) -> CmdResult<i64> {
     state.core.semantic_reindex().await.map_err(err)
 }
 
+// ---------- appearance ----------
+
+/// The desktop palette (Plasma / Omarchy), so "System" can mean the window
+/// manager's colours instead of only light-vs-dark. `None` where there is no
+/// desktop palette to read, e.g. macOS.
+#[tauri::command]
+pub async fn system_colors() -> CmdResult<Option<comail_core::system_theme::SystemColors>> {
+    Ok(comail_core::system_theme::detect())
+}
+
 // ---------- search ----------
 
 #[derive(serde::Deserialize)]

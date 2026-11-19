@@ -32,9 +32,9 @@
   },
   "theme": {
     "label": "主题",
-    "hint": "雪白为浅色，碳黑为深色。",
-    "snow": "雪白",
-    "carbon": "碳黑",
+    "hint": "玻璃为浅色，石墨为深色。",
+    "snow": "玻璃",
+    "carbon": "石墨",
     "system": "跟随系统"
   },
   "language": {
@@ -125,6 +125,10 @@
     "modelHintEmpty": "输入模型 id，或在端点列表加载后从中选择。",
     "modelsFailed": "无法加载模型列表：{{error}}。请直接输入模型 id。",
     "modelPlaceholder": "anthropic/claude-sonnet",
+    "zeroRetentionLabel": "零数据保留",
+    "zeroRetentionHint": "仅将 OpenRouter 的聊天和决策请求发送给不存储你的邮件、也不用其训练模型的服务商。没有此类服务商的模型将无法使用，直到你关闭此选项。",
+    "quickRepliesLabel": "建议回复",
+    "quickRepliesHint": "打开回复时，将会话发送给 AI，生成最多 3 条一键回复。关闭后不发送任何内容，只显示标准回复。",
     "providerLabel": "服务商",
     "providerHint": "预设会自动填入基础 URL；选择自定义端点可使用任何兼容 OpenAI 的 URL。本地服务器无需 API 密钥。",
     "customProvider": "自定义端点",
@@ -187,7 +191,7 @@
     "automation": {
       "newTitle": "新建自动化",
       "editTitle": "编辑自动化",
-      "editorHint": "用自然语言描述完整的工作流。Comail 会先解析并验证，然后才能保存。",
+      "editorHint": "用自然语言描述完整的工作流。Rabe 会先解析并验证，然后才能保存。",
       "promptLabel": "描述自动化",
       "promptPlaceholder": "当邮件是供应商发来的发票或收据时，添加“财务”标签，移动到“重要”，并在主题前加上 [INVOICE]。",
       "promptHint": "请同时写明邮件需要匹配的条件，以及要按顺序执行的每个操作。",
@@ -254,7 +258,7 @@
       "title": "分步设置",
       "googleTitle": "Google (Gmail)",
       "openGoogle": "打开 Google Cloud Console",
-      "g1": "创建项目：在 console.cloud.google.com 打开顶栏的项目选择器，点击“新建项目”，命名（例如 Comail），创建后选中它。然后打开菜单进入“API 和服务”。",
+      "g1": "创建项目：在 console.cloud.google.com 打开顶栏的项目选择器，点击“新建项目”，命名（例如 Rabe），创建后选中它。然后打开菜单进入“API 和服务”。",
       "g2": "OAuth 同意屏幕：选择“外部”（仅当你有 Workspace 组织时才选“内部”），填写应用名称，把你的邮箱填为支持和开发者联系人，并把你自己的 Gmail 地址添加到“测试用户”。",
       "g3": "范围：点击“添加或移除范围”，把 https://mail.google.com/ 粘贴到手动输入框并添加。这是 Google 用于 IMAP/SMTP XOAUTH2 接受的唯一范围；无需启用 Gmail API。",
       "g4": "凭据：创建凭据，OAuth 客户端 ID，应用类型选择桌面应用。桌面客户端会自动接受 http://127.0.0.1 环回地址，因此无需配置重定向 URI。",
@@ -263,11 +267,11 @@
       "g7": "要同步日历（连接 Google 日历）：在同一项目中启用 Google Calendar API（API 和服务、库、搜索 Google Calendar API、启用），并在同意屏幕添加范围 https://www.googleapis.com/auth/calendar。缺少任一项，连接都会失败并提示日历服务器错误。",
       "msTitle": "Microsoft (Outlook / 365)",
       "openMs": "打开 Microsoft Entra",
-      "m1": "在 entra.microsoft.com（或 portal.azure.com）前往应用注册，新注册。命名为 Comail：用户会在授权页面上看到这个名称。",
-      "m2": "支持的账户类型：选择同时包含个人 Microsoft 账户的多租户选项（任意组织目录 + 个人）。这是必需的：Comail 通过共享的 /common 端点登录，单租户应用会报错 AADSTS50194。之后可在“身份验证”中修改。",
+      "m1": "在 entra.microsoft.com（或 portal.azure.com）前往应用注册，新注册。命名为 Rabe：用户会在授权页面上看到这个名称。",
+      "m2": "支持的账户类型：选择同时包含个人 Microsoft 账户的多租户选项（任意组织目录 + 个人）。这是必需的：Rabe 通过共享的 /common 端点登录，单租户应用会报错 AADSTS50194。之后可在“身份验证”中修改。",
       "m3": "重定向 URI：平台选择移动和桌面应用程序（不是 Web），值为 http://localhost。Web 变体需要密钥并会报重定向不匹配；随后环回端口会被自动接受。",
       "m4": "API 权限：添加权限，Microsoft Graph，然后选择委托的权限（不是应用程序权限；如果搜索 email 出现无关的 API，说明你在应用程序框里）。勾选 IMAP.AccessAsUser.All、SMTP.Send、offline_access、openid 和 email，然后点击“添加权限”。",
-      "m5": "无需创建任何密钥或机密：跳过“证书和密码”（Comail 是公共客户端）。把概述页面上的应用程序（客户端）ID 复制到下方字段，并将 Microsoft 客户端密钥留空。",
+      "m5": "无需创建任何密钥或机密：跳过“证书和密码”（Rabe 是公共客户端）。把概述页面上的应用程序（客户端）ID 复制到下方字段，并将 Microsoft 客户端密钥留空。",
       "m6": "仅限工作或学校邮箱：如果登录时提示“需要管理员批准”，租户管理员需在 API 权限页面点击“授予管理员同意”一次。个人 Outlook.com 账户永远不需要。",
       "msNote": "个人 Outlook.com / Hotmail / Live 账户？仍然在这里注册应用。用你的个人账户登录门户（免费，无需 Azure 订阅），并在第 2 步选择多租户 + 个人选项。用于注册的账户和你连接的邮箱可以不同。",
       "docsHint": "想查看包含截图和故障排除的完整教程？",
@@ -736,7 +740,7 @@
     "custom": "自定义颜色"
   },
   "font": {
-    "hint": "Comail 界面使用的字体。邮件正文保留其自身字体。",
+    "hint": "Rabe 界面使用的字体。邮件正文保留其自身字体。",
     "system": "系统",
     "custom": "自定义 Google 字体",
     "customPlaceholder": "任意 Google 字体，例如 Poppins",
@@ -849,7 +853,7 @@
   },
   "decision": {
     "section": "决策模型",
-    "intro": "为 AI 分类以及规则和分栏中的 AI 检查提供类型化的是/否和单选答案，来源可以是 TypeSafe Jev、OpenAI Decisions API 或兼容端点。没有它们一切照常运行：Comail 会询问聊天模型（API、本地或 Apple 设备端），即使完全没有 AI，条件和内置分类也仍会运行。",
+    "intro": "为 AI 分类以及规则和分栏中的 AI 检查提供类型化的是/否和单选答案，来源可以是 TypeSafe Jev、OpenAI Decisions API 或兼容端点。没有它们一切照常运行：Rabe 会询问聊天模型（API、本地或 Apple 设备端），即使完全没有 AI，条件和内置分类也仍会运行。",
     "providerLabel": "服务商",
     "provider": {
       "off": "关闭",

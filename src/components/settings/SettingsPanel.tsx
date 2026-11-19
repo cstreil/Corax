@@ -50,6 +50,7 @@ import {
 } from "../../lib/accent";
 import { FONT_PRESETS, normalizeFontFamily } from "../../lib/font";
 import { splitModelTags, tagsFor, toggleModelTag } from "../../lib/modelTags";
+import { usesOpenRouter } from "../../lib/openrouter";
 import { SnippetsSection } from "./SnippetsPanel";
 import { SplitInboxSection } from "./SplitsPanel";
 import { CategoriesEditor } from "./CategoriesEditor";
@@ -95,6 +96,7 @@ const DEFAULT_SETTINGS: Settings = {
   undoSendSeconds: 10,
   loadRemoteImages: false,
   aiBaseUrl: "",
+  aiZeroRetention: true,
   aiModel: "",
   aiModelInstant: "",
   aiModelCheap: "",
@@ -109,6 +111,7 @@ const DEFAULT_SETTINGS: Settings = {
   msClientSecret: "",
   embeddingBackend: "local",
   embeddingModel: "bge-small-en-v1.5",
+  aiQuickReplies: true,
   voiceDrafting: false,
   voiceProfile: "",
   voiceLearnedAt: 0,
@@ -430,7 +433,7 @@ export function SettingsPanel() {
     {
       tab: "appearance",
       label: t("settings:theme.label"),
-      keywords: "appearance dark light snow carbon color",
+      keywords: "appearance dark light glass graphite glas graphit snow carbon color",
     },
     {
       tab: "appearance",
@@ -543,6 +546,16 @@ export function SettingsPanel() {
       tab: "ai",
       label: t("settings:section.ai"),
       keywords: "ai provider model api key openai anthropic openrouter",
+    },
+    {
+      tab: "ai",
+      label: t("settings:ai.zeroRetentionLabel"),
+      keywords: "openrouter zero data retention zdr privacy logging training provider",
+    },
+    {
+      tab: "ai",
+      label: t("settings:ai.quickRepliesLabel"),
+      keywords: "quick replies suggestions chips reply composer ai privacy",
     },
     {
       tab: "ai",
@@ -2256,6 +2269,32 @@ function AiSection({
               </SettingRow>
             </>
           )}
+          {usesOpenRouter(settings) && (
+            <SettingRow
+              label={t("settings:ai.zeroRetentionLabel")}
+              hint={t("settings:ai.zeroRetentionHint")}
+            >
+              <Toggle
+                label={t("settings:ai.zeroRetentionLabel")}
+                checked={settings.aiZeroRetention}
+                onChange={(aiZeroRetention) =>
+                  void updateSettings({ aiZeroRetention })
+                }
+              />
+            </SettingRow>
+          )}
+          <SettingRow
+            label={t("settings:ai.quickRepliesLabel")}
+            hint={t("settings:ai.quickRepliesHint")}
+          >
+            <Toggle
+              label={t("settings:ai.quickRepliesLabel")}
+              checked={settings.aiQuickReplies}
+              onChange={(aiQuickReplies) =>
+                void updateSettings({ aiQuickReplies })
+              }
+            />
+          </SettingRow>
           </SettingsGroup>
           <DecisionSettings
             settings={settings}

@@ -1,9 +1,9 @@
-# Comail
+# Rabe
 
-> **This is a fork of [NextOSP/comail](https://github.com/NextOSP/comail).** It adds IMAP sync
-> fixes, an inline conversation panel and a German localization. It is based on upstream v0.2.41
-> and does not track upstream v0.2.44 yet, so the download and release links below point at the
-> upstream project, not at this fork. See [FORK.md](FORK.md) for what changed and how the fork is
+> **Rabe is a fork of [Comail](https://github.com/NextOSP/comail).** It tracks upstream v0.2.44
+> and adds IMAP sync fixes, an inline conversation panel and a German localization. It ships
+> under its own name and bundle identifier, so the download and release links below describe
+> upstream Comail, not this fork. See [FORK.md](FORK.md) for what changed and how the fork is
 > kept in sync.
 
 Email that keeps up with you.

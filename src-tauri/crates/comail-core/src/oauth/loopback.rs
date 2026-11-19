@@ -108,10 +108,10 @@ async fn handle_connection(stream: &mut TcpStream) -> Result<Option<AuthCode>> {
     }
     let body = if code.is_some() {
         "<html><body style=\"font-family:sans-serif;padding:4rem;text-align:center\">\
-         <h2>Comail is connected.</h2><p>You can close this tab.</p></body></html>"
+         <h2>Rabe is connected.</h2><p>You can close this tab.</p></body></html>"
     } else {
         "<html><body style=\"font-family:sans-serif;padding:4rem;text-align:center\">\
-         <h2>Sign-in failed.</h2><p>Return to Comail and try again.</p></body></html>"
+         <h2>Sign-in failed.</h2><p>Return to Rabe and try again.</p></body></html>"
     };
     let resp = format!(
         "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",

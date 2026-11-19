@@ -620,23 +620,20 @@ fn base64_failure_detail(input: &[u8]) -> String {
         .copied()
         .filter(|byte| !byte.is_ascii_whitespace())
         .collect();
-    let tail_start = compact.len().saturating_sub(32);
-    let tail: String = String::from_utf8_lossy(&compact[tail_start..])
-        .chars()
-        .map(|c| if c.is_control() { '.' } else { c })
-        .collect();
+    // Structural facts only - never the decoded or raw characters, which are
+    // the mail body.
     match compact
         .iter()
         .enumerate()
         .find(|(_, byte)| !is_base64_byte(**byte))
     {
         Some((index, byte)) => format!(
-            "raw={} compact={} invalid_at={index} byte=0x{byte:02x} tail={tail:?}",
+            "raw={} compact={} invalid_at={index} byte=0x{byte:02x}",
             input.len(),
             compact.len()
         ),
         None => format!(
-            "raw={} compact={} rem4={} tail={tail:?}",
+            "raw={} compact={} rem4={}",
             input.len(),
             compact.len(),
             compact.len() % 4
@@ -679,6 +676,51 @@ fn decode_base64_transfer(input: &[u8]) -> Option<Vec<u8>> {
         .decode(&compact)
         .or_else(|_| BASE64_UNPADDED.decode(&compact))
         .ok()
+}
+
+/// Base64 the way mail clients read it: bytes outside the alphabet are
+/// skipped, URL-safe letters accepted, and `=` ends a quantum, so separately
+/// encoded blocks glued together still decode. Bulk senders ship bodies with
+/// stray characters, padding mid-stream or a truncated tail, and a strict
+/// decoder rejecting those left them failing forever (#101). Only used once a
+/// part is declared Base64, and `None` when the body is mostly something else
+/// (mislabelled text or HTML), which must not be turned into noise.
+fn decode_base64_lenient(input: &[u8]) -> Option<Vec<u8>> {
+    let foreign = input
+        .iter()
+        .filter(|&&b| {
+            !(b.is_ascii_alphanumeric() || b.is_ascii_whitespace() || b"+/-_=".contains(&b))
+        })
+        .count();
+    if foreign > (input.len() / 100).max(8) {
+        return None;
+    }
+    let mut out = Vec::with_capacity(input.len() / 4 * 3);
+    let mut acc: u32 = 0;
+    let mut bits = 0u32;
+    for &byte in input {
+        let value = match byte {
+            b'A'..=b'Z' => byte - b'A',
+            b'a'..=b'z' => byte - b'a' + 26,
+            b'0'..=b'9' => byte - b'0' + 52,
+            b'+' | b'-' => 62,
+            b'/' | b'_' => 63,
+            b'=' => {
+                acc = 0;
+                bits = 0;
+                continue;
+            }
+            _ => continue,
+        };
+        acc = (acc << 6) | u32::from(value);
+        bits += 6;
+        if bits >= 8 {
+            bits -= 8;
+            out.push((acc >> bits) as u8);
+            acc &= (1 << bits) - 1;
+        }
+    }
+    Some(out)
 }
 
 fn decoded_looks_like_html(decoded: &[u8]) -> bool {
@@ -795,20 +837,23 @@ fn decode_text_section_inner(
     let base64_declared = header_declares_base64(mime_header)
         || declared_encoding.is_some_and(|value| value.eq_ignore_ascii_case("base64"));
     let decoded_base64 = if base64_declared {
-        Some(decode_base64_transfer(encoded_body).ok_or_else(|| {
-            // A short prefix of what the server actually returned: when a
-            // section comes back as MIME headers, as a neighbouring part, or
-            // truncated, the first bytes say so immediately.
-            let probe: String =
-                String::from_utf8_lossy(&encoded_body[..encoded_body.len().min(48)])
-                    .chars()
-                    .map(|c| if c.is_control() { '.' } else { c })
-                    .collect();
-            CoreError::Mime(format!(
-                "invalid Base64 selective MIME section ({}; starts {probe:?})",
-                base64_failure_detail(encoded_body)
-            ))
-        })?)
+        Some(
+            decode_base64_transfer(encoded_body)
+                // Even with trailing bits allowed there are bodies a strict
+                // decoder rejects; fall back to the mail-client reading before
+                // dropping the part (#101).
+                .or_else(|| decode_base64_lenient(encoded_body))
+                .ok_or_else(|| {
+                    // No part of the body goes into the error: it ends up in the
+                    // log and in the error panel, and a body that is really text
+                    // can be mislabelled Base64. Sizes and the first invalid byte
+                    // are enough to tell a truncated section from a wrong one.
+                    CoreError::Mime(format!(
+                        "invalid Base64 selective MIME section ({})",
+                        base64_failure_detail(encoded_body)
+                    ))
+                })?,
+        )
     } else {
         // Legacy callers may not yet pass BODYSTRUCTURE metadata. Infer only
         // strong structured signatures; never guess for arbitrary plain text.
@@ -1264,6 +1309,58 @@ mod selective_section_tests {
         let inferred =
             decode_text_section(TextSectionKind::Html, None, b"", encoded.as_bytes()).unwrap();
         assert!(inferred.content.contains("Hello from Outlook"));
+    }
+
+    #[test]
+    fn declared_base64_with_sender_defects_still_decodes() {
+        use base64::Engine;
+
+        let source = b"<html><body><p>Your free trial has ended!</p></body></html>";
+        let encoded = base64::engine::general_purpose::STANDARD.encode(source);
+        let header =
+            b"Content-Type: text/html; charset=utf-8\r\nContent-Transfer-Encoding: base64\r\n\r\n";
+        let (head, tail) = encoded.split_at(20);
+        let glued = format!(
+            "{}\r\n{}",
+            base64::engine::general_purpose::STANDARD.encode(&source[..16]),
+            base64::engine::general_purpose::STANDARD.encode(&source[16..])
+        );
+        for (defect, body) in [
+            ("stray characters", format!("{head}*!{tail}")),
+            ("padding mid-stream", glued),
+            (
+                "URL-safe alphabet",
+                encoded.replace('+', "-").replace('/', "_"),
+            ),
+            ("missing padding", encoded.trim_end_matches('=').to_owned()),
+        ] {
+            let decoded = decode_text_section(
+                TextSectionKind::Html,
+                Some("base64"),
+                header,
+                body.as_bytes(),
+            )
+            .unwrap_or_else(|e| panic!("{defect}: {e}"));
+            assert!(
+                decoded.content.contains("free trial"),
+                "{defect}: {}",
+                decoded.content
+            );
+        }
+
+        // Two separately encoded blocks glued together decode as both.
+        assert_eq!(
+            decode_base64_lenient(b"SGVsbG8=\r\nV29ybGQ=").unwrap(),
+            b"HelloWorld"
+        );
+        // Something that isn't Base64 at all still fails instead of
+        // turning into noise.
+        let mislabelled =
+            b"<p>This part says Base64 but is plain HTML.</p><div class=\"x\">!</div>";
+        assert!(
+            decode_text_section(TextSectionKind::Html, Some("base64"), header, mislabelled)
+                .is_err()
+        );
     }
 
     #[test]

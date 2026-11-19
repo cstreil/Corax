@@ -481,6 +481,9 @@ export interface Settings {
   undoSendSeconds: number;
   loadRemoteImages: boolean;
   aiBaseUrl: string;
+  /** OpenRouter only: route chat and decision requests to zero-data-retention
+   *  providers that don't collect prompts. */
+  aiZeroRetention: boolean;
   aiModel: string;
   /** Per-tier model ids (shared base URL + key). Empty falls back to `aiModel`. */
   aiModelInstant: string;
@@ -591,6 +594,8 @@ export interface Settings {
   embeddingBackend: "local" | "off";
   /** Registry key of the local embedding model. */
   embeddingModel: string;
+  /** Suggest AI quick replies when a reply composer opens (sends the thread). */
+  aiQuickReplies: boolean;
   /** When true, AI drafts are written in the user's learned voice. */
   voiceDrafting: boolean;
   /** Distilled writing-style profile learned from sent mail. */
@@ -872,6 +877,24 @@ export interface SearchResults {
   /** Index-aligned with `threads`. */
   hits: SearchHit[];
   explain: SearchExplain;
+}
+
+/** Desktop palette for the Linux builds: Plasma's kdeglobals or an Omarchy theme. */
+export interface SystemColors {
+  /** Which desktop the colours came from. */
+  source: "kde" | "omarchy";
+  mode: "dark" | "light";
+  bg0: string;
+  bg1: string;
+  bg2: string;
+  bg3: string;
+  bg4: string;
+  ink: string;
+  inkMuted: string;
+  inkFaint: string;
+  accent: string;
+  onAccent: string;
+  hairline: string;
 }
 
 export interface EmbeddingStatus {
@@ -1332,4 +1355,9 @@ export interface Commands {
   embedding_status(args: Record<string, never>): Promise<EmbeddingStatus>;
   /** Requeue the whole mailbox for (re-)embedding; returns the number queued. */
   semantic_reindex(args: Record<string, never>): Promise<number>;
+  /**
+   * Desktop palette, so "System" can follow the window manager's colours.
+   * Null where there is no desktop palette to read (macOS, browser mock).
+   */
+  system_colors(args: Record<string, never>): Promise<SystemColors | null>;
 }

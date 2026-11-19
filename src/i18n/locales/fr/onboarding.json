@@ -51,13 +51,13 @@
     "continue": "Continuer",
     "skip": "Passer",
     "welcome": {
-      "title": "Bienvenue dans Comail.",
+      "title": "Bienvenue dans Rabe.",
       "body": "Une boîte de réception rapide, pensée pour le clavier. Connectez un compte, choisissez une apparence, apprenez trois touches, et c’est parti. Environ une minute.",
       "cta": "Commencer"
     },
     "connect": {
       "title": "Connectez votre boîte de réception.",
-      "body": "Comail communique directement avec votre fournisseur. Votre mot de passe et vos e-mails ne quittent jamais cet ordinateur.",
+      "body": "Rabe communique directement avec votre fournisseur. Votre mot de passe et vos e-mails ne quittent jamais cet ordinateur.",
       "imap": "Autre fournisseur (IMAP)",
       "waiting": "En attente de votre navigateur…",
       "waitingHint": "Terminez la connexion, puis revenez ici.",
@@ -78,7 +78,7 @@
     },
     "shortcuts": {
       "title": "Apprenez les touches.",
-      "body": "Comail est conçu pour être piloté au clavier. Essayez chaque touche : la boîte de réception à droite est un bac à sable et rien ne touche à vos e-mails.",
+      "body": "Rabe est conçu pour être piloté au clavier. Essayez chaque touche : la boîte de réception à droite est un bac à sable et rien ne touche à vos e-mails.",
       "press": "Appuyez sur",
       "groups": {
         "navigate": "Se déplacer",
@@ -102,7 +102,7 @@
       "snoozeShort": "Reporter",
       "replyShort": "Répondre",
       "paletteShort": "Palette de commandes",
-      "allDone": "Vous maîtrisez les bases. Appuyez sur ? n’importe où dans Comail pour voir tous les raccourcis.",
+      "allDone": "Vous maîtrisez les bases. Appuyez sur ? n’importe où dans Rabe pour voir tous les raccourcis.",
       "progress": "{{n}} sur {{total}} essayés",
       "then": "puis",
       "summarize": "Résumer la conversation",

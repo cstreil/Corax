@@ -5,6 +5,12 @@ use crate::error::{CoreError, Result};
 
 const SERVICE: &str = "comail";
 
+/// Services this app wrote credentials under before it was renamed. The dev
+/// instance keys its entries by bundle identifier, which changed when the app
+/// became Rabe, so its stored passwords would otherwise be orphaned. A legacy
+/// entry is adopted by the current service the first time a slot is read.
+const LEGACY_SERVICES: &[&str] = &["com.deanoss.comail.dev"];
+
 /// Keyring service name. `COMAIL_KEYRING_SERVICE` overrides it so an isolated
 /// dev instance never reads, overwrites or deletes the installed release's
 /// credentials (same account ids would otherwise collide on the same entries).
@@ -13,6 +19,34 @@ fn service() -> String {
         .ok()
         .filter(|s| !s.is_empty())
         .unwrap_or_else(|| SERVICE.to_string())
+}
+
+/// Read one secret from a pre-rename service and copy it under `current`, so
+/// the adoption happens once. `fetch` returns `None` for a missing or unreadable
+/// entry; `save` stores the found secret under `current`.
+///
+/// Chunk-split values (a Windows-only layout, see `MAX_SECRET_UTF16`) are left
+/// untouched: reading one through this path would hand back a header string.
+fn adopt_legacy(
+    current: &str,
+    user: &str,
+    fetch: impl Fn(&str, &str) -> Option<String>,
+    save: impl Fn(&str),
+) -> Option<String> {
+    for name in LEGACY_SERVICES {
+        if *name == current {
+            continue;
+        }
+        let Some(secret) = fetch(name, user) else {
+            continue;
+        };
+        if secret.starts_with(CHUNK_MARKER) {
+            continue;
+        }
+        save(&secret);
+        return Some(secret);
+    }
+    None
 }
 
 pub enum Slot {
@@ -183,7 +217,21 @@ pub fn load(account_id: i64, slot: Slot) -> Result<String> {
     }
     let head = match entry(account_id, &slot)?.get_password() {
         Ok(s) => s,
-        Err(keyring::Error::NoEntry) => return Err(CoreError::Auth("no stored credential".into())),
+        Err(keyring::Error::NoEntry) => {
+            let current = service();
+            let user = format!("{account_id}:{}", slot.as_str());
+            let adopted = adopt_legacy(
+                &current,
+                &user,
+                |service, user| keyring::Entry::new(service, user).ok()?.get_password().ok(),
+                |secret| {
+                    if let Ok(target) = keyring::Entry::new(&current, &user) {
+                        let _ = target.set_password(secret);
+                    }
+                },
+            );
+            return adopted.ok_or_else(|| CoreError::Auth("no stored credential".into()));
+        }
         Err(e) => return Err(e.into()),
     };
     let Some(count) = head.strip_prefix(CHUNK_MARKER) else {
@@ -277,5 +325,33 @@ mod tests {
         let chunks = split_utf16_chunks(&secret, 1023); // odd cap, forces a squeeze
         assert!(chunks.iter().all(|c| c.encode_utf16().count() <= 1023));
         assert_eq!(chunks.concat(), secret);
+    }
+
+    #[test]
+    fn a_renamed_service_adopts_its_legacy_credential() {
+        let saved = std::cell::RefCell::new(Vec::new());
+        let secret = adopt_legacy(
+            "de.streil.rabe.dev",
+            "1:password",
+            |service, user| {
+                (service == "com.deanoss.comail.dev" && user == "1:password")
+                    .then(|| "app-specific-password".to_string())
+            },
+            |value| saved.borrow_mut().push(value.to_string()),
+        );
+        assert_eq!(secret.as_deref(), Some("app-specific-password"));
+        assert_eq!(saved.borrow().as_slice(), ["app-specific-password"]);
+    }
+
+    #[test]
+    fn the_current_service_is_never_treated_as_legacy() {
+        // Otherwise a renamed app would read (and copy) its own entries forever.
+        let secret = adopt_legacy(
+            "com.deanoss.comail.dev",
+            "1:password",
+            |_, _| panic!("must not read the current service through this path"),
+            |_| panic!("must not save"),
+        );
+        assert!(secret.is_none());
     }
 }
