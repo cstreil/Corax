@@ -29,6 +29,10 @@ pub struct DavItem {
     pub saw_component_set: bool,
     pub ctag: Option<String>,
     pub sync_token: Option<String>,
+    /// `current-user-privilege-set` was present (we then know the answer).
+    pub saw_privileges: bool,
+    /// The set contains DAV:write (a writable collection for this user).
+    pub writable: bool,
 }
 
 /// The whole multistatus: items + top-level sync-token (RFC 6578).
@@ -91,6 +95,18 @@ pub fn parse_multistatus(body: &str) -> Result<Multistatus> {
                             item.saw_component_set = true;
                         }
                     }
+                    "current-user-privilege-set" => {
+                        if let Some(item) = cur.as_mut() {
+                            item.saw_privileges = true;
+                        }
+                    }
+                    "write" | "write-content" | "bind" | "all"
+                        if path.iter().any(|p| p == "current-user-privilege-set") =>
+                    {
+                        if let Some(item) = cur.as_mut() {
+                            item.writable = true;
+                        }
+                    }
                     _ => {}
                 }
                 path.push(name);
@@ -102,6 +118,13 @@ pub fn parse_multistatus(body: &str) -> Result<Multistatus> {
                     "calendar" if path.last().is_some_and(|p| p == "resourcetype") => {
                         if let Some(item) = cur.as_mut() {
                             item.is_calendar = true;
+                        }
+                    }
+                    "write" | "write-content" | "bind" | "all"
+                        if path.iter().any(|p| p == "current-user-privilege-set") =>
+                    {
+                        if let Some(item) = cur.as_mut() {
+                            item.writable = true;
                         }
                     }
                     "comp" => {
@@ -228,6 +251,12 @@ impl DavItem {
     /// A collection we can sync VEVENTs with.
     pub fn is_vevent_calendar(&self) -> bool {
         self.is_calendar && (self.supports_vevent || !self.saw_component_set)
+    }
+
+    /// Whether the server said this user may not write. Absent privilege set
+    /// means "unknown" and is treated as writable, as before.
+    pub fn read_only(&self) -> bool {
+        self.saw_privileges && !self.writable
     }
 }
 

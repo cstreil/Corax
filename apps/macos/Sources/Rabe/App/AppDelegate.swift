@@ -39,12 +39,49 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     private static func routeKey(_ event: NSEvent) -> Bool {
         let model = AppModel.shared
         guard let window = event.window, window.title == Instance.title else { return false }
-        if window.firstResponder is NSText || window.firstResponder is NSTextView { return false }
+        // M2.9: `⌃Tab` / `⌃⇧Tab` wechselt den Fokus auch aus dem Editor des
+        // Verfassen-Panels heraus; `NSTextView` würde sonst nur ins nächste
+        // Feld springen (§3.5, §5).
+        let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        if event.keyCode == 48, flags.contains(.control), !flags.contains(.command), !flags.contains(.option) {
+            guard window.attachedSheet == nil, !model.paletteOpen else { return false }
+            model.cycleDraftFocus(backward: flags.contains(.shift))
+            return true
+        }
+        // M2.9: `⌘⇧M` und `⌘⇧⌫` gelten auch im Editor des Panels. Als Monitor
+        // vor der Menüleiste, damit sie nicht von einem Feld geschluckt werden;
+        // die Menüpunkte im Menü „Entwurf" zeigen dieselben Kürzel an.
+        if flags == [.command, .shift], event.keyCode == 46, !model.compose.isEmpty {
+            model.toggleComposeDock()
+            return true
+        }
+        if flags == [.command, .shift], event.keyCode == 51,
+           !model.compose.isEmpty || model.mailbox.inlineCompose != nil {
+            model.discardOpenDraft()
+            return true
+        }
+        // M2.14b: Menü-Kürzel mit Satzzeichen legt SwiftUI physisch aus (im
+        // Menü stand `⌘ß` für `⌘/`, `⌥⌘ü` für `⌥⌘;`). Hier zählt das Zeichen
+        // der gedrückten Taste, damit es auf deutscher und US-Tastatur trifft.
+        let inText = window.firstResponder is NSText || window.firstResponder is NSTextView
+        if let action = MonitorKeys.handle(KeyPress(event), inText: inText) {
+            ActionDispatcher.perform(action)
+            return true
+        }
+        if inText { return false }
+        // M2.12: im Kalender gehören die Einzeltasten dem Kalender (Raster oder
+        // Karte), nicht der Mailliste. Ohne diese Sperre leitete `W` eine Mail
+        // weiter, `M` schlösse den Kalender und die Leertaste öffnete einen
+        // Thread — der Kalender hat dafür eigenen Empfänger und Monitor.
+        if model.calendarOpen { return false }
         if window.attachedSheet != nil || model.paletteOpen || model.accountSheetOpen { return false }
         if model.shortcutsOpen {
             if event.keyCode == 53 || event.characters == "?" { model.shortcutsOpen = false; return true }
             return false
         }
+        // Eine Taste hier heißt: die Liste hat den Fokus, nicht das Panel
+        // (§3.6.1) — sonst blieben die Listenkürzel nach einem Klick gesperrt.
+        model.compose.takeListFocus()
         return ActionDispatcher.handleListKey(event)
     }
 

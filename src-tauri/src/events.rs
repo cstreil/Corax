@@ -82,6 +82,26 @@ fn emit(app: &AppHandle, ev: CoreEvent) {
                 json!({ "actionId": action_id, "kind": kind, "state": state, "error": error }),
             );
         }
+        CoreEvent::ActionFailed {
+            action_id,
+            kind,
+            thread_id,
+            reason,
+            error,
+        } => {
+            // M2.16: a move the core gave up on. Same name and payload as the
+            // native host (`rabe-host/src/events.rs`).
+            let _ = app.emit(
+                "action:failed",
+                json!({
+                    "actionId": action_id,
+                    "kind": kind,
+                    "threadId": thread_id,
+                    "reason": reason,
+                    "error": error,
+                }),
+            );
+        }
         CoreEvent::ThreadWoke { thread_id } => {
             let _ = app.emit("thread:woke", json!({ "threadId": thread_id }));
         }

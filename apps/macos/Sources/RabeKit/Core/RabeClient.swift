@@ -134,8 +134,11 @@ public actor RabeClient {
 
     // MARK: Typed commands (names and argument shapes from src/ipc/types.ts)
 
-    public func listThreads(view: MailView, splitId: Int64?, accountId: Int64?, cursor: Int64?, limit: Int) async throws -> ThreadPage {
-        try await call("list_threads", IPCArgs.ListThreads(view: view, splitId: splitId, accountId: accountId, cursor: cursor, limit: limit))
+    public func listThreads(view: MailView, splitId: Int64?, accountId: Int64?, labelId: Int64?,
+                            folderId: Int64?, cursor: Int64?, limit: Int) async throws -> ThreadPage {
+        try await call("list_threads", IPCArgs.ListThreads(view: view, splitId: splitId, accountId: accountId,
+                                                           labelId: labelId, folderId: folderId,
+                                                           cursor: cursor, limit: limit))
     }
 
     public func getThread(_ id: Int64) async throws -> ThreadDetail {
@@ -280,6 +283,9 @@ enum IPCArgs {
         let view: MailView
         let splitId: Int64?
         let accountId: Int64?
+        /// M2.9: Seitenleiste filtert auf Label oder Ordner.
+        let labelId: Int64?
+        let folderId: Int64?
         let cursor: Int64?
         let limit: Int
     }

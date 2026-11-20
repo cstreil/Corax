@@ -245,11 +245,18 @@ async fn record_outcomes(
                         action_id,
                         kind: action.kind.clone(),
                         state: state.into(),
-                        error: Some(error),
+                        error: Some(error.clone()),
                     });
                     if state == "failed" && is_move_kind(&action.kind) {
                         ctx.bus.emit(CoreEvent::MailUpdated {
                             thread_ids: deletion_thread_id(action).into_iter().collect(),
+                        });
+                        ctx.bus.emit(CoreEvent::ActionFailed {
+                            action_id,
+                            kind: action.kind.clone(),
+                            thread_id: deletion_thread_id(action),
+                            reason: "deferral_exhausted".into(),
+                            error,
                         });
                     }
                 }
@@ -282,11 +289,20 @@ async fn record_outcomes(
                         action_id,
                         kind: action.kind.clone(),
                         state: "failed".into(),
-                        error: Some(msg),
+                        error: Some(msg.clone()),
                     });
                     if action.kind == crate::trash::KIND || is_move_kind(&action.kind) {
                         ctx.bus.emit(CoreEvent::MailUpdated {
                             thread_ids: deletion_thread_id(action).into_iter().collect(),
+                        });
+                    }
+                    if is_move_kind(&action.kind) {
+                        ctx.bus.emit(CoreEvent::ActionFailed {
+                            action_id,
+                            kind: action.kind.clone(),
+                            thread_id: deletion_thread_id(action),
+                            reason: failure_reason(e).into(),
+                            error: msg,
                         });
                     }
                 } else {
@@ -532,11 +548,22 @@ fn deletion_thread_id(action: &repo::actions::PendingAction) -> Option<i64> {
         .or_else(|| action.payload["threadId"].as_i64())
 }
 
+/// Stable reason token of an `action:failed` event; the app localizes it.
+fn failure_reason(error: &CoreError) -> &'static str {
+    match error {
+        CoreError::ActionSourceMissing(_) => "source_missing",
+        _ => "failed",
+    }
+}
+
 fn terminal_failure(kind: &str, attempts: i64, error: &CoreError) -> bool {
     if matches!(error, CoreError::ActionDeferred(_)) {
         return false;
     }
-    if matches!(error, CoreError::ActionRejected(_)) {
+    if matches!(
+        error,
+        CoreError::ActionRejected(_) | CoreError::ActionSourceMissing(_)
+    ) {
         return true;
     }
     if kind == crate::trash::KIND {
@@ -548,7 +575,9 @@ fn terminal_failure(kind: &str, attempts: i64, error: &CoreError) -> bool {
 fn needs_fresh_session(error: &CoreError) -> bool {
     if matches!(
         error,
-        CoreError::ActionDeferred(_) | CoreError::ActionRejected(_)
+        CoreError::ActionDeferred(_)
+            | CoreError::ActionRejected(_)
+            | CoreError::ActionSourceMissing(_)
     ) {
         return false;
     }
@@ -874,15 +903,15 @@ fn load_move_identity(
     })
 }
 
-fn unique_source_uid(mut matches: Vec<u32>) -> Result<u32> {
+/// `None` means the server provably does not have the message (an empty
+/// search). The caller decides what that means for its action kind: a move to
+/// the trash is already done, any other move reports it to the user (M2.16).
+fn unique_source_uid(mut matches: Vec<u32>) -> Result<Option<u32>> {
     matches.sort_unstable();
     matches.dedup();
     match matches.as_slice() {
-        [uid] if *uid > 0 => Ok(*uid),
-        [] => Err(CoreError::ActionDeferred(
-            "move source Message-ID not found; awaiting source sync or remote reconciliation"
-                .into(),
-        )),
+        [uid] if *uid > 0 => Ok(Some(*uid)),
+        [] => Ok(None),
         _ => Err(CoreError::ActionDeferred(
             "move source Message-ID is ambiguous; refusing to choose a UID".into(),
         )),
@@ -916,12 +945,13 @@ async fn persist_move_identity(
 /// A chained move's optimistic row can already point at a later destination.
 /// Only the captured source epoch/UID or an exact remote Message-ID match may
 /// identify the source. In particular, never borrow the local row's new UID.
+/// `None` means the server provably does not have the message any more.
 async fn resolve_source(
     ctx: &SyncCtx,
     remote: &mut impl MoveRemote,
     action: &repo::actions::PendingAction,
     identity: &MoveIdentity,
-) -> Result<u32> {
+) -> Result<Option<u32>> {
     let validity = remote
         .select_source(&identity.source.imap_name)
         .await?
@@ -945,14 +975,19 @@ async fn resolve_source(
     let uid = match uid {
         Some(uid) => uid,
         None => {
-            let key = identity.key.as_ref().ok_or_else(|| CoreError::ActionDeferred(
-                "move lacks verified source UID/UIDVALIDITY and remote key; awaiting identity reconciliation".into(),
-            ))?;
-            unique_source_uid(remote.search_key(key).await?)?
+            // Without any Message-ID there is nothing to search for: the local
+            // row only ever existed here (a draft, or a mail the server dropped).
+            let Some(key) = identity.key.as_ref() else {
+                return Ok(None);
+            };
+            match unique_source_uid(remote.search_key(key).await?)? {
+                Some(uid) => uid,
+                None => return Ok(None),
+            }
         }
     };
     persist_move_identity(ctx, action, identity, uid, validity).await?;
-    Ok(uid)
+    Ok(Some(uid))
 }
 
 async fn flag_action(
@@ -1004,6 +1039,8 @@ async fn keyword_action(
     }
 }
 
+type Destination = (Option<u32>, Option<i64>);
+
 async fn move_action(
     ctx: &SyncCtx,
     remote: &mut impl MoveRemote,
@@ -1014,13 +1051,26 @@ async fn move_action(
         .db
         .read(move |conn| load_move_identity(conn, &snapshot))
         .await?;
-    let uid = resolve_source(ctx, remote, action, &identity).await?;
+    let Some(uid) = resolve_source(ctx, remote, action, &identity).await? else {
+        // The source is gone. Either an earlier attempt already moved the mail
+        // and only the acknowledgement was lost, or the server dropped it.
+        // Ask the target first: a lost ack must not revert a move that did
+        // happen (M2.16).
+        let Some((destination, validity)) = lookup_target(remote, &identity).await? else {
+            return source_missing(action);
+        };
+        tracing::info!(
+            action_id = action.id,
+            "move source absent but target has the message; finishing as moved",
+        );
+        return persist_destination(ctx, action, &identity, destination, validity).await;
+    };
     // Sync may have relinked a later destination meanwhile; never clear or
     // overwrite its UID after the remote move.
     let copied_uid = remote.move_uid(uid, &identity.target.imap_name).await?;
     // COPYUID carries a target epoch that Option<u32> cannot preserve. Select
     // and verify identity in the current namespace before adopting its UID.
-    let lookup: Result<(Option<u32>, Option<i64>)> = async {
+    let lookup: Result<Destination> = async {
         let validity = remote.select_source(&identity.target.imap_name).await?;
         let Some(key) = identity.key.as_ref() else {
             return Ok((None, validity));
@@ -1049,11 +1099,41 @@ async fn move_action(
             return Ok(());
         }
     };
+    persist_destination(ctx, action, &identity, destination, validity).await
+}
+
+/// Look the message up in the **target** folder. `None` means it is not there
+/// either; a unique UID there proves an earlier move went through.
+async fn lookup_target(
+    remote: &mut impl MoveRemote,
+    identity: &MoveIdentity,
+) -> Result<Option<Destination>> {
+    let validity = remote.select_source(&identity.target.imap_name).await?;
+    let Some(key) = identity.key.as_ref() else {
+        return Ok(None);
+    };
+    match remote.search_key(key).await?.as_slice() {
+        [uid] if *uid > 0 => Ok(Some((Some(*uid), validity))),
+        [] => Ok(None),
+        _ => Err(CoreError::ActionDeferred(
+            "move destination is ambiguous; refusing to choose a UID".into(),
+        )),
+    }
+}
+
+/// Record the destination UID of the moved row (only while still unresolved).
+async fn persist_destination(
+    ctx: &SyncCtx,
+    action: &repo::actions::PendingAction,
+    identity: &MoveIdentity,
+    destination: Option<u32>,
+    validity: Option<i64>,
+) -> Result<()> {
     let Some(validity) = validity.filter(|v| *v > 0 && u32::try_from(*v).is_ok()) else {
         return Ok(());
     };
     let message_id = action.message_id;
-    let target = identity.target;
+    let target = identity.target.clone();
     ctx.db
         .write(move |conn| {
             let tx = conn.transaction()?;
@@ -1075,6 +1155,24 @@ async fn move_action(
             Ok(())
         })
         .await
+}
+
+/// The server no longer has the action's source message. Moving it to the
+/// trash is then exactly what the user asked for, so the action counts as
+/// done and the row never rolls back. Any other move has no source to move:
+/// it fails visibly instead of retrying for a day and reverting silently.
+fn source_missing(action: &repo::actions::PendingAction) -> Result<()> {
+    if action.kind == "trash" {
+        tracing::info!(
+            action_id = action.id,
+            "move source absent on the server; trash considered done",
+        );
+        return Ok(());
+    }
+    Err(CoreError::ActionSourceMissing(format!(
+        "{}: the source message is not on the server",
+        action.kind
+    )))
 }
 
 async fn send_action(

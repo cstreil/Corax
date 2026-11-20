@@ -306,13 +306,13 @@ final class M28bCalendarKeyTests: XCTestCase {
     private var deleteKey: NSEvent { key(51, "\u{7f}") }
     private var escapeKey: NSEvent { key(53, "\u{1b}") }
 
-    func testReturnOpensTheSelectedEvent() async {
+    func testReturnOpensTheCardOfTheSelectedEvent() async {
         let store = await store()
         store.selectedEventId = 42
         var opened: Int64?
         var closed = false
-        let handled = CalendarKeyboard.handle(returnKey, store: store, openEditor: {},
-                                              openSelected: { opened = $0.id },
+        let handled = CalendarKeyboard.handle(returnKey, store: store, openNew: {},
+                                              openCard: { opened = $0.id },
                                               close: { closed = true })
         XCTAssertTrue(handled)
         XCTAssertEqual(opened, 42)
@@ -322,8 +322,8 @@ final class M28bCalendarKeyTests: XCTestCase {
     func testReturnWithoutASelectionDoesNothing() async {
         let store = await store()
         var opened = false
-        let handled = CalendarKeyboard.handle(returnKey, store: store, openEditor: {},
-                                              openSelected: { _ in opened = true }, close: {})
+        let handled = CalendarKeyboard.handle(returnKey, store: store, openNew: {},
+                                              openCard: { _ in opened = true }, close: {})
         XCTAssertTrue(handled, "die Taste gehört dem Kalender, auch ohne Ziel")
         XCTAssertFalse(opened)
     }
@@ -332,32 +332,20 @@ final class M28bCalendarKeyTests: XCTestCase {
         let store = await store()
         store.selectedEventId = 42
         var deleted: Int64?
-        _ = CalendarKeyboard.handle(deleteKey, store: store, openEditor: {},
+        _ = CalendarKeyboard.handle(deleteKey, store: store, openNew: {},
                                     deleteSelected: { deleted = $0.id }, close: {})
         XCTAssertEqual(deleted, 42)
     }
 
-    func testEscapeClosesTheCardBeforeItLeavesTheCalendar() async {
+    /// M2.9 §7.4: die Karte schließt der Monitor des Bildschirms, weil auch ein
+    /// Feld in der Karte `Esc` bekommen kann. Hier bleibt `Esc` die Taste, die
+    /// den Kalender verlässt.
+    func testEscapeLeavesTheCalendar() async {
         let store = await store()
         var closedCalendar = false
-        var overlayClosed = false
-        let handled = CalendarKeyboard.handle(escapeKey, store: store, openEditor: {},
-                                              closeOverlay: {
-                                                  overlayClosed = true
-                                                  return true
-                                              },
+        let handled = CalendarKeyboard.handle(escapeKey, store: store, openNew: {},
                                               close: { closedCalendar = true })
         XCTAssertTrue(handled)
-        XCTAssertTrue(overlayClosed)
-        XCTAssertFalse(closedCalendar, "die Karte schließt zuerst")
-    }
-
-    func testEscapeWithoutACardLeavesTheCalendar() async {
-        let store = await store()
-        var closedCalendar = false
-        _ = CalendarKeyboard.handle(escapeKey, store: store, openEditor: {},
-                                    closeOverlay: { false },
-                                    close: { closedCalendar = true })
         XCTAssertTrue(closedCalendar)
     }
 

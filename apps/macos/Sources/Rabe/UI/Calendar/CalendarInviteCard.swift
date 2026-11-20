@@ -70,7 +70,7 @@ struct CalendarInviteCard: View {
                     }
                 }
                 Spacer(minLength: 4)
-                if let urlText = event.joinUrl, let url = URL(string: urlText) {
+                if let url = MeetingLink.url(event.joinUrl) {
                     Button("Beitreten") { openURL(url) }
                         .buttonStyle(.plain)
                         .font(.system(size: 11.5, weight: .medium))

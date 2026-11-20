@@ -122,10 +122,15 @@ final class CommandPolicyTests: XCTestCase {
         XCTAssertTrue(CommandPolicy.pendingAudit.isEmpty)
         XCTAssertEqual(CommandPolicy.blocked,
                        ["add_account_password", "test_connection", "mcp_install_client"])
-        for command in ["connect_calendar", "disconnect_calendar", "create_teams_meeting"] {
+        // M2.12: `connect_calendar` is released under `writing` (the settings
+        // window has "Konto verbinden"); the other two calendar commands the
+        // UI does not use stay refused.
+        for command in ["disconnect_calendar", "create_teams_meeting"] {
             XCTAssertEqual(CommandPolicy.decision(for: command, writesAllowed: true), .notAllowed, command)
             XCTAssertEqual(CommandPolicy.decision(for: command, sandbox: true), .allowed, command)
         }
+        XCTAssertEqual(CommandPolicy.decision(for: "connect_calendar", writesAllowed: true), .allowed)
+        XCTAssertEqual(CommandPolicy.decision(for: "connect_calendar"), .writesDisabled)
     }
 
     func testTheSandboxIsUnrestricted() {

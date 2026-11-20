@@ -7,12 +7,15 @@ enum AppAction: Hashable {
     case next, previous, toggle, close
     case pageDown, pageUp, first, last, openAttachment
     case archive, trash, snoozeTomorrow, snooze(presetID: String), star, unread, undo
-    case reply, replyAll, forward, compose
+    case reply, replyAll, forward, compose, composeInWindow
+    // M2.9 Stufe B: das Verfassen-Panel
+    case toggleDock, discardDraft
     case search, palette, shortcuts, nextTab, previousTab
     case view(MailView), account(Int64?)
     case theme(ThemeID), perfOverlay, addAccount, loadImages
     case calendarToggle, calendarClose, calendarToday, calendarMode(CalendarStore.Mode), calendarNewEvent
     case calendarSidebar, joinNextMeeting
+    case toggleSidebar
     case aiWrite, aiAsk, aiProofread, aiSearchFilter, aiSettings
     case unsubscribe, copyVerificationCode
     // M2.5
@@ -45,6 +48,10 @@ enum AppAction: Hashable {
         case .replyAll: Strings.replyAll
         case .forward: Strings.forward
         case .compose: Strings.newMail
+        case .composeInWindow: "Neue E-Mail im eigenen Fenster"
+        case .toggleDock: AppModel.shared.compose.openId != nil
+            ? "Entwurf minimieren" : "Entwurf öffnen"
+        case .discardDraft: "Entwurf verwerfen"
         case .search: "Suche"                          // commands:title.search
         case .palette: "Befehlspalette"
         case .shortcuts: Strings.shortcuts
@@ -61,8 +68,10 @@ enum AppAction: Hashable {
         case .calendarToday: "Kalender: Heute"
         case .calendarMode(let mode): "Kalender: \(mode.title)"
         case .calendarNewEvent: "Neuer Termin"
-        case .calendarSidebar: AppModel.shared.calendar.sidebarVisible
-            ? "Kalender-Seitenleiste ausblenden" : "Kalender-Seitenleiste einblenden"
+        case .calendarSidebar: AppModel.shared.sidebar.isVisible
+            ? "Seitenleiste ausblenden" : "Seitenleiste einblenden"
+        case .toggleSidebar: AppModel.shared.sidebar.isVisible
+            ? "Seitenleiste ausblenden" : "Seitenleiste einblenden"
         case .joinNextMeeting: "Nächstem Meeting beitreten"
         case .aiWrite:
             AppModel.shared.mailbox.inlineCompose != nil || !AppModel.shared.composeDrafts.isEmpty
@@ -112,27 +121,31 @@ enum AppAction: Hashable {
         case .star: "S"
         case .unread: "U"
         case .undo: "Z"
-        case .reply: "A"
-        case .replyAll: "⇧A"
-        case .forward: "W"
+        case .reply: "R"
+        case .replyAll: "⇧R"
+        case .forward: "F"
         case .compose: "C"
+        case .composeInWindow: "⌥C"
+        case .toggleDock: "⌘⇧M"
+        case .discardDraft: "⌘⇧⌫"
         case .search: "/"
         case .palette: "⌘K"
         case .shortcuts: "?"
         case .nextTab: "Tab"
         case .previousTab: "⇧Tab"
-        case .calendarToggle: "2"
+        case .calendarToggle: "⌥⌘2"
         case .calendarMode(.day): "D"
         case .calendarMode(.week): "W"
         case .calendarMode(.month): "M"
         case .calendarToday: "T"
         case .calendarNewEvent: "B"
         case .calendarSidebar: "\\"
+        case .toggleSidebar: "\\"
         case .joinNextMeeting: "meeting"
-        case .aiWrite: "⌘J"
-        case .aiAsk: "⌘⇧K"
-        case .aiProofread: "⌘⇧P"
-        case .aiSearchFilter: "⌘O"
+        case .aiWrite: "I"
+        case .aiAsk: "⇧I"
+        case .aiProofread: "⌥⌘;"
+        case .aiSearchFilter: "⌥⌘K"
         case .aiSettings: ""
         case .unsubscribe: "⌘U"
         case .copyVerificationCode: ""
@@ -148,13 +161,13 @@ enum AppAction: Hashable {
         case .splitBySender: ""
         case .relabelAuto: ""
         case .syncNow: ""
-        case .quoteSelection: "⇧R"
-        case .sendDone: "⌘⇧↵"
-        case .sendLater: "⌘⇧L"
-        case .instantSend: "⌘⇧Z"
+        case .quoteSelection: ""
+        case .sendDone: "⌥⇧⌘D"
+        case .sendLater: "⌃⌘D"
+        case .instantSend: "⌃⌥⌘D"
         case .attachFiles: "⌘⇧A"
-        case .insertSnippet: "⌘;"
-        case .previewAttachments: "Leertaste"
+        case .insertSnippet: "⌃⌘K"
+        case .previewAttachments: "Y"
         case .perfOverlay: "⌥⌘P"
         default: ""
         }
@@ -220,6 +233,9 @@ enum ActionDispatcher {
         case .replyAll: model.reply(.replyAll)
         case .forward: model.reply(.forward)
         case .compose: model.composeNew()
+        case .composeInWindow: model.composeNew(docked: false)
+        case .toggleDock: model.toggleComposeDock()
+        case .discardDraft: model.discardOpenDraft()
         case .search: model.searchFocusRequest += 1
         case .palette: model.paletteOpen = true
         case .shortcuts: model.shortcutsOpen.toggle()
@@ -249,13 +265,15 @@ enum ActionDispatcher {
         case .calendarMode(let mode): model.calendar.setMode(mode)
         case .calendarNewEvent: NotificationCenter.default.post(name: .rabeCalendarNewEvent, object: nil)
         case .calendarSidebar: model.calendar.sidebarVisible.toggle()
+        case .toggleSidebar: model.sidebar.toggle()
         case .joinNextMeeting: model.joinNextMeeting()
         case .aiWrite:
             // Context, as in Tauri: ⌘J drafts in the composer, summarizes in the
             // thread. The compose view ignores the note unless it holds the key
             // window.
             if box.inlineCompose != nil || !model.composeDrafts.isEmpty {
-                NotificationCenter.default.post(name: .rabeComposeAI, object: "draft")
+                NotificationCenter.default.post(name: .rabeComposeAI, object: "draft",
+                                                userInfo: model.composeCommandTarget)
             } else if box.expandedId != nil {
                 model.summarizeOpenThread()
             } else {
@@ -263,7 +281,8 @@ enum ActionDispatcher {
             }
         case .aiProofread:
             if box.inlineCompose != nil || !model.composeDrafts.isEmpty {
-                NotificationCenter.default.post(name: .rabeComposeAI, object: "proofread")
+                NotificationCenter.default.post(name: .rabeComposeAI, object: "proofread",
+                                                userInfo: model.composeCommandTarget)
             } else {
                 model.toasts.show("Korrekturlesen gibt es nur im Entwurf")
             }
@@ -306,7 +325,20 @@ enum ActionDispatcher {
     /// Single-key shortcuts (TASTATUR.md). The open/closed state of the thread
     /// decides what a key means. Returns false when the key is not ours.
     static func handleListKey(_ event: NSEvent) -> Bool {
+        // M2.15: liegt der Kalender über der Liste, gehören die Tasten dem
+        // Kalender — auch wenn die Tabelle noch den Fokus hat. Sonst wirkten
+        // `R` (öffnete einen Entwurf), `X` und `G` weiter auf Mails (Audit).
+        if AppModel.shared.calendarOpen { return false }
         let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        // M2.9: `⌥C` legt den Entwurf im eigenen Fenster an (der einzige Weg,
+        // der nicht im Panel landet). Muss vor der Modifikator-Sperre stehen.
+        if let action = modifiedListAction(flags: flags, keyCode: event.keyCode) {
+            perform(action)
+            return true
+        }
+        // §3.6.1: hat ein Entwurf im Panel die Tastatur, lösen die
+        // Listenkürzel nichts aus.
+        guard listKeysEnabled(hasDraftFocus: AppModel.shared.compose.hasDraftFocus) else { return false }
         // M2.5: `⌘A` selects every loaded row. The command modifier is otherwise
         // the menu bar's business, so nothing else is taken here.
         if flags == .command, event.keyCode == 0 {
@@ -335,8 +367,9 @@ enum ActionDispatcher {
         case 119: perform(.last); return true             // Ende
         case 36, 76: perform(.toggle); return true        // ↵
         case 49:
-            // Space: state A opens the thread, state B previews its attachments.
-            if open { perform(.previewAttachments) } else { perform(.toggle) }
+            // M2.14 §6: im offenen Thread blättert die Leertaste, in der Liste
+            // klappt sie den Thread auf (wie bisher).
+            if open { perform(.pageDown) } else { perform(.toggle) }
             return true
         case 53: perform(.close); return true             // Esc
         case 48: perform(shift ? .previousTab : .nextTab); return true // Tab
@@ -345,11 +378,16 @@ enum ActionDispatcher {
         }
         guard let chars = event.charactersIgnoringModifiers?.lowercased(), let c = chars.first else { return false }
         let typed = event.characters ?? ""
-        if typed == "#" { perform(.permanentDelete); return true }
-        if typed == "?" { perform(.shortcuts); return true }
-        if typed == "/" { perform(.search); return true }
-        if typed == "!" { perform(.spam); return true }
-        if typed == "2" { perform(.calendarToggle); return true }
+        // M2.14 §3: verglichen wird das erzeugte Zeichen, nicht der keyCode.
+        // Damit wirken # ! ? / \ auch auf der deutschen Tastatur.
+        switch typed {
+        case "#": perform(AppModel.shared.mailbox.view == .trash ? .permanentDelete : .trash); return true
+        case "?": perform(.shortcuts); return true
+        case "/": perform(.search); return true
+        case "!": perform(.spam); return true
+        case "\\": perform(.toggleSidebar); return true
+        default: break
+        }
         switch c {
         case "j": perform(.next)
         case "k": perform(.previous)
@@ -359,15 +397,20 @@ enum ActionDispatcher {
         case "s": perform(.star)
         case "u": perform(.unread)
         case "z": perform(.undo)
-        // ⇧R quotes the marked passage; without one Tauri falls through to
-        // reply-all, so `quoteSelection` does exactly that.
-        case "r": perform(shift ? .quoteSelection : .reply)
-        case "a": perform(shift ? .replyAll : .reply)
-        case "w", "f": perform(.forward)
-        case "c": perform(.compose)
-        case "m": perform(.calendarToggle)
         case "v": perform(.move)
         case "l": perform(.label)
+        case "a": perform(.selectAll)
+        case "x":
+            // „Zeile zur Auswahl“ (M2.14 §6): die Cursor-Zeile umschalten.
+            if let id = AppModel.shared.mailbox.selectedId { AppModel.shared.mailbox.toggleSelect(id) }
+        case "r":
+            // Markierter Text: nur die Auswahl zitieren, sonst Antworten (R)
+            // bzw. Allen antworten (⇧R).
+            AppModel.shared.quoteSelection(fallback: shift ? .replyAll : .reply)
+        case "f": perform(.forward)
+        case "c": perform(.compose)
+        case "i": perform(shift ? .aiAsk : .aiWrite)
+        case "y": perform(.previewAttachments)
         case "g":
             // Start of a "g i"/"g e" sequence; the next key picks the view.
             pendingGo = CFAbsoluteTimeGetCurrent()
@@ -377,6 +420,17 @@ enum ActionDispatcher {
         default: return false
         }
         return true
+    }
+
+    /// §3.6.1: die Listenkürzel gelten nur, wenn die Liste die Tastatur hat.
+    /// Steht der Fokus im Verfassen-Panel, bleibt die Taste dort.
+    static func listKeysEnabled(hasDraftFocus: Bool) -> Bool { !hasDraftFocus }
+
+    /// Die eine Einzeltaste mit Modifikator, die die Liste doch nimmt: `⌥C`
+    /// legt den Entwurf im eigenen Fenster an (M2.9 §3.5).
+    static func modifiedListAction(flags: NSEvent.ModifierFlags, keyCode: UInt16) -> AppAction? {
+        if flags == .option, keyCode == 8 { return .composeInWindow }
+        return nil
     }
 
     /// Start of a `g` sequence; cleared by the next key or after 1.2 s.
@@ -389,7 +443,8 @@ enum ActionDispatcher {
 
     /// Everything the palette offers.
     static var paletteActions: [AppAction] {
-        var list: [AppAction] = [.reply, .replyAll, .forward, .compose, .archive, .trash, .snoozeTomorrow]
+        var list: [AppAction] = [.reply, .replyAll, .forward, .compose, .composeInWindow,
+                                 .toggleDock, .archive, .trash, .snoozeTomorrow]
         if AppModel.shared.mailbox.expandedId != nil { list += [.openAttachment, .loadImages] }
         list += [.toggle, .first, .last]
         list += Format.snoozePresets().map { .snooze(presetID: $0.id) }
@@ -399,7 +454,7 @@ enum ActionDispatcher {
         if accounts.count > 1 { list.append(.account(nil)); list += accounts.map { .account($0.id) } }
         list += ThemeID.allCases.map { .theme($0) }
         list += [.addAccount, .perfOverlay, .calendarToggle, .calendarToday, .calendarNewEvent,
-                 .calendarSidebar, .joinNextMeeting]
+                 .calendarSidebar, .toggleSidebar, .joinNextMeeting]
         list += [.aiWrite, .aiAsk, .aiProofread, .aiSearchFilter, .aiSettings]
         list += [.unsubscribe, .copyVerificationCode]
         // M2.5
@@ -411,5 +466,48 @@ enum ActionDispatcher {
         }
         list += CalendarStore.Mode.allCases.map { .calendarMode($0) }
         return list
+    }
+}
+
+extension KeyPress {
+    /// Aus dem echten Tastenereignis; nur Rabe kennt AppKit.
+    init(_ event: NSEvent) {
+        let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        self.init(characters: event.characters ?? "",
+                  charactersIgnoringModifiers: event.charactersIgnoringModifiers,
+                  command: flags.contains(.command),
+                  option: flags.contains(.option),
+                  control: flags.contains(.control),
+                  shift: flags.contains(.shift))
+    }
+}
+
+/// M2.14b: die Kombis, deren Menüpunkt auf deutscher Tastatur nicht trifft.
+///
+/// SwiftUI legt das Satzzeichen physisch ab, der Menüpunkt liegt dann auf der
+/// US-Position (`⌘/` auf der Taste, die hier `ß` schreibt). Diese vier laufen
+/// deshalb zusätzlich über den Tastenmonitor. Bewusst nur diese vier: alles
+/// andere bleibt beim Menü, sonst gäbe es zwei Wege für dieselbe Taste.
+@MainActor
+enum MonitorKeys {
+    struct Binding {
+        let combo: String
+        let action: AppAction
+        /// Im Textfeld ist dieselbe Tastenkombi etwas anderes: `⌘/` ist dort
+        /// `⇧⌘7`, die nummerierte Liste. Dort fängt der Editor sie ab.
+        let outsideTextOnly: Bool
+    }
+
+    static let bindings: [Binding] = [
+        Binding(combo: "⌘/", action: .shortcuts, outsideTextOnly: true),
+        Binding(combo: "⌥⌘;", action: .aiProofread, outsideTextOnly: false),
+        Binding(combo: "⌥⇧⌘C", action: .copyVerificationCode, outsideTextOnly: false),
+    ]
+
+    static func handle(_ press: KeyPress, inText: Bool) -> AppAction? {
+        for binding in bindings where !(binding.outsideTextOnly && inText) {
+            if ShortcutMap.matches(binding.combo, press) { return binding.action }
+        }
+        return nil
     }
 }

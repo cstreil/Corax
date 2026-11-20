@@ -62,6 +62,22 @@ public enum Strings {
 
     public static let offline = "Du bist offline"                 // errors:offline
 
+    // MARK: M2.16 — eine Aktion, die der Kern aufgegeben hat
+
+    /// The core gave up on a move (`action:failed`); the verb follows the kind.
+    public static func moveFailure(kind: String) -> String {
+        switch kind {
+        case "trash": "In den Papierkorb verschieben nicht möglich"
+        case "archive": "Archivieren nicht möglich"
+        case "unarchive": "Zurückholen nicht möglich"
+        case "spam": "Als Spam markieren nicht möglich"
+        case "not_spam": "Aus dem Spam holen nicht möglich"
+        default: "Verschieben nicht möglich"
+        }
+    }
+    /// `reason == "source_missing"`: the server no longer has the mail.
+    public static let moveSourceMissing = "Mail auf dem Server nicht gefunden"
+
     // MARK: M2.3 — KI
 
     /// settings:ai.notConfigured — shown wherever a feature needs a key.

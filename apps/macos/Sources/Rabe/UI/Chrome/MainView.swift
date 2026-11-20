@@ -1,4 +1,5 @@
 import AppKit
+import Observation
 import RabeKit
 import SwiftUI
 
@@ -11,15 +12,47 @@ struct MainView: View {
 
     var body: some View {
         let theme = model.theme
+        // M2.15 1.1: Die Titelbar liegt über dem Inhalt und schluckt dort
+        // jeden Klick (`hittest` → `NSTitlebarView`). Das Band beginnt deshalb
+        // **unter** ihr; der Streifen darüber bleibt Titelbar (Ampel).
+        let titleInset = ChromeMetrics.shared.topInset
         ZStack(alignment: .bottom) {
-            VStack(spacing: 0) {
-                if model.calendarOpen {
-                    CalendarScreenView()
-                } else {
-                    ToolbarRow()
-                    listArea
-                    HintBar()
+            // M2.9: Seitenleiste als eigene Spalte, daneben eine gemeinsame
+            // 52-pt-Zeile für Mail und Kalender, darunter der Inhalt.
+            GeometryReader { geo in
+                // Das Band liegt **über** dem Inhalt (ZStack), nicht davor:
+                // ein Hintergrund im Inhalt dehnt sich in die Safe Area und
+                // deckte das Band sonst zu (im Sandbox-Lauf: Kalender statt
+                // Werkzeugleiste). Der Inhalt ist um die Bandhöhe eingerückt,
+                // damit nichts Wichtiges darunter liegt.
+                ZStack(alignment: .top) {
+                    HStack(spacing: 0) {
+                        if model.sidebar.isVisible {
+                            SidebarColumn()
+                                .transition(.move(edge: .leading).combined(with: .opacity))
+                        }
+                        VStack(spacing: 0) {
+                            if model.calendarOpen {
+                                CalendarScreenView()
+                            } else {
+                                listArea
+                            }
+                            HintBar()
+                        }
+                    }
+                    .padding(.top, titleInset + WindowChromeRow.height)
+                    WindowChromeRow()
+                        .padding(.top, titleInset)
+                        // Färbt auch den Titelbar-Streifen, damit Band und
+                        // Ampelzone eine Fläche sind.
+                        .background(theme.bar.color)
+                    // M2.9 Stufe B: das Verfassen-Panel liegt **vor** Toast,
+                    // Palette und Pickern in diesem ZStack und damit unter
+                    // ihnen (§3.6.4).
+                    ComposeDockOverlay(windowSize: geo.size, topInset: titleInset)
                 }
+                .onAppear { model.sidebar.update(windowWidth: geo.size.width) }
+                .onChange(of: geo.size.width) { _, width in model.sidebar.update(windowWidth: width) }
             }
             ToastView().padding(.bottom, 50)
             if model.paletteOpen { CommandPalette().transition(.opacity) }
@@ -45,6 +78,7 @@ struct MainView: View {
         .animation(Motion.animation, value: model.askOpen)
         .animation(Motion.animation, value: model.shortcutsOpen)
         .animation(Motion.animation, value: theme)
+        .animation(Motion.animation, value: model.sidebar.isVisible)
         .onAppear {
             model.openComposeWindow = { id in openWindow(id: "compose", value: id) }
             PerfLog.shared.write("first_paint ms=\(PerfLog.shared.elapsedMilliseconds)")
@@ -106,123 +140,6 @@ struct EmptyState: View {
 
 // MARK: - Toolbar
 
-struct ToolbarRow: View {
-    @Environment(\.theme) private var theme
-    @FocusState private var searchFocused: Bool
-    private var model: AppModel { AppModel.shared }
-    private var box: MailboxStore { model.mailbox }
-
-    var body: some View {
-        @Bindable var box = box
-        HStack(spacing: 14) {
-            Color.clear.frame(width: 64, height: 1)   // traffic lights
-            titleMenu
-            tabs
-            Spacer(minLength: 8)
-            HStack(spacing: 6) {
-                Image(systemName: "magnifyingglass").foregroundStyle(searchFocused ? theme.ink2.color : theme.ink3.color)
-                TextField(Strings.search, text: $box.searchText)
-                    .textFieldStyle(.plain)
-                    .focused($searchFocused)
-                    .onSubmit { box.runSearch(); box.focusList() }
-                    .onKeyPress(.escape) { box.endSearch(); searchFocused = false; box.focusList(); return .handled }
-                    .accessibilityLabel("Suchen")
-                if !searchFocused && box.searchText.isEmpty { KeyCap("/") }
-                Button { model.runAISearchFilter() } label: {
-                    Image(systemName: "sparkles").font(.system(size: 11))
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(theme.ink3.color)
-                .help("KI-Filter für die Suche (⌘O)")
-                .accessibilityLabel("KI-Filter für die Suche")
-                .popover(isPresented: Binding(
-                    get: { model.aiFilterQuestion != nil },
-                    set: { if !$0 { model.aiFilterQuestion = nil } })) {
-                    if let question = model.aiFilterQuestion {
-                        AISearchFilterCard(question: question,
-                                           onAnswer: { answer in model.answerAIFilter(question, answer: answer) },
-                                           onCancel: { model.aiFilterQuestion = nil })
-                            .environment(\.theme, theme)
-                    }
-                }
-            }
-            .padding(.horizontal, 8)
-            .frame(width: searchFocused || !box.searchText.isEmpty ? 260 : 180, height: 28)
-            .background(RoundedRectangle(cornerRadius: 8).fill(theme.hover.color))
-            .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(searchFocused ? theme.accent.color : theme.line.color, lineWidth: searchFocused ? 1 : 0.5))
-            .animation(Motion.animation, value: searchFocused)
-            ToolbarIcon(symbol: "square.and.pencil", help: "Neue E-Mail (C)") { ActionDispatcher.perform(.compose) }
-            ToolbarIcon(symbol: "keyboard", help: "Tastenkürzel (?)") { ActionDispatcher.perform(.shortcuts) }
-        }
-        .padding(.leading, 18)
-        .padding(.trailing, 14)
-        .frame(height: 52)
-        .background(WindowDragArea())
-        .background(theme.bar.color)
-        .overlay(alignment: .bottom) { Rectangle().fill(theme.line.color).frame(height: 0.5) }
-        .onChange(of: model.searchFocusRequest) { _, _ in searchFocused = true }
-        .onChange(of: model.searchAIRequest) { _, _ in
-            // ⌘O from the menu or the palette: the search field's text is the
-            // request to the filter.
-            guard model.aiFilterQuestion == nil else { return }
-            model.runAISearchFilter()
-        }
-    }
-
-    /// Title = current view; the menu switches view and account (no sidebar).
-    private var titleMenu: some View {
-        Menu {
-            ForEach(MailView.allCases, id: \.self) { (v: MailView) in
-                Button((v == box.view ? "✓ " : "") + Strings.view(v)) { ActionDispatcher.perform(.view(v)) }
-            }
-            if box.accounts.count > 1 {
-                Divider()
-                Button("Alle Konten") { ActionDispatcher.perform(.account(nil)) }
-                ForEach(Array(box.accounts.enumerated()), id: \.element.id) { i, account in
-                    Button(account.label + (i < 9 ? "  ⌃\(i + 1)" : "")) { ActionDispatcher.perform(.account(account.id)) }
-                }
-            }
-            Divider()
-            Button("Konto hinzufügen …") { ActionDispatcher.perform(.addAccount) }
-        } label: {
-            HStack(spacing: 4) {
-                Text(box.title).font(.system(size: 13, weight: .semibold))
-                if Instance.isSandbox { Text("Sandbox").font(.system(size: 10, weight: .semibold)).foregroundStyle(theme.accent.color) }
-            }
-            .foregroundStyle(theme.ink.color)
-        }
-        .menuStyle(.borderlessButton)
-        .menuIndicator(.hidden)
-        .fixedSize()
-        .accessibilityLabel("Ansicht: \(box.title)")
-    }
-
-    private var tabs: some View {
-        HStack(spacing: 2) {
-            ForEach(box.tabs) { tab in
-                let selected = tab.id == box.currentTabID
-                Button { box.setTab(tab.id); box.focusList() } label: {
-                    HStack(spacing: 6) {
-                        Text(tab.title).fontWeight(.medium)
-                        if tab.unread > 0 {
-                            Text("\(tab.unread)").font(.system(size: 11)).monospacedDigit().foregroundStyle(theme.ink3.color)
-                        }
-                    }
-                    .foregroundStyle(selected ? theme.ink.color : theme.ink2.color)
-                    .padding(.horizontal, 10)
-                    .frame(height: 26)
-                    .background(RoundedRectangle(cornerRadius: 7).fill(selected ? theme.hover.color : .clear))
-                    .overlay(RoundedRectangle(cornerRadius: 7).strokeBorder(selected ? theme.line.color : .clear, lineWidth: 0.5))
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("\(tab.title)\(tab.unread > 0 ? ", \(tab.unread) ungelesen" : "")")
-                .accessibilityAddTraits(selected ? .isSelected : [])
-            }
-        }
-    }
-}
-
 struct ToolbarIcon: View {
     let symbol: String
     let help: String
@@ -253,21 +170,28 @@ struct HintBar: View {
 
     var body: some View {
         let box = model.mailbox
-        let items: [(String, String)]
-        if box.inlineCompose != nil {
-            items = [("⌘↵", "senden"), ("Esc", "verwerfen")]
+        var items: [(String, String)]
+        if model.calendarOpen {
+            // M2.9: der Kalender hat keine eigene Hinweisleiste mehr, die Zeile
+            // zeigt seine Tasten.
+            items = [("D/W/M", "Ansicht"), ("- / =", "blättern"), ("T", "heute"),
+                     ("B", "neu"), ("\\", "Seitenleiste"), ("1/Esc", "zurück")]
+        } else if model.compose.hasDraftFocus {
+            // M2.9: das Panel hat die Tastatur.
+            items = [("⌘↵", "senden"), ("Esc", "minimieren"), ("⌃Tab", "zur Liste"), ("⌘⇧⌫", "verwerfen")]
+        } else if box.inlineCompose != nil {
+            items = [("⌘↵", "senden"), ("Esc", "verwerfen"), ("⌘⇧M", "lösen")]
         } else if box.expandedId != nil {
             items = [("J", "nächste"), ("K", "vorige"), ("R", "antworten"), ("E", "archivieren"), ("Esc", "schließen")]
         } else {
-            items = [("↑↓", "bewegen"), ("↵", "öffnen"), ("E", "archivieren"), ("Tab", "Inbox wechseln"), ("?", "alle Kürzel")]
+            items = [("↑↓", "bewegen"), ("↵", "öffnen"), ("E", "archivieren"), ("Tab", "Split wechseln")]
+            if !model.compose.isEmpty { items.append(("⌃Tab", "Entwurf")) }
+            items.append(("?", "alle Kürzel"))
         }
-        return ZStack {
-            HStack(spacing: 16) {
-                ForEach(items, id: \.0) { key, label in
-                    HStack(spacing: 6) { KeyCap(key); Text(label) }
-                }
-            }
-            HStack {
+        // Eine Zeile statt zweier übereinander: mit fünf Tasten liefen die
+        // zentrierten Kürzel in den Sync-Text (Sandbox-Lauf M2.9).
+        return HStack(spacing: 12) {
+            HStack(spacing: 4) {
                 if let sync = model.sync.summary {
                     HStack(spacing: 6) {
                         if sync != Strings.offline { ProgressView().controlSize(.mini) } else { Image(systemName: "wifi.slash") }
@@ -275,12 +199,28 @@ struct HintBar: View {
                     }
                     // Capped so a long sync line never runs into the centred
                     // key hints of the same bar (seen with "Konto muss neu verbunden werden").
-                    .frame(maxWidth: 230, alignment: .leading)
+                    .frame(maxWidth: model.calendarOpen ? 170 : 200, alignment: .leading)
                     .accessibilityElement(children: .combine)
                 }
-                Spacer()
+            }
+            .frame(maxWidth: 210, alignment: .leading)
+            Spacer(minLength: 6)
+            HStack(spacing: 16) {
+                ForEach(items, id: \.0) { key, label in
+                    HStack(spacing: 6) { KeyCap(key); Text(label) }
+                        .fixedSize()
+                }
+            }
+            .layoutPriority(2)
+            Spacer(minLength: 6)
+            HStack(spacing: 4) {
                 // P2g: "Nur lesen" while the real instance may not write; a
                 // click switches, same as the menu item.
+                if model.calendarOpen, model.calendar.meetingReminderMinutes > 0 {
+                    Text("Erinnerung \(model.calendar.meetingReminderMinutes) min vorher")
+                        .font(.system(size: 10.5))
+                        .foregroundStyle(theme.ink3.color)
+                }
                 if model.writeAccess.showsReadOnlyHint {
                     Button { model.writeAccess.toggle() } label: {
                         HStack(spacing: 5) {
@@ -297,8 +237,9 @@ struct HintBar: View {
                 }
                 if box.isLoading && box.loadedOnce { ProgressView().controlSize(.mini) }
             }
-            .padding(.horizontal, 14)
+            .frame(maxWidth: 240, alignment: .trailing)
         }
+        .padding(.horizontal, 14)
         .font(.system(size: 12))
         .foregroundStyle(theme.ink3.color)
         .frame(height: 34)
@@ -393,9 +334,27 @@ struct VisualEffect: NSViewRepresentable {
     }
 }
 
-/// Window setup: transparent title bar over the content, an empty unified
-/// toolbar so the traffic lights sit in the middle of the 52 pt toolbar row,
-/// appearance and opacity per theme.
+/// M2.15 1.1: die Höhe der Titelbar über dem Inhalt. Ohne Werkzeugleiste sind
+/// das 32 pt — und genau dort schluckt AppKit jeden Klick (`NSTitlebarView`).
+/// Band und Inhalt beginnen deshalb unterhalb; der Wert kommt beim Fenster-
+/// aufbau und bei Größenänderungen aus dem Fenster selbst.
+@Observable
+final class ChromeMetrics: @unchecked Sendable {
+    static let shared = ChromeMetrics()
+    private(set) var topInset: CGFloat = 32
+
+    func update(_ window: NSWindow) {
+        MainActor.assumeIsolated {
+            let inset = max(0, window.frame.height - window.contentLayoutRect.maxY)
+            guard abs(inset - topInset) > 0.5 else { return }
+            topInset = inset
+            PerfLog.shared.write("chrome_top_inset h=\(Int(inset))")
+        }
+    }
+}
+
+/// Window setup: transparent title bar over the content, appearance and
+/// opacity per theme. Bewusst **ohne** `NSToolbar` — siehe `configure`.
 struct WindowConfigurator: NSViewRepresentable {
     let theme: Theme
     func makeNSView(context: Context) -> NSView {
@@ -408,18 +367,21 @@ struct WindowConfigurator: NSViewRepresentable {
     }
     private func configure(_ window: NSWindow?) {
         guard let window else { return }
-        if window.toolbar == nil {
-            window.titlebarAppearsTransparent = true
-            window.titleVisibility = .hidden
-            window.styleMask.insert(.fullSizeContentView)
-            let toolbar = NSToolbar(identifier: "rabe.main")
-            toolbar.showsBaselineSeparator = false
-            window.toolbar = toolbar
-            window.toolbarStyle = .unified
-            window.title = Instance.title
-            window.tabbingMode = .disallowed
-            window.setFrameAutosaveName("RabeMain")
-        }
+        // M2.15 1.1: **keine** `NSToolbar`. Eine leere Werkzeugleiste liegt als
+        // `NSToolbarView` über dem 52-pt-Band und schluckt jeden Klick — im
+        // Sandbox-Lauf kam an jedem Knopf `NSToolbarView<NSTitlebarView<…` als
+        // Treffer, ein AX-Press ging daran vorbei und „funktionierte“ deshalb.
+        // Auch ohne Werkzeugleiste bleibt ein 32-pt-Titelbarstreifen, der
+        // Treffer abfängt (`NSTitlebarView`). Deshalb beginnt das Band unter
+        // der Titelbar; die Ampel bleibt in ihrem Streifen.
+        if window.toolbar != nil { window.toolbar = nil }
+        window.titlebarAppearsTransparent = true
+        window.titleVisibility = .hidden
+        window.styleMask.insert(.fullSizeContentView)
+        window.title = Instance.title
+        window.tabbingMode = .disallowed
+        window.setFrameAutosaveName("RabeMain")
+        ChromeMetrics.shared.update(window)
         window.appearance = NSAppearance(named: theme.isDark ? .darkAqua : .aqua)
         window.isOpaque = !theme.usesGlass
         window.backgroundColor = theme.usesGlass ? .clear : theme.win.ns

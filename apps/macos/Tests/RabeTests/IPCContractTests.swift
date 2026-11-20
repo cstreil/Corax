@@ -33,9 +33,9 @@ final class IPCContractTests: XCTestCase {
     }
 
     func testWrapperArgumentNames() throws {
-        try check("list_threads", IPCArgs.ListThreads(view: .inbox, splitId: 1, accountId: 2, cursor: 3, limit: 40))
+        try check("list_threads", IPCArgs.ListThreads(view: .inbox, splitId: 1, accountId: 2, labelId: nil, folderId: nil, cursor: 3, limit: 40))
         // Optional arguments are omitted when nil (`types.ts`: `splitId?: number | null`).
-        try check("list_threads", IPCArgs.ListThreads(view: .all, splitId: nil, accountId: nil, cursor: nil, limit: 100))
+        try check("list_threads", IPCArgs.ListThreads(view: .all, splitId: nil, accountId: nil, labelId: nil, folderId: nil, cursor: nil, limit: 100))
 
         try check("get_thread", IPCArgs.GetThread(threadId: 11))
         try check("get_body", IPCArgs.GetBody(messageId: 12))

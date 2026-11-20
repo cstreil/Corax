@@ -1,10 +1,11 @@
 import RabeKit
 import SwiftUI
 
-/// The calendar screen's left rail (`CalendarSidebar.tsx` + `MiniMonth.tsx`):
-/// new event, mini month with event dots and the visible range, one toggle per
-/// calendar collection, and the "Einladungen & lokal" row.
-struct CalendarSidebarView: View {
+/// M2.9: der Kalender-Inhalt der gemeinsamen Seitenleiste (`CalendarSidebar.tsx`
+/// + `MiniMonth.tsx`): neuer Termin, Minimonat mit Terminpunkten und sichtbarem
+/// Zeitraum, ein Schalter je Kalendersammlung, „Einladungen & lokal". Die Spalte
+/// selbst (Breite, Hintergrund, Trennlinie) stellt `SidebarColumn`.
+struct CalendarSidebarContent: View {
     let store: CalendarStore
     let accounts: [Account]
     @Environment(\.theme) private var theme
@@ -58,12 +59,6 @@ struct CalendarSidebarView: View {
                 }
             }
             Spacer(minLength: 0)
-        }
-        .padding(10)
-        .frame(width: 232, alignment: .topLeading)
-        .background(theme.win.color)
-        .overlay(alignment: .trailing) {
-            Rectangle().fill(theme.line.color).frame(width: 0.5)
         }
     }
 

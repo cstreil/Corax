@@ -39,6 +39,13 @@ final class MailTableView: NSTableView {
 
     override func mouseExited(with event: NSEvent) { onHover?(-1) }
 
+    /// M2.11: eine eigene Scrollbewegung hebt die Nachregelung nach dem Aufklappen auf.
+    var onScroll: (() -> Void)?
+    override func scrollWheel(with event: NSEvent) {
+        onScroll?()
+        super.scrollWheel(with: event)
+    }
+
     // The detail row hosts SwiftUI; let it handle its own clicks.
     override func validateProposedFirstResponder(_ responder: NSResponder, for event: NSEvent?) -> Bool { true }
 }
@@ -129,6 +136,7 @@ struct MailListView: NSViewRepresentable {
         table.dataSource = c
         table.onKey = { event in ActionDispatcher.handleListKey(event) }
         table.onHover = { [weak c] row in c?.setHover(row) }
+        table.onScroll = { [weak c] in c?.noteUserScroll() }
         table.onMenu = { [weak c] row in c?.contextMenu(row: row) }
         table.target = c
         table.action = #selector(Coordinator.clicked(_:))
@@ -162,6 +170,11 @@ struct MailListView: NSViewRepresentable {
         private var detailViews: [Int64: DetailCellView] = [:]
         /// Detail rows on their way out (collapse animation running).
         private var closing: Set<Int64> = []
+        /// M2.11: nach dem Aufklappen darf der wachsende Inhalt die Ansicht
+        /// einmal nachziehen — nur solange der Nutzer nicht selbst gescrollt hat
+        /// und die Mail gerade erst aufging.
+        private var revealPending: (id: Int64, at: CFTimeInterval)?
+        private static let revealWindow: CFTimeInterval = 1.5
         private static let signposter = OSSignposter(subsystem: "de.streil.rabe.native", category: "ui")
 
         // MARK: Reconcile
@@ -272,6 +285,7 @@ struct MailListView: NSViewRepresentable {
 
         private func expandDetail(_ id: Int64) {
             closing.remove(id)
+            revealPending = (id, CACurrentMediaTime())
             if detailHeights[id] == nil { detailHeights[id] = 1 }
             let estimate = detailContent[id] ?? 220
             detailContent[id] = estimate
@@ -285,6 +299,7 @@ struct MailListView: NSViewRepresentable {
         }
 
         private func collapseDetail(_ id: Int64) {
+            if revealPending?.id == id { revealPending = nil }
             guard rows.contains(.detail(id)) else {
                 detailHeights[id] = nil
                 detailViews[id] = nil
@@ -311,7 +326,19 @@ struct MailListView: NSViewRepresentable {
             detailContent[id] = h
             detailViews[id]?.contentHeight = h
             guard expandedId == id, !closing.contains(id) else { return }
-            animateHeight(id, to: h)
+            // M2.11: lädt Body oder Bild nach, wird nachgeregelt. Der Merker
+            // bleibt stehen statt beim ersten Anlauf zu fallen: der Inhalt
+            // wächst in mehreren Schritten (104 → 450 → 520), und erst der
+            // letzte Schritt ergibt die Karte, die Platz braucht.
+            var fit = false
+            if let pending = revealPending, pending.id == id {
+                if CACurrentMediaTime() - pending.at < Self.revealWindow {
+                    fit = true
+                } else {
+                    revealPending = nil
+                }
+            }
+            animateHeight(id, to: h, scrollToFit: fit)
         }
 
         /// Row height (and, when opening, the scroll offset) driven frame by
@@ -331,7 +358,7 @@ struct MailListView: NSViewRepresentable {
                                    completion: (@MainActor @Sendable () -> Void)? = nil) {
             guard let table, rows.contains(.detail(id)) else { completion?(); return }
             let current = detailHeights[id] ?? 1
-            let target = scrollToFit ? fitOrigin(id, detailHeight: height) : nil
+            let target = scrollToFit ? revealOrigin(id, detailHeight: height) : nil
             if Motion.reduce || abs(current - height) < 0.5 {
                 detailHeights[id] = height
                 noteHeight(id)
@@ -385,17 +412,23 @@ struct MailListView: NSViewRepresentable {
             }
         }
 
-        /// Mockup: the opened row stays where it is; if the card will not fit,
-        /// the list scrolls in the same animation (not afterwards).
-        private func fitOrigin(_ id: Int64, detailHeight: CGFloat) -> NSPoint? {
-            guard let table, let scroll, let row = rows.firstIndex(of: .thread(id)) else { return nil }
+        /// Mockup `anchor()`: die Mail bekommt so viel Platz wie möglich, über
+        /// ihr bleibt aber eine Zeile der Liste stehen (M2.11). Die Rechnung
+        /// selbst liegt testbar in `ListReveal`; hier werden nur die Zeilen
+        /// gemessen und das Dokument-y auf den Clip-Ursprung umgerechnet.
+        private func revealOrigin(_ id: Int64, detailHeight: CGFloat) -> NSPoint? {
+            guard let table, let scroll, let visible = effectiveVisible,
+                  let row = rows.firstIndex(of: .thread(id)) else { return nil }
             let rowRect = table.rect(ofRow: row)
-            let visible = scroll.contentView.documentVisibleRect
-            let cardMaxY = rowRect.maxY + detailHeight
-            guard cardMaxY > visible.maxY - 8 || rowRect.minY < visible.minY else { return nil }
-            let contentHeight = table.bounds.height + detailHeight
-            let y = max(-scroll.contentInsets.top, min(rowRect.minY - 4, contentHeight - visible.height))
-            return NSPoint(x: 0, y: y)
+            let aboveTop = row > 0 ? table.rect(ofRow: row - 1).minY : rowRect.minY
+            let below = row + 2   // Thread-Zeile, Detailzeile, darunter
+            let belowH = below < rows.count ? table.rect(ofRow: below).height : 0
+            guard let top = ListReveal.revealTop(
+                rowTop: rowRect.minY, aboveTop: aboveTop,
+                cardBottom: rowRect.maxY + detailHeight, belowH: belowH,
+                visibleMinY: visible.minY, visibleHeight: visible.height) else { return nil }
+            // Dokument-y → Ursprung der Clip-View, wie `scrollTo`.
+            return NSPoint(x: 0, y: top - scroll.contentInsets.top)
         }
 
         // MARK: Keyboard navigation (TASTATUR.md)
@@ -415,13 +448,18 @@ struct MailListView: NSViewRepresentable {
             return (visible.minY - top)...(visible.maxY - top)
         }
 
+        /// M2.11: der Nutzer hat selbst gescrollt — dann nicht mehr nachregeln.
+        func noteUserScroll() { revealPending = nil }
+
         func scrollDetail(_ id: Int64, toTop y: CGFloat) {
             guard let table, let row = rows.firstIndex(of: .detail(id)) else { return }
+            noteUserScroll()
             scrollTo(table.rect(ofRow: row).minY + y)
         }
 
         func scrollList(by dy: CGFloat) {
             guard let visible = effectiveVisible else { return }
+            noteUserScroll()
             scrollTo(visible.minY + dy)
         }
 
@@ -445,6 +483,7 @@ struct MailListView: NSViewRepresentable {
 
         func pageList(_ direction: Int, selected: Int64?) -> Int64? {
             guard let table, let visible = effectiveVisible else { return nil }
+            noteUserScroll()
             let page = max(RowMetrics.threadHeight, visible.height - RowMetrics.threadHeight)
             // Window offset of the selection, else the first/last visible thread.
             var offset: CGFloat

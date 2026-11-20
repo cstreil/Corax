@@ -1,61 +1,65 @@
 import RabeKit
 import SwiftUI
 
-/// Create-or-edit sheet (`EventCreate.tsx`). Opens prefilled from a click or a
-/// drag in the grid; `event` switches it to edit mode. Attendees get an ICS
-/// invite / update through the host's normal send path.
-struct CalendarEventEditorView: View {
+/// Die Felder eines Termins — einmal, für die Karte im Raster (M2.9 §7.3) und
+/// nicht mehr als eigenes Sheet. Anzeigen und Bearbeiten liegen damit in
+/// derselben Fläche; das Editor-Fenster entfällt.
+///
+/// Gesichert wird nur mit „Sichern" (`⌘↵`) oder `↵` im Titelfeld: CalDAV-Schreiben
+/// kann Einladungen auslösen, das soll niemandem beim Tippen passieren.
+struct EventEditFields: View {
     let store: CalendarStore
     let accounts: [Account]
-    let request: EventEditorRequest
-    var onClose: () -> Void
-    @Environment(\.theme) private var theme
-    @Environment(\.dismiss) private var dismiss
+    let draft: CalendarEventDraft
+    /// Nur für die schmale Karte: weniger Innenabstand.
+    var compact: Bool = false
+    var onSaved: () -> Void
+    var onCancel: () -> Void
+    var onDelete: (CalendarEvent) -> Void = { _ in }
 
-    @State private var summary = ""
+    @Environment(\.theme) private var theme
+    @FocusState private var titleFocused: Bool
+
+    @State private var summary: String
     @State private var startsAt: Date
     @State private var endsAt: Date
-    @State private var allDay = false
-    @State private var location = ""
-    @State private var joinUrl = ""
-    @State private var attendeesText = ""
-    @State private var notes = ""
+    @State private var allDay: Bool
+    @State private var location: String
+    @State private var joinUrl: String
+    @State private var attendeesText: String
+    @State private var notes: String
     @State private var calendarId: Int64?
     @State private var saving = false
 
-    init(store: CalendarStore, accounts: [Account], request: EventEditorRequest, onClose: @escaping () -> Void) {
+    init(store: CalendarStore, accounts: [Account], draft: CalendarEventDraft, compact: Bool = false,
+         onSaved: @escaping () -> Void, onCancel: @escaping () -> Void,
+         onDelete: @escaping (CalendarEvent) -> Void = { _ in }) {
         self.store = store
         self.accounts = accounts
-        self.request = request
-        self.onClose = onClose
-        // Editing keeps the stored values; a new event takes the prefill
-        // (palette intent or AI suggestion). Locals keep the initialiser
-        // readable for the type checker.
-        let stored = request.event
-        let summaryText: String = stored?.summary ?? request.title ?? ""
-        let locationText: String = stored?.location ?? request.location ?? ""
-        let notesText: String = stored?.description ?? request.notes ?? ""
-        let attendeeEmails: [String] = stored.map { $0.attendees.map(\.email) }
-            ?? request.attendees.map(\.email)
-        _summary = State(initialValue: summaryText)
-        _startsAt = State(initialValue: Date(timeIntervalSince1970: Double(request.startsAt) / 1000))
-        _endsAt = State(initialValue: Date(timeIntervalSince1970: Double(request.endsAt) / 1000))
-        _allDay = State(initialValue: stored?.allDay ?? request.allDay)
-        _location = State(initialValue: locationText)
+        self.draft = draft
+        self.compact = compact
+        self.onSaved = onSaved
+        self.onCancel = onCancel
+        self.onDelete = onDelete
+        let stored = draft.event
+        _summary = State(initialValue: stored?.summary ?? draft.title ?? "")
+        _startsAt = State(initialValue: Date(timeIntervalSince1970: Double(draft.startsAt) / 1000))
+        _endsAt = State(initialValue: Date(timeIntervalSince1970: Double(draft.endsAt) / 1000))
+        _allDay = State(initialValue: stored?.allDay ?? draft.allDay)
+        _location = State(initialValue: stored?.location ?? draft.location ?? "")
         _joinUrl = State(initialValue: stored?.joinUrl ?? "")
-        _attendeesText = State(initialValue: attendeeEmails.joined(separator: ", "))
-        _notes = State(initialValue: notesText)
+        _attendeesText = State(initialValue: (stored.map { $0.attendees.map(\.email) } ?? draft.attendees.map(\.email))
+            .joined(separator: ", "))
+        _notes = State(initialValue: stored?.description ?? draft.notes ?? "")
         let writable = store.calendars.filter { $0.enabled && !$0.readOnly }
         let defaultCalendar = writable.first { $0.isDefault } ?? writable.first
-        _calendarId = State(initialValue: request.event?.calendarId ?? defaultCalendar?.id)
+        _calendarId = State(initialValue: stored?.calendarId ?? defaultCalendar?.id)
     }
 
-    private var editing: Bool { request.event != nil }
+    private var editing: Bool { draft.event != nil }
 
-    /// The account the event belongs to: the edited event's, else the selected
-    /// calendar's, else the first account.
     private var accountId: Int64? {
-        if let event = request.event { return event.accountId }
+        if let event = draft.event { return event.accountId }
         if let calendarId, let calendar = store.calendars.first(where: { $0.id == calendarId }) {
             return calendar.accountId
         }
@@ -74,131 +78,145 @@ struct CalendarEventEditorView: View {
         store.calendars.filter { $0.enabled && !$0.readOnly }
     }
 
+    private var canSave: Bool {
+        !summary.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && accountId != nil && !saving
+    }
+
     var body: some View {
-        VStack(spacing: 0) {
-            HStack {
-                Text(editing ? "Termin bearbeiten" : "Termin erstellen")
-                    .font(.system(size: 12.5, weight: .semibold))
-                    .foregroundStyle(theme.ink2.color)
-                Spacer()
-                Button {
-                    close()
-                } label: {
-                    Image(systemName: "xmark")
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(theme.ink2.color)
+        VStack(alignment: .leading, spacing: compact ? 7 : 9) {
+            TextField("Titel", text: $summary)
+                .textFieldStyle(.plain)
+                .font(.system(size: compact ? 14 : 17, weight: .semibold))
+                .focused($titleFocused)
+                .onSubmit { save() }
+                .accessibilityLabel("Titel")
+                .padding(.bottom, 3)
+                .overlay(alignment: .bottom) {
+                    Rectangle().fill(theme.line.color).frame(height: 0.5)
                 }
-                .buttonStyle(.plain)
-                .help("Schließen (Esc)")
-            }
-            .padding(.horizontal, 20)
-            .padding(.top, 14)
 
-            ScrollView {
-                VStack(alignment: .leading, spacing: 12) {
-                    TextField("Titel", text: $summary)
-                        .textFieldStyle(.plain)
-                        .font(.system(size: 20, weight: .semibold))
-                        .padding(.bottom, 6)
-                        .overlay(alignment: .bottom) {
-                            Rectangle().fill(theme.line.color).frame(height: 0.5)
-                        }
-
-                    field("Wann") {
-                        VStack(alignment: .leading, spacing: 6) {
-                            DatePicker("Datum", selection: $startsAt,
-                                       displayedComponents: allDay ? [.date] : [.date, .hourAndMinute])
+            field("Wann") {
+                VStack(alignment: .leading, spacing: 5) {
+                    HStack(spacing: 6) {
+                        DatePicker("Beginn", selection: $startsAt,
+                                   displayedComponents: allDay ? [.date] : [.date, .hourAndMinute])
+                            .datePickerStyle(.field)
+                            .labelsHidden()
+                        if !allDay {
+                            DatePicker("Ende", selection: $endsAt, displayedComponents: [.date, .hourAndMinute])
                                 .datePickerStyle(.field)
                                 .labelsHidden()
-                            if !allDay {
-                                HStack(spacing: 6) {
-                                    DatePicker("Ende", selection: $endsAt, displayedComponents: [.date, .hourAndMinute])
-                                        .datePickerStyle(.field)
-                                        .labelsHidden()
-                                    Text(durationLabel)
-                                        .font(.system(size: 11.5).monospacedDigit())
-                                        .foregroundStyle(theme.ink3.color)
-                                }
-                            }
-                            Toggle("Ganztägig", isOn: $allDay)
-                                .toggleStyle(.checkbox)
-                                .font(.system(size: 12))
                         }
+                        Text(durationLabel)
+                            .font(.system(size: 11).monospacedDigit())
+                            .foregroundStyle(theme.ink3.color)
                     }
-
-                    if !editing, writableCalendars.count > 1 {
-                        field("Kalender") {
-                            Picker("Kalender", selection: $calendarId) {
-                                Text("Nur auf diesem Gerät").tag(Int64?.none)
-                                ForEach(writableCalendars) { calendar in
-                                    Text("\(calendar.label) · \(accountLabel(calendar.accountId))")
-                                        .tag(Int64?.some(calendar.id))
-                                }
-                            }
-                            .labelsHidden()
-                            .pickerStyle(.menu)
-                        }
-                    }
-
-                    field("Teilnehmende") {
-                        TextField("E-Mail-Adressen, durch Kommas getrennt", text: $attendeesText)
-                            .textFieldStyle(.roundedBorder)
-                            .font(.system(size: 12.5))
-                    }
-                    field("Ort") {
-                        TextField("Ort", text: $location)
-                            .textFieldStyle(.roundedBorder)
-                            .font(.system(size: 12.5))
-                    }
-                    field("Meeting-Link") {
-                        TextField("https://…", text: $joinUrl)
-                            .textFieldStyle(.roundedBorder)
-                            .font(.system(size: 12.5))
-                    }
-                    field("Notizen") {
-                        TextEditor(text: $notes)
-                            .font(.system(size: 12.5))
-                            .frame(minHeight: 70)
-                            .scrollContentBackground(.hidden)
-                            .padding(4)
-                            .background(RoundedRectangle(cornerRadius: 6).fill(theme.hover.color))
-                    }
+                    Toggle("Ganztägig", isOn: $allDay)
+                        .toggleStyle(.checkbox)
+                        .font(.system(size: 11.5))
                 }
-                .padding(.horizontal, 20)
-                .padding(.vertical, 14)
+            }
+
+            if !editing, writableCalendars.count > 1 {
+                field("Kalender") {
+                    Picker("Kalender", selection: $calendarId) {
+                        Text("Nur auf diesem Gerät").tag(Int64?.none)
+                        ForEach(writableCalendars) { calendar in
+                            Text("\(calendar.label) · \(accountLabel(calendar.accountId))")
+                                .tag(Int64?.some(calendar.id))
+                        }
+                    }
+                    .labelsHidden()
+                    .pickerStyle(.menu)
+                }
+            }
+
+            field("Teilnehmende") {
+                TextField("E-Mail-Adressen, durch Kommas getrennt", text: $attendeesText)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 12))
+                    .padding(.horizontal, 6)
+                    .frame(height: 24)
+                    .background(RoundedRectangle(cornerRadius: 6).fill(theme.hover.color))
+            }
+            field("Ort") {
+                TextField("Ort", text: $location)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 12))
+                    .padding(.horizontal, 6)
+                    .frame(height: 24)
+                    .background(RoundedRectangle(cornerRadius: 6).fill(theme.hover.color))
+            }
+            field("Link") {
+                TextField("https://…", text: $joinUrl)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 12))
+                    .padding(.horizontal, 6)
+                    .frame(height: 24)
+                    .background(RoundedRectangle(cornerRadius: 6).fill(theme.hover.color))
+            }
+            field("Notiz") {
+                TextEditor(text: $notes)
+                    .font(.system(size: 12))
+                    .frame(minHeight: compact ? 46 : 62)
+                    .scrollContentBackground(.hidden)
+                    .padding(3)
+                    .background(RoundedRectangle(cornerRadius: 6).fill(theme.hover.color))
             }
 
             HStack(spacing: 8) {
-                Text("⌘↩ speichert")
-                    .font(.system(size: 11))
-                    .foregroundStyle(theme.ink3.color)
-                Spacer()
-                Button("Abbrechen") { close() }
-                    .keyboardShortcut(.cancelAction)
+                if let event = draft.event, store.canEdit(event) {
+                    Button {
+                        onDelete(event)
+                    } label: {
+                        Image(systemName: "trash").font(.system(size: 11))
+                            .foregroundStyle(theme.ink3.color)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Termin löschen")
+                    .accessibilityLabel("Termin löschen")
+                }
+                Spacer(minLength: 4)
+                Button("Abbrechen") { onCancel() }
+                    .buttonStyle(.plain)
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(theme.ink2.color)
+                    .help("Abbrechen (Esc)")
                 Button {
                     save()
                 } label: {
-                    if saving { ProgressView().controlSize(.small) }
-                    else { Text(saveTitle) }
+                    HStack(spacing: 5) {
+                        if saving { ProgressView().controlSize(.mini) }
+                        Text(saveTitle).font(.system(size: 11.5, weight: .semibold))
+                        Text("⌘↵").font(.system(size: 10, weight: .semibold))
+                            .padding(.horizontal, 4)
+                            .background(RoundedRectangle(cornerRadius: 4).fill(.white.opacity(0.25)))
+                    }
+                    .foregroundStyle(theme.accentInk.color)
+                    .padding(.horizontal, 9)
+                    .frame(height: 24)
+                    .background(RoundedRectangle(cornerRadius: 6).fill(theme.accent.color))
                 }
+                .buttonStyle(.plain)
                 .keyboardShortcut(.return, modifiers: .command)
-                .disabled(summary.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                          || accountId == nil || saving)
+                .disabled(!canSave)
+                .help("Sichern (⌘↵)")
             }
-            .padding(.horizontal, 20)
-            .padding(.vertical, 12)
-            .overlay(alignment: .top) {
-                Rectangle().fill(theme.line.color).frame(height: 0.5)
-            }
+            .padding(.top, 2)
         }
-        .frame(width: 540, height: 560)
-        .background(theme.win.color)
-        .onExitCommand(perform: close)
+        .padding(.horizontal, compact ? 12 : 14)
+        .padding(.vertical, compact ? 10 : 12)
+        .onAppear {
+            // Der Titel ist das erste Feld: „neuer Termin, lostippen".
+            DispatchQueue.main.async { titleFocused = true }
+        }
+        // `⌘↵` aus dem Raster (Monitor) und der Knopf im Fuß sichern beide hier.
+        .onChange(of: store.saveRequest) { _, _ in save() }
     }
 
     private var saveTitle: String {
-        if invites.isEmpty { return editing ? "Änderungen speichern" : "Speichern" }
-        return editing ? "Speichern & Änderungen mailen" : "Speichern & Einladungen senden"
+        let base = editing ? "Sichern" : "Anlegen"
+        return invites.isEmpty ? base : (editing ? "Sichern & mailen" : "Anlegen & einladen")
     }
 
     private var durationLabel: String {
@@ -213,27 +231,22 @@ struct CalendarEventEditorView: View {
     }
 
     private func field<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
-        HStack(alignment: .top, spacing: 12) {
+        HStack(alignment: .top, spacing: 8) {
             Text(title)
-                .font(.system(size: 11.5))
+                .font(.system(size: 11))
                 .foregroundStyle(theme.ink3.color)
-                .frame(width: 88, alignment: .trailing)
+                .frame(width: 74, alignment: .trailing)
                 .padding(.top, 3)
             content()
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 
-    private func close() {
-        onClose()
-        dismiss()
-    }
-
     private func save() {
-        guard let accountId, !saving else { return }
+        guard let accountId, canSave else { return }
         saving = true
         let start = allDay
-            ? Int64(store.math.startOfDay(Int64(startsAt.timeIntervalSince1970 * 1000)))
+            ? store.math.startOfDay(Int64(startsAt.timeIntervalSince1970 * 1000))
             : Int64(startsAt.timeIntervalSince1970 * 1000)
         var end = allDay
             ? store.math.addDays(start, 1)
@@ -245,7 +258,7 @@ struct CalendarEventEditorView: View {
         let notesText = notes.trimmingCharacters(in: .whitespacesAndNewlines)
         Task {
             let ok: Bool
-            if let event = request.event {
+            if let event = draft.event {
                 ok = await store.update(UpdateEventArgs(
                     eventId: event.id, summary: summaryText,
                     description: notesText.isEmpty ? nil : notesText,
@@ -253,16 +266,18 @@ struct CalendarEventEditorView: View {
                     joinUrl: joinText.isEmpty ? nil : joinText,
                     startsAt: start, endsAt: end, allDay: allDay,
                     attendees: invites, notify: true))
-            } else {
-                ok = await store.create(CreateEventArgs(
-                    accountId: accountId, calendarId: calendarId, summary: summaryText,
-                    description: notesText.isEmpty ? nil : notesText,
-                    location: locationText.isEmpty ? nil : locationText,
-                    joinUrl: joinText.isEmpty ? nil : joinText,
-                    startsAt: start, endsAt: end, allDay: allDay, attendees: invites))
+                saving = false
+                if ok { store.savedOpenCard(); onSaved() }
+                return
             }
+            ok = await store.create(CreateEventArgs(
+                accountId: accountId, calendarId: calendarId, summary: summaryText,
+                description: notesText.isEmpty ? nil : notesText,
+                location: locationText.isEmpty ? nil : locationText,
+                joinUrl: joinText.isEmpty ? nil : joinText,
+                startsAt: start, endsAt: end, allDay: allDay, attendees: invites))
             saving = false
-            if ok { close() }
+            if ok { store.draftSaved(); onSaved() }
         }
     }
 }

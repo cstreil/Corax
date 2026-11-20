@@ -10,6 +10,7 @@ use crate::error::{CoreError, Result};
 use crate::events::{CoreEvent, EventBus, NewEventInfo};
 use crate::models::now_ms;
 
+use super::http::XML_CONTENT_TYPE;
 use super::{Transport, err, push, xml};
 
 const MULTIGET_BATCH: usize = 50;
@@ -85,6 +86,7 @@ async fn sync_calendar(
             calendar_url,
             Some("0"),
             &[],
+            Some(XML_CONTENT_TYPE),
             Some(xml::propfind_ctag()),
         )
         .await?;
@@ -115,6 +117,7 @@ async fn sync_calendar(
                 calendar_url,
                 Some("1"),
                 &[],
+                Some(XML_CONTENT_TYPE),
                 Some(xml::report_sync_collection(token)),
             )
             .await?;
@@ -144,6 +147,7 @@ async fn sync_calendar(
                 calendar_url,
                 Some("1"),
                 &[],
+                Some(XML_CONTENT_TYPE),
                 Some(xml::report_calendar_query()),
             )
             .await?;
@@ -203,6 +207,7 @@ async fn sync_calendar(
                 calendar_url,
                 Some("1"),
                 &[],
+                Some(XML_CONTENT_TYPE),
                 Some(xml::report_multiget(&hrefs)),
             )
             .await?;
@@ -403,6 +408,19 @@ END:VCALENDAR</c:calendar-data></d:prop><d:status>HTTP/1.1 200 OK</d:status></d:
             .await
             .unwrap();
         assert_eq!(events.len(), 1);
+
+        // Every XML body (PROPFIND, REPORT) keeps application/xml.
+        let headers = t.headers_seen.lock().unwrap();
+        assert_eq!(
+            headers[0].get("Content-Type").map(String::as_str),
+            Some(XML_CONTENT_TYPE),
+            "PROPFIND ctag"
+        );
+        assert_eq!(
+            headers[2].get("Content-Type").map(String::as_str),
+            Some(XML_CONTENT_TYPE),
+            "REPORT calendar-query"
+        );
     }
 
     #[tokio::test]

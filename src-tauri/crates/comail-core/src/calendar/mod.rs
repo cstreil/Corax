@@ -403,6 +403,57 @@ const MEETING_HOSTS: &[&str] = &[
 ];
 
 /// First meeting-service URL inside free text (location or description).
+/// Vergleichbare Adresse: `mailto:` weg, Anzeigename in spitzen Klammern weg,
+/// Kleinschreibung. Dieselbe Regel wie in der App (`CalendarPermissions.address`).
+pub fn normalize_address(raw: &str) -> Option<String> {
+    let mut text = raw.trim();
+    if text.ends_with('>') {
+        if let Some(open) = text.rfind('<') {
+            text = &text[open + 1..text.len() - 1];
+        }
+    }
+    let text = text
+        .trim()
+        .strip_prefix("mailto:")
+        .or_else(|| text.trim().strip_prefix("MAILTO:"))
+        .unwrap_or(text.trim());
+    let text = text.trim().to_lowercase();
+    if text.is_empty() { None } else { Some(text) }
+}
+
+/// M2.16: Darf dieser Termin bearbeitet werden? Dieselbe Regel wie in der App:
+/// nicht abgesagt, Organisator leer oder die eigene Adresse, und der Kalender
+/// ist beschreibbar (ein lokaler Termin ohne Kalender ist es immer).
+///
+/// Vorher sperrte der Kern jeden aus CalDAV gezogenen Termin
+/// (`!is_local`), auch den eigenen ohne Organisator — der Nutzer konnte ihn
+/// ansehen, aber nicht sichern.
+///
+/// `calendar_read_only`: `None` = der Termin hängt in keinem Kalender.
+pub fn edit_blocked_reason(
+    organizer: Option<&str>,
+    status: Option<&str>,
+    calendar_read_only: Option<bool>,
+    own_email: &str,
+    is_local: bool,
+) -> Option<&'static str> {
+    if status.is_some_and(|s| s.eq_ignore_ascii_case("CANCELLED")) {
+        return Some("event is cancelled");
+    }
+    if let Some(organizer) = organizer.and_then(normalize_address) {
+        let own = normalize_address(own_email);
+        if own.as_deref() != Some(organizer.as_str()) {
+            return Some("only the organizer can edit this event");
+        }
+    }
+    match calendar_read_only {
+        Some(true) => Some("calendar is read-only"),
+        Some(false) => None,
+        None if is_local => None,
+        None => Some("event has no writable calendar"),
+    }
+}
+
 pub fn find_join_url(text: &str) -> Option<String> {
     for (idx, _) in text.match_indices("https://") {
         let rest = &text[idx..];
@@ -996,6 +1047,66 @@ mod tests {
         assert_eq!(ev.method.as_deref(), Some("REPLY"));
         assert_eq!(ev.attendees[0].partstat.as_deref(), Some("ACCEPTED"));
         assert_eq!(ev.attendees[0].email, "bd@northbeam.com");
+    }
+
+    #[test]
+    fn addresses_are_normalized_like_the_app() {
+        assert_eq!(
+            normalize_address(" CS@Example.test ").as_deref(),
+            Some("cs@example.test")
+        );
+        assert_eq!(
+            normalize_address("mailto:CS@example.test").as_deref(),
+            Some("cs@example.test")
+        );
+        assert_eq!(
+            normalize_address("Christian <CS@example.test>").as_deref(),
+            Some("cs@example.test")
+        );
+        assert_eq!(normalize_address("   "), None);
+    }
+
+    /// M2.16: die Regel, mit der die App arbeitet, jetzt auch im Kern.
+    #[test]
+    fn edit_rule_follows_organizer_and_calendar() {
+        let me = "cs@example.test";
+        // Gezogen, ohne Organisator, beschreibbarer Kalender: bearbeitbar.
+        assert_eq!(
+            edit_blocked_reason(None, None, Some(false), me, false),
+            None
+        );
+        // Eigener Organisator (Apple-typisch als MAILTO): bearbeitbar.
+        assert_eq!(
+            edit_blocked_reason(
+                Some("MAILTO:CS@example.test"),
+                Some("CONFIRMED"),
+                Some(false),
+                me,
+                false
+            ),
+            None
+        );
+        // Fremder Organisator: nur ansehen (zu-/absagen läuft über RSVP).
+        assert_eq!(
+            edit_blocked_reason(Some("boss@example.test"), None, Some(false), me, false),
+            Some("only the organizer can edit this event")
+        );
+        // Schreibgeschützter Kalender.
+        assert_eq!(
+            edit_blocked_reason(None, None, Some(true), me, false),
+            Some("calendar is read-only")
+        );
+        // Ohne Kalender nur lokale Termine.
+        assert_eq!(edit_blocked_reason(None, None, None, me, true), None);
+        assert_eq!(
+            edit_blocked_reason(None, None, None, me, false),
+            Some("event has no writable calendar")
+        );
+        // Abgesagt ist abgesagt.
+        assert_eq!(
+            edit_blocked_reason(None, Some("CANCELLED"), Some(false), me, false),
+            Some("event is cancelled")
+        );
     }
 
     #[test]

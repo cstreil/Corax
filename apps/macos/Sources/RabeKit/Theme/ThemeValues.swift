@@ -84,6 +84,17 @@ public struct Theme: Equatable, Sendable {
         line: RGBA(20, 30, 60, 0.08), accent: .hex(0x2f62ff), accentInk: .hex(0xffffff),
         sel: RGBA(47, 98, 255, 0.08), hover: RGBA(20, 30, 60, 0.04), kbd: RGBA(255, 255, 255, 0.9), usesGlass: true)
 
+    /// Hintergrund der Seitenleiste (M2.9, Entwurf §4): eine Spur dunkler als
+    /// `win`, in Glas liegt sie über dem Material und bleibt deshalb heller.
+    public var side: RGBA {
+        switch id {
+        case .paper: .hex(0xf1eee8)
+        case .carbon: .hex(0x141417)
+        case .snow: RGBA(255, 255, 255, 0.22)
+        case .system: bar
+        }
+    }
+
     /// `system` follows the appearance: light → Papier, dark → Graphit.
     public static func resolve(_ id: ThemeID, systemDark: Bool, accentKey: String) -> Theme {
         let base: Theme

@@ -9,6 +9,10 @@ struct Fixture {
 }
 
 async fn fixture(overrides: Value) -> Fixture {
+    fixture_kind("trash", overrides).await
+}
+
+async fn fixture_kind(kind: &'static str, overrides: Value) -> Fixture {
     let root = tempfile::tempdir().unwrap();
     let paths = crate::config::Paths::for_tests(root.path());
     let db = crate::db::Db::open(&paths.db_file()).unwrap();
@@ -24,7 +28,7 @@ async fn fixture(overrides: Value) -> Fixture {
         for (key, value) in overrides.as_object().unwrap() {
             payload[key] = value.clone();
         }
-        let id = repo::actions::enqueue(conn, 1, "trash", Some(message_id), Some(thread_id), &payload, None)?;
+        let id = repo::actions::enqueue(conn, 1, kind, Some(message_id), Some(thread_id), &payload, None)?;
         assert!(repo::actions::try_claim(conn, id)?);
         Ok((repo::actions::get(conn, id)?.unwrap(), message_id))
     }).await.unwrap();
@@ -49,6 +53,8 @@ struct FakeRemote {
     searched: Vec<String>,
     checked: Vec<u32>,
     moved: Vec<(u32, String)>,
+    /// Answers per selected folder; falls back to `matches`.
+    by_folder: Vec<(String, Vec<u32>)>,
     fail_move: bool,
     destination: Option<u32>,
     verified: bool,
@@ -66,6 +72,7 @@ impl FakeRemote {
             searched: vec![],
             checked: vec![],
             moved: vec![],
+            by_folder: vec![],
             fail_move: false,
             destination: Some(501),
             verified: true,
@@ -94,6 +101,13 @@ impl MoveRemote for FakeRemote {
             "<{}>",
             message_id.trim_start_matches('<').trim_end_matches('>')
         ));
+        if let Some((_, hits)) = self
+            .by_folder
+            .iter()
+            .find(|(folder, _)| Some(folder) == self.selected.last())
+        {
+            return Ok(hits.clone());
+        }
         Ok(self.matches.clone())
     }
 
@@ -178,8 +192,10 @@ async fn changed_epoch_never_uses_old_uid_and_requires_unique_exact_identity() {
 }
 
 #[tokio::test]
-async fn absent_or_ambiguous_message_id_does_not_move_or_finish() {
-    for matches in [vec![], vec![41, 42], vec![0]] {
+async fn ambiguous_message_id_does_not_move_or_finish() {
+    // Two candidates share the Message-ID, or the search returns the invalid
+    // UID 0: refuse to pick one instead of guessing.
+    for matches in [vec![41, 42], vec![0]] {
         let fixture = fixture(json!({})).await;
         let mut remote = FakeRemote::new(&fixture);
         remote.matches = matches;
@@ -203,6 +219,116 @@ async fn absent_or_ambiguous_message_id_does_not_move_or_finish() {
         assert_eq!(stored.state, "pending");
         assert_eq!(stored.attempts, 0);
     }
+}
+
+/// M2.16: the server no longer knows the message. Trashing it is what the user
+/// asked for, so the action ends as done — no rollback, the row stays in the
+/// trash folder.
+#[tokio::test]
+async fn trash_without_a_server_source_is_done_and_stays_in_trash() {
+    let fixture = fixture(json!({})).await;
+    let mut remote = FakeRemote::new(&fixture);
+    remote.matches = vec![];
+    let outcome = move_action(&fixture.ctx, &mut remote, &fixture.action).await;
+    assert!(outcome.is_ok(), "trash without a source must not retry");
+    assert!(remote.moved.is_empty());
+    record_outcomes(
+        &fixture.ctx,
+        std::slice::from_ref(&fixture.action),
+        &outcome,
+    )
+    .await
+    .unwrap();
+    let id = fixture.action.id;
+    let message = fixture.message_id;
+    fixture
+        .ctx
+        .db
+        .read(move |conn| {
+            let stored = repo::actions::get(conn, id)?.unwrap();
+            assert_eq!(stored.state, "done");
+            let row = repo::messages::get_row(conn, message)?.unwrap();
+            assert_eq!(row.folder_id, Some(2), "no rollback out of the trash");
+            Ok(())
+        })
+        .await
+        .unwrap();
+}
+
+/// The two real drafts had no Message-ID at all (M2.15a §1.4b). Trashing them
+/// is final as well: there is nothing on the server to move.
+#[tokio::test]
+async fn trash_of_a_local_draft_without_message_id_is_done() {
+    let fixture = fixture(json!({"srcMessageId": null})).await;
+    let mut remote = FakeRemote::new(&fixture);
+    let outcome = move_action(&fixture.ctx, &mut remote, &fixture.action).await;
+    assert!(outcome.is_ok());
+    record_outcomes(
+        &fixture.ctx,
+        std::slice::from_ref(&fixture.action),
+        &outcome,
+    )
+    .await
+    .unwrap();
+    let id = fixture.action.id;
+    let state = fixture
+        .ctx
+        .db
+        .read(move |conn| Ok(repo::actions::get(conn, id)?.unwrap().state))
+        .await
+        .unwrap();
+    assert_eq!(state, "done");
+}
+
+/// A move has no source to move: it fails at once, rolls back and tells the
+/// app why (`source_missing`) instead of retrying for a day in silence.
+#[tokio::test]
+async fn move_without_a_server_source_fails_with_a_reason() {
+    let fixture = fixture_kind("move", json!({})).await;
+    let mut events = fixture.ctx.bus.subscribe();
+    let mut remote = FakeRemote::new(&fixture);
+    remote.matches = vec![];
+    let outcome = move_action(&fixture.ctx, &mut remote, &fixture.action).await;
+    assert!(matches!(outcome, Err(CoreError::ActionSourceMissing(_))));
+    record_outcomes(
+        &fixture.ctx,
+        std::slice::from_ref(&fixture.action),
+        &outcome,
+    )
+    .await
+    .unwrap();
+    let id = fixture.action.id;
+    let message = fixture.message_id;
+    fixture
+        .ctx
+        .db
+        .read(move |conn| {
+            assert_eq!(repo::actions::get(conn, id)?.unwrap().state, "failed");
+            let row = repo::messages::get_row(conn, message)?.unwrap();
+            assert_eq!(row.folder_id, Some(1), "rollback restores the source");
+            Ok(())
+        })
+        .await
+        .unwrap();
+    let mut seen = Vec::new();
+    while let Ok(event) = events.try_recv() {
+        seen.push(event);
+    }
+    let failed = seen.iter().find_map(|event| match event {
+        CoreEvent::ActionFailed {
+            kind,
+            reason,
+            thread_id,
+            error,
+            ..
+        } => Some((kind.clone(), reason.clone(), *thread_id, error.clone())),
+        _ => None,
+    });
+    let (kind, reason, thread_id, error) = failed.expect("action:failed event");
+    assert_eq!(kind, "move");
+    assert_eq!(reason, "source_missing");
+    assert_eq!(thread_id, fixture.action.thread_id);
+    assert!(error.contains("not on the server"), "{error}");
 }
 
 #[tokio::test]
@@ -246,15 +372,19 @@ async fn missing_uidvalidity_from_select_cannot_authorize_a_write() {
 }
 
 #[tokio::test]
-async fn missing_local_fk_requires_remote_identity_not_silent_success() {
+async fn missing_local_fk_falls_back_to_remote_identity() {
     let mut fixture = fixture(json!({"srcMessageId": null})).await;
     fixture.action.message_id = None;
     let mut remote = FakeRemote::new(&fixture);
-    assert!(matches!(
-        move_action(&fixture.ctx, &mut remote, &fixture.action).await,
-        Err(CoreError::ActionDeferred(_))
-    ));
+    // No local row and no Message-ID at all: a trash has nothing left to move
+    // and nothing to roll back, so it ends as done (M2.16, briefing 6).
+    assert!(
+        move_action(&fixture.ctx, &mut remote, &fixture.action)
+            .await
+            .is_ok()
+    );
     assert!(remote.moved.is_empty());
+    // With a Message-ID the remote identity is used.
     fixture.action.payload["srcMessageId"] = json!("<source@test.dev>");
     move_action(&fixture.ctx, &mut remote, &fixture.action)
         .await
@@ -294,8 +424,11 @@ async fn source_and_target_must_belong_to_action_account() {
     }
 }
 
+/// The MOVE went through but its acknowledgement was lost; on retry the source
+/// UID is gone. The message is in the target, so the action finishes as moved
+/// instead of failing or guessing a UID (M2.16).
 #[tokio::test]
-async fn lost_ack_with_absent_source_stays_pending_without_destination_guess() {
+async fn lost_ack_finds_the_message_in_the_target_and_finishes() {
     let fixture = fixture(json!({"srcUid": 7, "srcUidValidity": 9})).await;
     let mut remote = FakeRemote::new(&fixture);
     remote.fail_move = true;
@@ -319,9 +452,14 @@ async fn lost_ack_with_absent_source_stays_pending_without_destination_guess() {
         .await
         .unwrap();
     remote.exists = false;
-    remote.matches.clear();
+    // The lost MOVE put the message into the target namespace; the source
+    // folder no longer answers to it.
+    remote.by_folder = vec![
+        ("INBOX".to_string(), vec![]),
+        ("Trash".to_string(), vec![501]),
+    ];
     let outcome = move_action(&fixture.ctx, &mut remote, &retry).await;
-    assert!(matches!(outcome, Err(CoreError::ActionDeferred(_))));
+    assert!(outcome.is_ok(), "a lost ack must not fail the move");
     record_outcomes(&fixture.ctx, &[retry], &outcome)
         .await
         .unwrap();
@@ -331,10 +469,11 @@ async fn lost_ack_with_absent_source_stays_pending_without_destination_guess() {
         .read(move |conn| Ok(repo::actions::get(conn, id)?.unwrap()))
         .await
         .unwrap();
-    assert_eq!(stored.state, "pending");
-    assert_eq!(stored.attempts, 1);
+    assert_eq!(stored.state, "done");
     assert_eq!(remote.moved.len(), 1);
-    assert!(remote.selected.iter().all(|folder| folder == "INBOX"));
+    assert_eq!(remote.searched, ["<source@test.dev>", "<source@test.dev>"]);
+    assert!(remote.selected.contains(&"INBOX".to_string()));
+    assert!(remote.selected.contains(&"Trash".to_string()));
 }
 
 #[tokio::test]

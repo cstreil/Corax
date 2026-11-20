@@ -30,6 +30,83 @@ enum DebugAutomation {
         AIWalkthrough.install()
     }
 
+    /// Die Kürzel der Menüleiste ins Log: eine Zeile je Punkt mit Kürzel.
+    private static func dumpMenus() {
+        guard let main = NSApp.mainMenu else { return }
+        for menu in main.items {
+            guard let sub = menu.submenu else { continue }
+            for item in sub.items where !item.keyEquivalent.isEmpty {
+                var mask = ""
+                if item.keyEquivalentModifierMask.contains(.command) { mask += "cmd+" }
+                if item.keyEquivalentModifierMask.contains(.shift) { mask += "shift+" }
+                if item.keyEquivalentModifierMask.contains(.option) { mask += "opt+" }
+                if item.keyEquivalentModifierMask.contains(.control) { mask += "ctrl+" }
+                let key = item.keyEquivalent == "\u{7f}" ? "delete" : item.keyEquivalent
+                PerfLog.shared.write("menu \(menu.title) / \(item.title) key=\(mask)\(key)"
+                                     + " enabled=\(item.isEnabled ? 1 : 0)")
+            }
+        }
+    }
+
+    /// Hook-Befehle für das Verfassen-Panel (M2.9 Stufe B). Alles läuft über
+    /// dieselben Methoden wie `C`, `⌘⇧M` und die Knöpfe im Panel-Kopf.
+    private static func dock(_ argument: String) {
+        let model = AppModel.shared
+        let dock = model.compose
+        let spec = argument.split(separator: ":").map(String.init)
+        switch spec.first ?? "state" {
+        case "new":
+            ActionDispatcher.perform(.compose)
+        case "newwin":
+            ActionDispatcher.perform(.composeInWindow)
+        case "seed":
+            let count = max(1, Int(spec.count > 1 ? spec[1] : "2") ?? 2)
+            let subjects = ["Angebot 47 – Rückfrage zum Termin", "Rechnung 2026-118 offen",
+                            "Wochenbericht KW 47", "Kurz: passt Freitag?"]
+            for index in 0..<count {
+                model.composeNew(to: [Address(name: "Kunde \(index + 1)", email: "kunde\(index + 1)@example.com")],
+                                 subject: subjects[index % subjects.count],
+                                 body: "Hallo,\n\nkurze Rückfrage zum Termin am Freitag: passt 17 Uhr?\n\nViele Grüße")
+            }
+        case "toggle":
+            // Derselbe Weg wie `⌘⇧M` (Menüpunkt „Entwurf minimieren").
+            model.toggleComposeDock()
+        case "minimize":
+            if let id = dock.openId { dock.minimize(id); dock.focusList() }
+        case "maximize":
+            if let id = dock.openId { dock.maximize(id) }
+        case "open":
+            let index = Int(spec.count > 1 ? spec[1] : "0") ?? 0
+            let bars = dock.barIds
+            if bars.indices.contains(index) { dock.open(bars[index]) }
+        case "cycle":
+            model.cycleDraftFocus()
+        case "cycleback":
+            model.cycleDraftFocus(backward: true)
+        case "discard":
+            model.discardOpenDraft()
+        case "close":
+            if let id = dock.openId { model.closeDockedDraft(id) }
+        case "closeall":
+            for id in dock.order { model.composeDrafts[id] = nil; dock.remove(id) }
+        case "detach":
+            model.detachInlineDraft()
+        case "state":
+            break
+        default:
+            break
+        }
+        let titles = dock.order.map { id -> String in
+            let title = model.composeDrafts[id]?.panelTitle ?? "-"
+            return "\(dock.state(id)?.rawValue ?? "?")=\(title)"
+        }
+        PerfLog.shared.write("walkthrough dock open=\(dock.openId == nil ? "-" : "1")"
+                             + " openTitle=\(dock.openId.flatMap { model.composeDrafts[$0]?.panelTitle } ?? "-")"
+                             + " bars=\(dock.barIds.count) drafts=\(dock.count)"
+                             + " focus=\(dock.hasDraftFocus ? "draft" : "list")"
+                             + " order=[\(titles.joined(separator: "; "))]")
+    }
+
     private static let keyCodes: [String: UInt16] = [
         "return": 36, "tab": 48, "space": 49, "delete": 51, "escape": 53, "down": 125, "up": 126, "left": 123, "right": 124,
         "a": 0, "s": 1, "d": 2, "f": 3, "h": 4, "g": 5, "z": 6, "x": 7, "c": 8, "v": 9, "b": 11, "q": 12, "w": 13, "e": 14,
@@ -99,6 +176,36 @@ enum DebugAutomation {
             }
         case "focuslist":
             AppModel.shared.mailbox.focusList()
+        case "sidebar":
+            // sidebar:toggle | sidebar:on | sidebar:off — M2.9, ohne Klick.
+            let state = AppModel.shared.sidebar
+            switch parts.count > 1 ? parts[1] : "toggle" {
+            case "on": if !state.isVisible { state.toggle() }
+            case "off": if state.isVisible { state.toggle() }
+            default: state.toggle()
+            }
+            PerfLog.shared.write("walkthrough sidebar visible=\(state.isVisible ? 1 : 0) "
+                                 + "width=\(Int(state.windowWidth)) wants=\(state.userWantsVisible ? 1 : 0)")
+        case "sidebarview":
+            // sidebarview:mail|calendar — derselbe Hook-Umweg wie `1`/`2`.
+            if parts.count > 1 {
+                let open = parts[1] == "calendar"
+                if AppModel.shared.calendarOpen != open {
+                    ActionDispatcher.perform(open ? .calendarToggle : .calendarClose)
+                }
+            }
+            PerfLog.shared.write("walkthrough sidebarview calendar=\(AppModel.shared.calendarOpen ? 1 : 0)")
+        case "menu":
+            // menu:dump — welche Menüpunkte tragen welches Kürzel? Beleg dafür,
+            // dass ⌘⇧M und ⌘⇧⌫ wirklich am Menü hängen: einen echten
+            // Tastendruck kann ein Hook nicht auslösen (Menü-Kürzel laufen
+            // nicht über `sendEvent`).
+            dumpMenus()
+        case "dock":
+            // M2.9 Stufe B, ohne Klick:
+            //   dock:seed:<n> | new | newwin | minimize | maximize | open:<i>
+            //   | cycle | cycleback | discard | close | closeall | detach | state
+            dock(argument)
         case "droplist":
             // A list update that drops the selected thread (W3): sync removed it
             // elsewhere. Uses the production `applyThreads` path.
@@ -114,6 +221,55 @@ enum DebugAutomation {
                 box.saveAttachment(attachment)
             } else {
                 PerfLog.shared.write("savedialog no_attachment")
+            }
+        case "chrome":
+            // chrome:notoolbar | chrome:toolbar — Experiment: ohne `NSToolbar`
+            // liegt die Titelbar nicht mehr über dem Band (M2.15 1.1).
+            if let window = mainWindow {
+                if argument == "notoolbar" {
+                    window.toolbar = nil
+                    window.titlebarAppearsTransparent = true
+                    window.titleVisibility = .hidden
+                }
+                let titlebar = window.contentView?.superview?.subviews.first { String(describing: type(of: $0)).contains("Titlebar") }
+                PerfLog.shared.write("chrome arg=\(argument) toolbar=\(window.toolbar == nil ? "nil" : "yes") "
+                                     + "titlebar=\(titlebar.map { "\(type(of: $0)) h=\(Int($0.frame.height)) y=\(Int($0.frame.minY))" } ?? "-") "
+                                     + "content=\(window.contentView.map { "h=\(Int($0.frame.height)) y=\(Int($0.frame.minY))" } ?? "-") "
+                                     + "insets=\(window.contentLayoutRect)")
+            }
+        case "hittest":
+            // hittest:<x>x<y> — welcher AppKit-View bekommt den Klick an dieser
+            // Fensterstelle (y von oben)? Der Theme-Frame entscheidet über
+            // Titelbar und Werkzeugleiste; `contentView.hitTest` sähe das nicht,
+            // weil die Titelbar über dem Inhalt liegt.
+            if let spec = clickPoint(parts), let window = mainWindow {
+                let point = NSPoint(x: CGFloat(spec.x), y: window.frame.height - CGFloat(spec.y))
+                var chain: [String] = []
+                var view = window.contentView?.superview?.hitTest(point)
+                while let v = view, chain.count < 10 {
+                    chain.append(String(describing: type(of: v)))
+                    view = v.superview
+                }
+                PerfLog.shared.write("hittest x=\(spec.x) y=\(spec.y) h=\(Int(window.frame.height)) "
+                                     + "toolbar=\(window.toolbar.map { String(describing: type(of: $0)) } ?? "-") "
+                                     + "hit=" + (chain.first ?? "nil") + " chain=" + chain.joined(separator: "<"))
+            }
+        case "click":
+            // click:<x>x<y> — ein echter Mausklick durch `NSApp.sendEvent`, also
+            // mit Hit-Test wie ein Zeigerklick (y von oben). Ersatz, wenn CUA
+            // das Fenster gerade nicht erreicht.
+            if let spec = clickPoint(parts), let window = mainWindow {
+                let point = NSPoint(x: CGFloat(spec.x), y: window.frame.height - CGFloat(spec.y))
+                for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
+                    if let event = NSEvent.mouseEvent(with: type, location: point,
+                                                      modifierFlags: [],
+                                                      timestamp: ProcessInfo.processInfo.systemUptime,
+                                                      windowNumber: window.windowNumber, context: nil,
+                                                      eventNumber: 0, clickCount: 1, pressure: 1) {
+                        NSApp.sendEvent(event)
+                    }
+                }
+                PerfLog.shared.write("debug_click x=\(spec.x) y=\(spec.y)")
             }
         case "windowid":
             // windowid — logs every visible window with its number, title and
@@ -152,6 +308,12 @@ enum DebugAutomation {
             case "scenario": Task { await CalendarWalkthrough.runScenario() }
             case "perf": Task { await CalendarWalkthrough.runPerf() }
             case "seedday": Task { await CalendarWalkthrough.seedDay(count: Int(spec.count > 1 ? spec[1] : "6") ?? 6) }
+            // M2.12: Seed über zwei Wochen, der Verbindungsweg und die
+            // Statuszeile der Einstellungen (gleiche Methoden wie die UI).
+            case "seedm212": Task { await CalendarWalkthrough.seedM212() }
+            case "connect": Task { await CalendarWalkthrough.connect(argument) }
+            case "connectstate": CalendarWalkthrough.connectState()
+            case "syncnow": Task { await CalendarWalkthrough.syncNow() }
             case "join": Task { await CalendarWalkthrough.join(dry: spec.count > 1 && spec[1] == "dry") }
             case "sidebar": CalendarWalkthrough.sidebar()
             case "daylist":
@@ -171,6 +333,7 @@ enum DebugAutomation {
                 let id = Int64(spec.count > 1 ? spec[1] : "0") ?? 0
                 CalendarWalkthrough.click(id: id, times: 2)
             case "editorstate": CalendarWalkthrough.editorState()
+            case "card": CalendarWalkthrough.card(argument)
             default: PerfLog.shared.write("calendar_cmd unknown=\(parts[1])")
             }
         case "ai":
@@ -272,6 +435,15 @@ enum DebugAutomation {
             MailWalkthrough.contextMenu()
         case "folders":
             MailWalkthrough.folds()
+        case "actionfail":
+            // actionfail:<kind>[:<reason>] — exactly the `action:failed` line the
+            // host sends (M2.16), handed to the production `receive` path.
+            let args = (parts.count > 1 ? parts[1] : "move").split(separator: ":").map(String.init)
+            let kind = args.first ?? "move"
+            let reason = args.count > 1 ? args[1] : "source_missing"
+            AppModel.shared.receiveDebugEvent(
+                "{\"name\":\"action:failed\",\"payload\":{\"actionId\":7,\"kind\":\"\(kind)\",\"reason\":\"\(reason)\",\"error\":\"hook\"}}")
+            PerfLog.shared.write("walkthrough actionfail kind=\(kind) reason=\(reason)")
         case "log":
             PerfLog.shared.write("debug_log \(parts[1])")
         case "state":
@@ -283,10 +455,31 @@ enum DebugAutomation {
         }
     }
 
+    /// Das sichtbare Hauptfenster (im Hintergrund-Lauf ohne `keyWindow`).
+    private static var mainWindow: NSWindow? {
+        NSApp.keyWindow ?? NSApp.mainWindow
+            ?? NSApp.windows.first { $0.isVisible && $0.title == Instance.title }
+    }
+
+    /// `hittest:300x20` → (300, 20). Das `x` trennt die Achsen, damit es sich
+    /// nicht mit dem Doppelpunkt der Unterbefehle beißt.
+    private static func clickPoint(_ parts: [String]) -> (x: Int, y: Int)? {
+        guard parts.count > 1 else { return nil }
+        let rest = parts.dropFirst().joined(separator: ":")
+        let spec = rest.split(separator: "x").compactMap { Int($0) }
+        guard spec.count == 2 else { return nil }
+        return (spec[0], spec[1])
+    }
+
     /// Posts one key through the app's event queue (`NSApp.postEvent`), which
     /// is what a physical key does before `sendEvent` — monitors included.
     private static func post(key: String) {
-        guard let window = NSApp.keyWindow ?? NSApp.mainWindow else { return }
+        // M2.12: in einem Hintergrund-Lauf (der Nutzer arbeitet) ist die
+        // Sandbox-Instanz nicht die aktive App; dann gibt es weder `keyWindow`
+        // noch `mainWindow` und der Beleg-Lauf lief stumm ins Leere. Wie
+        // `press` auf das sichtbare Hauptfenster zurückfallen.
+        guard let window = NSApp.keyWindow ?? NSApp.mainWindow
+                ?? NSApp.windows.first(where: { $0.isVisible && $0.title == Instance.title }) else { return }
         let lower = key.lowercased()
         let chars: String = switch lower {
         case "escape": "\u{1b}"
@@ -326,10 +519,16 @@ enum DebugAutomation {
         if key == "?" { chars = "?" }
         if key == "#" { chars = "#" }
         let ignoring = (lower.count == 1) ? lower : chars
+        PerfLog.shared.write("debug_press key=\(lower) code=\(code) flags=\(flags.rawValue) "
+                             + "window=\(window.windowNumber) key=\(NSApp.keyWindow?.windowNumber ?? -1) "
+                             + "responder=\(String(describing: window.firstResponder.map { type(of: $0) }))")
         for type in [NSEvent.EventType.keyDown, .keyUp] {
             guard let event = NSEvent.keyEvent(with: type, location: .zero, modifierFlags: flags, timestamp: ProcessInfo.processInfo.systemUptime,
                                                windowNumber: window.windowNumber, context: nil, characters: chars,
-                                               charactersIgnoringModifiers: ignoring, isARepeat: false, keyCode: code) else { continue }
+                                               charactersIgnoringModifiers: ignoring, isARepeat: false, keyCode: code) else {
+                PerfLog.shared.write("debug_press event_nil type=\(type.rawValue)")
+                continue
+            }
             // The real route: key equivalents (menu bar) first, then the key window.
             NSApp.sendEvent(event)
         }

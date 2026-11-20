@@ -18,6 +18,28 @@ struct EventEditorRequest: Identifiable {
     var attendees: [Address] = []
 }
 
+/// M2.9: der Koordinatenraum, in dem die Block-Rechtecke für die Karte liegen.
+extension CalendarGrid {
+    static let space = "calendar-card-space"
+}
+
+/// Wo die Blöcke des Rasters stehen (M2.9 §7.5).
+struct EventFramePreference: PreferenceKey {
+    static var defaultValue: [Int64: CGRect] { [:] }
+    static func reduce(value: inout [Int64: CGRect], nextValue: () -> [Int64: CGRect]) {
+        value.merge(nextValue()) { _, new in new }
+    }
+}
+
+extension EventEditorRequest {
+    /// Aus dem Anlege-Wunsch (Klick, Ziehen, Palette, KI) wird der Entwurf, den
+    /// die Karte zeigt.
+    var draft: CalendarEventDraft {
+        CalendarEventDraft(event: event, startsAt: startsAt, endsAt: endsAt, allDay: allDay,
+                           title: title, location: location, notes: notes, attendees: attendees)
+    }
+}
+
 /// Day and week grid (`TimeGrid.tsx`): day headers, all-day bars, hour gutter,
 /// now line, click/drag to create, drag to move and resize.
 ///
@@ -27,8 +49,6 @@ struct EventEditorRequest: Identifiable {
 /// reads its own geometry per frame.
 struct CalendarTimeGridView: View {
     let store: CalendarStore
-    @Binding var editor: EventEditorRequest?
-    @Binding var detail: CalendarEvent?
     /// "Löschen …" from a block's context menu: the screen asks before it
     /// deletes (an event with attendees mails them).
     var onDelete: (CalendarEvent) -> Void = { _ in }
@@ -54,11 +74,23 @@ struct CalendarTimeGridView: View {
     @State private var clicks = CalendarClickRouter()
     /// Last pointer position inside a column, for "Neuer Termin hier".
     @State private var hoverY: [Int: CGFloat] = [:]
+    /// Where each block sits **in the visible grid** (M2.9 §7.5): the card is
+    /// placed from these rectangles and therefore never scrolls away with the
+    /// content and never hangs outside the window.
+    @State private var frames: [Int64: CGRect] = [:]
+    /// Höhe von Tageskopf und Ganztagszeile: darunter beginnt das Raster, und
+    /// die Karte darf nicht in den Kopf ragen.
+    @State private var headerHeight: CGFloat = 0
+    /// Gemessene Kartengröße für das Klemmen am unteren Rand.
+    @State private var cardSize: CGSize = CGSize(width: 360, height: 200)
 
     var body: some View {
         VStack(spacing: 0) {
             header
-            ScrollView(.vertical) {
+            // M2.12: die Auswahl wandert mit den Pfeiltasten; `scrollTo` hält den
+            // gewählten Block im Blick (die Karte liegt als Overlay darüber).
+            ScrollViewReader { scrollProxy in
+                ScrollView(.vertical) {
                     GeometryReader { proxy in
                     let gutter = CGFloat(CalendarGrid.gutterPx)
                     let colWidth = max(1, (proxy.size.width - gutter) / CGFloat(max(days.count, 1)))
@@ -83,25 +115,75 @@ struct CalendarTimeGridView: View {
                 .defaultScrollAnchor(UnitPoint(x: 0.5,
                                                y: workingHour * CalendarGrid.hourPx / contentHeight))
                 .onAppear { PerfLog.shared.write("calendar_grid_shown hour=\(Int(workingHour))") }
-                // The detail popover hangs on the grid, not on the block: a
-                // popover anchored inside the scrolling content is never
-                // presented (M2.8b — the click arrived, `detail` was set, and
-                // nothing appeared).
-                .popover(isPresented: Binding(
-                    get: { detail != nil },
-                    set: { if !$0 { detail = nil } }
-                ), arrowEdge: .trailing) {
-                    if let event = detail {
-                        CalendarEventDetailView(store: store, event: event,
-                                                onEdit: { edit(event) },
-                                                onClose: { detail = nil })
-                            // Esc comes from the screen's local monitor (the
-                            // popover swallows the key binding), so the card
-                            // must not steal the focus from the grid.
-                            .onExitCommand { detail = nil }
-                    }
+                .onChange(of: store.selectedEventId) { _, id in
+                    guard let id, frames[id] != nil else { return }
+                    withAnimation(Motion.animation) { scrollProxy.scrollTo(id, anchor: .center) }
+                    PerfLog.shared.write("calendar_selected_scroll id=\(id)")
                 }
+            }
         }
+        // Der Koordinatenraum liegt **außerhalb** des Scroll-Inhalts: die
+        // Rechtecke der Blöcke sind damit schon um den Scroll-Offset bereinigt,
+        // und die Karte (als Overlay über dem sichtbaren Bereich) sitzt am
+        // richtigen Fleck (§7.5).
+        .coordinateSpace(name: CalendarGrid.space)
+        .onPreferenceChange(EventFramePreference.self) { frames = $0 }
+        .overlay { cardOverlay }
+    }
+
+    /// Die Karte neben dem Block: links, wenn dort Platz ist, sonst rechts;
+    /// immer in den sichtbaren Bereich geklemmt (§7.2, §7.5).
+    @ViewBuilder private var cardOverlay: some View {
+        GeometryReader { proxy in
+            if store.cardIsOpen {
+                let anchor = cardAnchor(in: proxy.size)
+                CalendarEventCard(store: store,
+                                  layout: .card,
+                                  onClose: {
+                                      // Eigene Zeile, damit der Beleg-Lauf den
+                                      // ×-Weg von Esc und Klick unterscheiden kann.
+                                      PerfLog.shared.write("calendar_card_close_button")
+                                      store.closeCard()
+                                  },
+                                  onDelete: onDelete)
+                    .id(anchor.id)
+                    .frame(width: 360, alignment: .topLeading)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .onGeometryChange(for: CGSize.self) { $0.size } action: { size in
+                        if abs(size.height - cardSize.height) > 0.5 { cardSize = size }
+                    }
+                    .offset(x: anchor.x, y: anchor.y)
+                    .transition(.opacity)
+            }
+        }
+        .animation(Motion.reduce ? nil : .timingCurve(0.22, 0.8, 0.2, 1, duration: 0.22),
+                   value: store.cardIsOpen)
+    }
+
+    /// Position und Größe der Karte. Der Anker ist der Block des Termins; fehlt
+    /// er (Termin außerhalb der Sicht), sitzt die Karte mittig rechts.
+    private func cardAnchor(in size: CGSize) -> (x: CGFloat, y: CGFloat, id: String) {
+        let cardWidth: CGFloat = 360
+        let margin: CGFloat = 8
+        let id = store.openEvent?.id ?? -1
+        // Das Raster beginnt unter dem Tageskopf; darunter muss die Karte
+        // bleiben, sonst deckt sie die Wochentage zu (Sandbox-Lauf).
+        let gridTop = headerHeight
+        let block = frames[id]
+        var x: CGFloat
+        var top: CGFloat
+        if let block {
+            let left = block.minX - margin - cardWidth
+            x = left >= margin ? left : block.maxX + margin
+            top = block.midY - cardSize.height / 2
+        } else {
+            x = size.width - cardWidth - margin
+            top = gridTop + margin
+        }
+        x = min(max(margin, x), max(margin, size.width - cardWidth - margin))
+        let maxTop = max(gridTop + margin, size.height - cardSize.height - margin)
+        top = min(max(gridTop + margin, top), maxTop)
+        return (x, top, "\(id)-\(Int(x))-\(Int(top))")
     }
 
     // MARK: Header (day names, all-day bars)
@@ -126,12 +208,19 @@ struct CalendarTimeGridView: View {
         .overlay(alignment: .bottom) {
             Rectangle().fill(theme.line.color).frame(height: 0.5)
         }
+        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { height in
+            if abs(height - headerHeight) > 0.5 { headerHeight = height }
+        }
     }
 
     private func dayHeader(_ day: Int64) -> some View {
         let isToday = day == store.todayStart
         return Button {
-            if days.count > 1 { store.go(to: day); store.setMode(.day) }
+            guard days.count > 1 else { return }
+            // M2.12: der Wechsel in die Tagesansicht schließt eine offene Karte.
+            if store.cardIsOpen { store.closeCard() }
+            store.go(to: day)
+            store.setMode(.day)
         } label: {
             HStack(spacing: 5) {
                 Text(CalendarChrome.weekdayShort(day, single: days.count == 1))
@@ -218,10 +307,16 @@ struct CalendarTimeGridView: View {
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .background(
+            GeometryReader { geometry in
+                Color.clear.preference(key: EventFramePreference.self,
+                                       value: [span.event.id: geometry.frame(in: .named(CalendarGrid.space))])
+            }
+        )
         .contextMenu {
             EventContextMenu(store: store, event: span.event,
-                             onOpen: { click(span.event) },
-                             onEdit: { edit(span.event) },
+                             onOpen: { store.openCard(span.event.id) },
+                             onEdit: { store.openCard(span.event.id, edit: true) },
                              onDelete: { onDelete(span.event) })
         }
         .help(span.event.summary ?? "")
@@ -258,9 +353,13 @@ struct CalendarTimeGridView: View {
             }
             ForEach(positioned) { placed in
                 block(placed, day: day, index: index, width: width)
+                    .id(placed.event.id)
             }
             if let preview, preview.dayIndex == index {
                 previewBlock(preview, day: day, width: width)
+            }
+            if let draft = store.draft, let draftTop = draftBlockTop(draft, day: day) {
+                draftBlock(draft, top: draftTop, width: width)
             }
         }
         .overlay(alignment: .trailing) {
@@ -271,16 +370,13 @@ struct CalendarTimeGridView: View {
     private func block(_ placed: PositionedEvent, day: Int64, index: Int, width: CGFloat) -> some View {
         let event = placed.event
         let color = CalendarChrome.color(for: event, calendars: store.calendars, theme: theme)
-        let draggable = CalendarEventRules.isDraggable(event)
+        let draggable = CalendarEventRules.isDraggable(event, editable: store.canEdit(event))
         let laneWidth = width / CGFloat(max(placed.lanes, 1))
         return CalendarEventBlockView(
             store: store, event: event, color: color, height: placed.height, draggable: draggable,
-            onOpen: {
-                store.selectedEventId = event.id
-                detail = event
-            },
+            onOpen: { store.openCard(event.id) },
             onClick: { click(event) },
-            onEdit: { edit(event) },
+            onEdit: { store.openCard(event.id, edit: true) },
             onDelete: { onDelete(event) },
             onMove: { translation, startIsOnHandle in
                 drag(event: event, day: day, index: index, width: width,
@@ -293,6 +389,17 @@ struct CalendarTimeGridView: View {
             onCancel: { preview = nil })
             .frame(width: laneWidth - 4, height: placed.height - 2)
             .offset(x: CGFloat(placed.lane) * laneWidth + 2, y: placed.top + 1)
+            .background(
+                GeometryReader { geometry in
+                    Color.clear.preference(key: EventFramePreference.self,
+                                           value: [event.id: geometry.frame(in: .named(CalendarGrid.space))])
+                }
+            )
+            // M2.12: Der Auswahlrand im Zeitraster ist wieder heraus. Er
+            // zeichnete auf Tagen mit überlappenden Terminen einen leeren
+            // Kasten am Spaltenkopf (belegt im Sandbox-Lauf, Ursache dort nicht
+            // abschließend geklärt). In der Monatsansicht bleibt er; im Raster
+            // zeigt die offene Karte den gewählten Termin. Siehe Bericht M2.12.
     }
 
     /// One click of a block: single opens the detail (after the double-click
@@ -301,16 +408,16 @@ struct CalendarTimeGridView: View {
     private func click(_ event: CalendarEvent) {
         store.selectedEventId = event.id
         // One line per click so the next live test can tell "the click never
-        // arrived" from "the popover did not show" (the M2.8a lesson).
+        // arrived" from "the card did not open" (the M2.8a lesson).
         PerfLog.shared.write("calendar_click id=\(event.id) mode=\(store.mode.rawValue) source=grid")
-        clicks.click(String(event.id), onOpen: { detail = event }, onEdit: { edit(event) })
+        clicks.click(String(event.id),
+                     onOpen: { store.openCard(event.id) },
+                     onEdit: { store.openCard(event.id, edit: true) })
     }
 
-    private func edit(_ event: CalendarEvent) {
-        detail = nil
-        editor = EventEditorRequest(event: event, startsAt: event.startsAt,
-                                    endsAt: CalendarEventRules.eventEnd(event),
-                                    allDay: event.allDay)
+    /// Ein neuer Termin (Klick auf freie Fläche, Ziehen, Menü, `B`).
+    private func openNew(_ request: EventEditorRequest) {
+        store.beginDraft(request.draft)
     }
 
     @ViewBuilder
@@ -344,6 +451,40 @@ struct CalendarTimeGridView: View {
         .allowsHitTesting(false)
     }
 
+    // MARK: Gestrichelter Platzhalter für einen neuen Termin (§7.3)
+
+    private func draftBlockTop(_ draft: CalendarEventDraft, day: Int64) -> CGFloat? {
+        guard draft.startsAt < day + CalendarGrid.dayMs, draft.endsAt > day else { return nil }
+        let start = max(draft.startsAt, day)
+        return CGFloat(CalendarMath.msToY(start, dayStart: day))
+    }
+
+    /// Der neue Termin steht schon im Raster, bevor der Kern ihn kennt: ein
+    /// gestrichelter Block, damit die Karte daneben einen Bezug hat.
+    private func draftBlock(_ draft: CalendarEventDraft, top: CGFloat, width: CGFloat) -> some View {
+        let bottom = CalendarMath.msToY(max(draft.endsAt, draft.startsAt), dayStart: store.math.startOfDay(draft.startsAt))
+        let height = max(CGFloat(bottom) - top, 16)
+        return VStack(alignment: .leading, spacing: 1) {
+            Text(draft.title?.isEmpty == false ? draft.title! : "Neuer Termin")
+                .font(.system(size: 11, weight: .semibold))
+                .lineLimit(2)
+            if !draft.allDay {
+                Text(CalendarChrome.timeRange(draft.startsAt, draft.endsAt))
+                    .font(.system(size: 10.5).monospacedDigit())
+                    .opacity(0.75)
+            }
+        }
+        .foregroundStyle(theme.accent.color)
+        .padding(.horizontal, 5)
+        .padding(.vertical, 2)
+        .frame(width: width - 4, height: height, alignment: .topLeading)
+        .background(RoundedRectangle(cornerRadius: 5).fill(theme.accent.color.opacity(0.12)))
+        .overlay(RoundedRectangle(cornerRadius: 5)
+            .strokeBorder(theme.accent.color.opacity(0.85), style: StrokeStyle(lineWidth: 1, dash: [4, 3])))
+        .offset(x: 2, y: top)
+        .allowsHitTesting(false)
+    }
+
     // MARK: Gestures
 
     private func createGesture(day: Int64, index: Int, width: CGFloat) -> some Gesture {
@@ -366,8 +507,12 @@ struct CalendarTimeGridView: View {
                 let startMs = CalendarMath.yToMs(value.startLocation.y, dayStart: day)
                 let endMs = CalendarMath.yToMs(value.location.y, dayStart: day)
                 preview = nil
+                // M2.12 requirement 6: a click on empty space closes the open
+                // card instead of starting a new event right away. Dragging
+                // (moved) still creates, as it does without a card.
+                if !moved, store.closeCardOnEmptySpace() { return }
                 let (start, end) = snapped(startMs: startMs, endMs: endMs, day: day, moved: moved)
-                editor = EventEditorRequest(startsAt: start, endsAt: end)
+                openNew(EventEditorRequest(startsAt: start, endsAt: end))
             }
     }
 
@@ -377,7 +522,7 @@ struct CalendarTimeGridView: View {
         let y = Double(hoverY[index] ?? CGFloat(9 * CalendarGrid.hourPx))
         let start = CalendarMath.snapMinutes(Double(CalendarMath.yToMs(y, dayStart: day) - day) / 60_000)
         let startMs = day + Int64(start) * 60_000
-        editor = EventEditorRequest(startsAt: startMs, endsAt: startMs + 30 * 60_000)
+        openNew(EventEditorRequest(startsAt: startMs, endsAt: startMs + 30 * 60_000))
     }
 
     private func snapped(startMs: Int64, endMs: Int64, day: Int64, moved: Bool) -> (Int64, Int64) {

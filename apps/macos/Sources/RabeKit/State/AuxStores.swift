@@ -151,6 +151,8 @@ public final class SettingsStore {
     public var copyVerificationCodes: Bool { raw["copyVerificationCodes"] as? Bool ?? true }
     public var selectAdvance: Bool { raw["selectAdvance"] as? Bool ?? true }
     public var autoAdvance: Bool { raw["autoAdvance"] as? Bool ?? true }
+    /// M2.14: Einzeltasten (E, R, #, G …) außerhalb von Textfeldern.
+    public var singleKeyShortcuts: Bool { raw["singleKeyShortcuts"] as? Bool ?? true }
     public var dockBadgeEnabled: Bool { raw["dockBadgeEnabled"] as? Bool ?? true }
     /// "classic" (dense rows) or "avatar" (tall rows with sender photos).
     public var inboxUI: String { raw["inboxUi"] as? String ?? "classic" }

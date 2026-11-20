@@ -82,6 +82,15 @@ public enum CommandScore {
     }
 }
 
+/// One line of the sidebar's folder tree (M2.9): the folder, its indent level
+/// and its name without the IMAP path.
+public struct FolderRow: Identifiable, Hashable {
+    public let folder: FolderInfo
+    public let depth: Int
+    public let name: String
+    public var id: Int64 { folder.id }
+}
+
 /// The pure list logic behind the M2.5 pickers: "Verschieben" (`V`), "Label"
 /// (`L`), Textbausteine (`⌘;`) and "Split nach Absender". Kept out of the views
 /// so the ranking and the filtered sets have unit tests.
@@ -97,6 +106,27 @@ public enum Pickers {
         case .spam: return "spam"
         default: return nil
         }
+    }
+
+    /// M2.9: der Ordnerbaum der Seitenleiste. Die Systemordner (Posteingang,
+    /// Gesendet, Entwürfe, Papierkorb, Spam, Archiv) stehen schon als Ansichten
+    /// da und fallen weg; der Rest wird nach dem IMAP-Trenner eingerückt.
+    public static func folderTree(_ folders: [FolderInfo]) -> [FolderRow] {
+        // M2.15a: `all` („Alle E-Mails“) und `snoozed` („Zurückgestellt“)
+        // stehen ebenfalls schon als Ansichten da. Im Sandbox-Seed fehlten
+        // diese Rollen, deshalb fielen sie hier nicht auf; in echten Konten
+        // wären „Alle E-Mails“ doppelt in der Liste gelandet.
+        let system: Set<String> = ["inbox", "archive", "sent", "drafts", "trash", "spam", "all", "snoozed"]
+        var rows: [FolderRow] = []
+        for folder in folders {
+            if let role = folder.role, system.contains(role) { continue }
+            var name = folder.imapName
+            if name.hasPrefix("[Gmail]/") { name = String(name.dropFirst(8)) }
+            let separator = folder.delimiter?.first ?? "/"
+            let depth = max(0, name.split(separator: separator).count - 1)
+            rows.append(FolderRow(folder: folder, depth: depth, name: String(name.split(separator: separator).last ?? Substring(name))))
+        }
+        return rows
     }
 
     /// IMAP name without the Gmail prefix, as Tauri shows it.

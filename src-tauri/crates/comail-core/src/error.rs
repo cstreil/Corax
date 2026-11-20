@@ -32,6 +32,11 @@ pub enum CoreError {
     ActionDeferred(String),
     #[error("action rejected: {0}")]
     ActionRejected(String),
+    /// The action's source message no longer exists on the server. Unlike
+    /// `ActionDeferred` this never becomes retryable: a move shows it to the
+    /// user instead of reverting silently (M2.16).
+    #[error("action source missing on the server: {0}")]
+    ActionSourceMissing(String),
     #[error("offline")]
     Offline,
     #[error("AI is not configured")]
@@ -62,6 +67,7 @@ impl CoreError {
             CoreError::DeleteRejected(_) => "delete_rejected",
             CoreError::ActionDeferred(_) => "action_deferred",
             CoreError::ActionRejected(_) => "action_rejected",
+            CoreError::ActionSourceMissing(_) => "action_source_missing",
             CoreError::AiNotConfigured => "ai_not_configured",
             CoreError::Other(_) => "other",
         }

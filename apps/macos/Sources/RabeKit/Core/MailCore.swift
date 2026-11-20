@@ -11,7 +11,10 @@ import Foundation
 /// stores take any `AICore`, so one protocol keeps both sides in step.
 public protocol MailCore: AICore {
     // Reading
-    func listThreads(view: MailView, splitId: Int64?, accountId: Int64?, cursor: Int64?, limit: Int) async throws -> ThreadPage
+    /// `labelId`/`folderId` (M2.9): die Seitenleiste filtert die Liste auf ein
+    /// Label oder einen Ordner, so wie Tauri `selectLabel`/`selectFolder`.
+    func listThreads(view: MailView, splitId: Int64?, accountId: Int64?, labelId: Int64?,
+                     folderId: Int64?, cursor: Int64?, limit: Int) async throws -> ThreadPage
     func getThread(_ id: Int64) async throws -> ThreadDetail
     func getBody(_ messageId: Int64) async throws -> MessageDetail
     func accounts() async throws -> [Account]

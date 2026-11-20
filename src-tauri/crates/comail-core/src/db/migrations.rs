@@ -45,6 +45,7 @@ const MIGRATIONS: &[&str] = &[
     include_str!("migrations/037_backfill_reconcile_retry.sql"),
     include_str!("migrations/038_mutf7_folder_names.sql"),
     include_str!("migrations/039_rescan_skipped_headers.sql"),
+    include_str!("migrations/040_calendar_sync_error.sql"),
 ];
 
 pub fn run(conn: &mut Connection) -> Result<()> {

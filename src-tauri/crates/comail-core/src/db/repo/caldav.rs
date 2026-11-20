@@ -200,10 +200,15 @@ pub fn set_default_calendar(conn: &Connection, account_id: i64, calendar_id: i64
     Ok(())
 }
 
+/// Ziel für neue Termine und Rückfall beim Push. Seit `read_only` echt ist
+/// (M2.16), steht der Standard eines Kontos nicht mehr zwingend auf einer
+/// beschreibbaren Sammlung: eine schreibgeschützte geteilte Sammlung kann die
+/// erste in der Discovery gewesen sein. Deshalb zuerst die Schreibbarkeit,
+/// dann die Standardmarke.
 pub fn default_calendar(conn: &Connection, account_id: i64) -> Result<Option<Calendar>> {
     conn.query_row(
         "SELECT * FROM calendars WHERE account_id = ?1 AND enabled = 1
-         ORDER BY is_default DESC, id ASC LIMIT 1",
+         ORDER BY read_only ASC, is_default DESC, id ASC LIMIT 1",
         params![account_id],
         calendar_row,
     )
@@ -311,11 +316,16 @@ mod tests {
             Some("#dc2626")
         );
 
+        // M2.16: `read_only` ist jetzt echt. Steht die Standardmarke auf einer
+        // schreibgeschützten Sammlung (geteilter Kalender, nach erneuter
+        // Discovery), gewinnt für neue Termine die beschreibbare.
         set_default_calendar(&c, 1, b).unwrap();
-        assert_eq!(default_calendar(&c, 1).unwrap().unwrap().id, b);
-        set_calendar_enabled(&c, b, false).unwrap();
-        // Default falls back to an enabled calendar.
         assert_eq!(default_calendar(&c, 1).unwrap().unwrap().id, a);
+        set_default_calendar(&c, 1, a).unwrap();
+        assert_eq!(default_calendar(&c, 1).unwrap().unwrap().id, a);
+        set_calendar_enabled(&c, a, false).unwrap();
+        // Bleibt nur der schreibgeschützte, ist er der letzte Kandidat.
+        assert_eq!(default_calendar(&c, 1).unwrap().unwrap().id, b);
 
         delete_config(&c, 1).unwrap();
         assert!(all_configs(&c).unwrap().is_empty());

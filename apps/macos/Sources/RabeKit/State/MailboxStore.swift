@@ -47,6 +47,13 @@ public final class MailboxStore {
 
     // Navigation
     public private(set) var view: MailView = .inbox
+    /// M2.9: die Seitenleiste filtert die Liste auf ein Label oder einen Ordner
+    /// (Tauri `selectLabel`/`selectFolder`). Beides schließt sich aus.
+    public private(set) var filterLabelId: Int64?
+    public private(set) var filterFolderId: Int64?
+    /// Name des gefilterten Ordners (der Titel zeigt ihn, auch bevor die
+    /// Ordnerliste geladen ist).
+    public private(set) var filterFolderName: String?
     private(set) var tabID: String = "important"
     public private(set) var accountId: Int64?
     public private(set) var accounts: [Account] = []
@@ -109,6 +116,10 @@ public final class MailboxStore {
 
     // Inline reply
     public var inlineCompose: ComposeDraft?
+    /// M2.9: der Thread wird zugeklappt oder gewechselt und der Inline-Entwurf
+    /// ist nicht leer. Statt ihn still wegzuwerfen, gibt die Liste ihn ab; die
+    /// App macht daraus eine Leiste im Verfassen-Panel (§3.7).
+    public var onInlineDraftAbandoned: ((ComposeDraft) -> Void)?
     /// Bumped to give the list keyboard focus again (after sending, Esc in a field).
     public private(set) var focusListRequest = 0
     public func focusList() { focusListRequest += 1 }
@@ -148,7 +159,12 @@ public final class MailboxStore {
 
     // MARK: Derived
 
-    public var title: String { searchQuery.map { "Suche: \($0)" } ?? Strings.view(view) }
+    public var title: String {
+        if let query = searchQuery { return "Suche: \(query)" }
+        if let id = filterLabelId, let label = labels[id] { return label.name }
+        if filterFolderId != nil, let name = filterFolderName { return name }
+        return Strings.view(view)
+    }
 
     public var tabs: [InboxTab] {
         guard view == .inbox, searchQuery == nil else { return [] }
@@ -170,6 +186,23 @@ public final class MailboxStore {
         }
         return out
     }
+
+    /// M2.9: der Zähler neben einer Ansicht in der Seitenleiste. Was der Kern
+    /// nicht zählt (Gesendet, Erledigt, Papierkorb, Alle), bleibt ohne Zahl.
+    public func badge(for view: MailView) -> Int64 {
+        guard let unread else { return 0 }
+        switch view {
+        case .inbox: return unread.inbox
+        case .starred: return unread.views["starred"] ?? 0
+        case .snoozed: return unread.views["snoozed"] ?? 0
+        case .drafts: return unread.views["drafts"] ?? 0
+        case .spam: return unread.views["spam"] ?? 0
+        case .sent, .done, .trash, .all: return 0
+        }
+    }
+
+    /// Ungelesene eines Labels (der Kern zählt je Label-ID).
+    public func labelBadge(_ id: Int64) -> Int64 { unread?.labels[String(id)] ?? 0 }
 
     private var currentSplitId: Int64? {
         tabs.first(where: { $0.id == tabID })?.splitId ?? tabs.first?.splitId
@@ -293,6 +326,19 @@ public final class MailboxStore {
         // is the one that was set before the calendar opened (Inbox → Kalender
         // → Inbox). The unchanged-guard therefore comes after the callback.
         if byUser { onUserNavigation?() }
+        // A label or folder filter belongs to the line it was picked on; picking
+        // another view drops it (also when it is the view already set).
+        if filterLabelId != nil || filterFolderId != nil {
+            filterLabelId = nil
+            filterFolderId = nil
+            filterFolderName = nil
+            view = newView
+            searchQuery = nil
+            searchText = ""
+            tabID = tabs.first?.id ?? "important"
+            resetAndReload()
+            return
+        }
         guard newView != view || searchQuery != nil else { return }
         view = newView
         searchQuery = nil
@@ -305,16 +351,53 @@ public final class MailboxStore {
         if byUser { onUserNavigation?() }
         guard id != accountId else { return }
         accountId = id
+        filterLabelId = nil
+        filterFolderId = nil
+        filterFolderName = nil
         resetAndReload()
         refreshUnread()
+    }
+
+    /// M2.9: Seitenleiste → Label. Die Ansicht bleibt „Alle E-Mails", der Kern
+    /// filtert über `label_id`; ein Ordnerfilter fällt dabei weg.
+    public func selectLabel(_ id: Int64?) {
+        guard filterLabelId != id || filterFolderId != nil || view != .all else { return }
+        onUserNavigation?()
+        filterLabelId = id
+        filterFolderId = nil
+        filterFolderName = nil
+        view = .all
+        searchQuery = nil
+        searchText = ""
+        expandedId = nil
+        resetAndReload()
+        PerfLog.shared.write("list_filter label=\(id.map(String.init) ?? "-")")
+    }
+
+    /// M2.9: Seitenleiste → Ordner (`folder_id`). Wie Tauri `selectFolder`.
+    public func selectFolder(_ folder: FolderInfo) {
+        guard filterFolderId != folder.id else { return }
+        onUserNavigation?()
+        filterFolderId = folder.id
+        filterFolderName = folderName(folder)
+        filterLabelId = nil
+        view = .all
+        searchQuery = nil
+        searchText = ""
+        expandedId = nil
+        resetAndReload()
+        PerfLog.shared.write("list_filter folder=\(folder.id)")
     }
 
     public func setTab(_ id: String) {
         // The tab is picked by hand only (MainView, ⌃Tab, palette); picking the
         // current tab while the calendar is open still leaves the calendar.
         onUserNavigation?()
-        guard id != tabID else { return }
+        guard id != tabID || filterLabelId != nil || filterFolderId != nil else { return }
         tabID = id
+        filterLabelId = nil
+        filterFolderId = nil
+        filterFolderName = nil
         resetAndReload()
     }
 
@@ -351,7 +434,9 @@ public final class MailboxStore {
                 guard generation == listGeneration else { return }
                 applyThreads(results.threads, cursor: nil)
             } else {
-                let page = try await client.listThreads(view: view, splitId: currentSplitId, accountId: accountId, cursor: nil, limit: pageSize)
+                let page = try await client.listThreads(view: view, splitId: currentSplitId, accountId: accountId,
+                                                labelId: filterLabelId, folderId: filterFolderId,
+                                                cursor: nil, limit: pageSize)
                 guard generation == listGeneration else { return }
                 applyThreads(page.threads, cursor: page.nextCursor)
             }
@@ -424,7 +509,9 @@ public final class MailboxStore {
         Task {
             defer { isLoading = false }
             do {
-                let page = try await client.listThreads(view: view, splitId: currentSplitId, accountId: accountId, cursor: cursor, limit: pageSize)
+                let page = try await client.listThreads(view: view, splitId: currentSplitId, accountId: accountId,
+                                                labelId: filterLabelId, folderId: filterFolderId,
+                                                cursor: cursor, limit: pageSize)
                 guard generation == listGeneration else { return }
                 let known = Set(threads.map(\.id))
                 let fresh = page.threads.filter { !known.contains($0.id) }
@@ -484,7 +571,9 @@ public final class MailboxStore {
 
     private func reloadKeepingPosition() async {
         guard let client, searchQuery == nil else { return }
-        guard let page = try? await client.listThreads(view: view, splitId: currentSplitId, accountId: accountId, cursor: nil, limit: max(pageSize, threads.count)) else { return }
+        guard let page = try? await client.listThreads(view: view, splitId: currentSplitId, accountId: accountId,
+                                         labelId: filterLabelId, folderId: filterFolderId,
+                                         cursor: nil, limit: max(pageSize, threads.count)) else { return }
         applyThreads(page.threads, cursor: page.nextCursor)
     }
 
@@ -638,6 +727,7 @@ public final class MailboxStore {
         Task {
             while generation == listGeneration, let cursor = nextCursor {
                 guard let page = try? await client.listThreads(view: view, splitId: currentSplitId, accountId: accountId,
+                                                               labelId: filterLabelId, folderId: filterFolderId,
                                                                cursor: cursor, limit: 500) else { break }
                 guard generation == listGeneration else { return }
                 let known = Set(threads.map(\.id))
@@ -658,8 +748,17 @@ public final class MailboxStore {
     }
 
     public func collapse() {
+        releaseInlineDraft()
         expandedId = nil
+    }
+
+    /// Ein Inline-Entwurf, der den Thread verlässt: leer = weg wie bisher,
+    /// gefüllt = an das Panel abgeben (M2.9).
+    private func releaseInlineDraft() {
+        guard let draft = inlineCompose else { return }
         inlineCompose = nil
+        guard !draft.isEmpty else { return }
+        onInlineDraftAbandoned?(draft)
     }
 
     /// Timing of the current expansion (Anforderung 13).
@@ -683,7 +782,7 @@ public final class MailboxStore {
 
     public func expand(_ id: Int64) {
         let state = Self.signposter.beginInterval("expand")
-        inlineCompose = nil
+        releaseInlineDraft()
         unfoldedMessages = []
         focusedMessageId = nil
         messageFrames = [:]
@@ -1141,18 +1240,33 @@ public final class MailboxStore {
     }
 
     /// Loads the IMAP folders of the accounts the current selection belongs to
-    /// (for the move popover). Called when the popover opens.
+    /// (for the move popover and the sidebar). Called when the popover opens and
+    /// whenever the sidebar sees a new account list.
     public func loadFolders() async {
-        guard let client else { return }
+        guard let client else {
+            PerfLog.shared.write("folders_skipped reason=no_client")
+            return
+        }
         var accounts = Set<Int64>()
         if let account = accountOfTargets() { accounts.insert(account) }
         if accounts.isEmpty { accounts.formUnion(self.accounts.map(\.id)) }
+        guard !accounts.isEmpty else {
+            PerfLog.shared.write("folders_skipped reason=no_accounts")
+            return
+        }
         var loaded: [FolderInfo] = []
         for account in accounts.sorted() {
-            if let list = try? await client.listFolders(accountId: account) { loaded += list }
+            // M2.15 1.3: kein `try?` — ein fehlgeschlagenes `list_folders` sah
+            // sonst wie „keine Ordner“ aus.
+            do {
+                loaded += try await client.listFolders(accountId: account)
+            } catch {
+                PerfLog.shared.write("folders_failed account=\(account) error=\(error)")
+            }
         }
         folders = loaded.sorted { folderName($0).localizedCaseInsensitiveCompare(folderName($1)) == .orderedAscending }
-        PerfLog.shared.write("folders_loaded n=\(folders.count) accounts=\(accounts.count)")
+        PerfLog.shared.write("folders_loaded n=\(folders.count) own=\(folders.filter { $0.role == nil }.count) "
+                             + "accounts=\(accounts.count)")
     }
 
     /// "Jetzt synchronisieren" (`sync_now`).

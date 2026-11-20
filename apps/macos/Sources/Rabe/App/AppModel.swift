@@ -81,6 +81,11 @@ final class AppModel {
     var splitSuggestion: (name: String, domain: String, sender: String)?
     var composeDrafts: [UUID: ComposeDraft] = [:]
     var openComposeWindow: ((UUID) -> Void)?
+    /// M2.9 Stufe B: Reihenfolge, Zustand und Fokus der Entwürfe im Panel.
+    let compose = ComposeDock()
+    /// M2.9: die Seitenleiste des Hauptfensters (Breitenregel, Nutzerwahl).
+    let sidebar = SidebarState(defaults: .standard,
+                               key: Instance.isSandbox ? "sidebarVisible.sandbox" : "sidebarVisible")
 
     var theme: Theme { Theme.resolve(settings.themeID, systemDark: systemDark, accentKey: settings.accentKey) }
 
@@ -103,6 +108,7 @@ final class AppModel {
         splits = SplitsStore(toasts: toasts)
         mcp = McpStore(toasts: toasts, platform: platform)
         calendar = CalendarStore(toasts: toasts)
+        calendar.shell = sidebar
         ai = AIStore(toasts: toasts)
         assistant = AIAssistStore(toasts: toasts)
         settings.toasts = toasts
@@ -161,6 +167,10 @@ final class AppModel {
             startError = RabeClientError.from(error).errorDescription
             PerfLog.shared.write("host_failed \(error.localizedDescription)")
         }
+        // M2.9: das Panel öffnet Fenster-Entwürfe und bekommt Entwürfe, die der
+        // Thread beim Verlassen abgibt, als Leiste (§3.7).
+        compose.onOpenWindow = { id in AppModel.shared.openComposeWindow?(id) }
+        mailbox.onInlineDraftAbandoned = { draft in AppModel.shared.dockAbandonedInlineDraft(draft) }
     }
 
     /// After the window is up: wait for the core, then load settings and list.
@@ -233,6 +243,8 @@ final class AppModel {
             mailbox.mailUpdated(ids)
         case .syncProgress:
             sync.refreshSoon()
+        case .actionFailed(let actionId, let threadId, let kind, let reason, let error):
+            actionFailed(actionId: actionId, threadId: threadId, kind: kind, reason: reason, error: error)
         case .networkState(let online):
             sync.setOnline(online)
         case .calendarUpdated:
@@ -251,6 +263,21 @@ final class AppModel {
         case .other:
             break
         }
+    }
+
+    #if DEBUG || RABE_TEST_HOOKS
+    /// Hook path (M2.16): hand one host event line to the production parser,
+    /// exactly as the host would deliver it.
+    func receiveDebugEvent(_ json: String) { receive(json) }
+    #endif
+
+    /// M2.16: the core gave up on a move (the server no longer has the mail,
+    /// or the deferral ran out). Say so — the row has just rolled back, and a
+    /// silent jump into the old folder looks like a bug.
+    private func actionFailed(actionId: Int64, threadId: Int64?, kind: String, reason: String, error: String) {
+        PerfLog.shared.write("action_failed id=\(actionId) kind=\(kind) reason=\(reason) thread=\(threadId.map(String.init) ?? "-")")
+        let what = Strings.moveFailure(kind: kind)
+        toasts.show(reason == "source_missing" ? "\(what): \(Strings.moveSourceMissing)" : what, isError: true)
     }
 
     /// M2.4: streamed text goes to the composer whose call it belongs to, else
@@ -635,19 +662,29 @@ final class AppModel {
             toasts.show("Öffne zuerst einen Entwurf")
             return
         }
-        NotificationCenter.default.post(name: .rabeComposeAction, object: command)
-        PerfLog.shared.write("compose_command \(command)")
+        // M2.9: Panel und Inline-Entwurf können gleichzeitig offen sein; das
+        // Kürzel gehört dem Entwurf mit der Tastatur, nicht beiden.
+        let target = compose.commandTarget ?? mailbox.inlineCompose?.id
+        NotificationCenter.default.post(name: .rabeComposeAction, object: command,
+                                        userInfo: target.map { ["draft": $0] } ?? [:])
+        PerfLog.shared.write("compose_command \(command) target=\(target?.uuidString.prefix(8) ?? "none")")
     }
 
-    /// `quote-selection` (`⇧R`): the marked passage of the open HTML mail goes
-    /// into a reply. Without a selection ⇧R is reply-all, exactly like Tauri.
-    func quoteSelection() {
+    /// Ziel für die KI-Kürzel (`⌘J`, `⌘⇧P`): derselbe Entwurf wie bei den
+    /// Sende-Kürzeln, sonst der Inline-Entwurf.
+    var composeCommandTarget: [String: UUID] {
+        (compose.commandTarget ?? mailbox.inlineCompose?.id).map { ["draft": $0] } ?? [:]
+    }
+
+    /// `R` / `⇧R` mit markiertem Text: nur die Auswahl wird zitiert (M2.14 §6).
+    /// Ohne Auswahl antwortet `fallback` — bei `R` der Absender, bei `⇧R` allen.
+    func quoteSelection(fallback: ComposeMode = .replyAll) {
         Task {
             let text = await WebViewPool.shared.selectedText()
             let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !trimmed.isEmpty else {
-                PerfLog.shared.write("quote_selection empty fallback=reply_all")
-                reply(.replyAll)
+                PerfLog.shared.write("quote_selection empty fallback=\(fallback.rawValue)")
+                reply(fallback)
                 return
             }
             PerfLog.shared.write("quote_selection chars=\(trimmed.count)")
@@ -686,18 +723,176 @@ final class AppModel {
 
     var selfEmails: Set<String> { Set(mailbox.accounts.map { $0.email.lowercased() }) }
 
+    /// `C` legt den Entwurf ins Panel, `⌥C` und `mailto:` ins eigene Fenster.
     func composeNew(to: [Address] = [], cc: [Address] = [], bcc: [Address] = [], subject: String = "",
-                    body: String = "") {
+                    body: String = "", docked: Bool = true) {
         guard let client else { return }
         guard let account = mailbox.accounts.first(where: { $0.id == mailbox.accountId }) ?? mailbox.accounts.first else {
             accountSheetOpen = true; return
+        }
+        // Die Obergrenze gilt vor dem Anlegen: ein fünftes `C` legt nichts an
+        // und sagt warum (§3.4).
+        if docked, compose.isFull {
+            toasts.show("Höchstens \(ComposeDock.maxDrafts) Entwürfe – einen senden oder schließen")
+            PerfLog.shared.write("compose_dock_refused full=1")
+            return
         }
         let draft = ComposeDraft(mode: .new, accountId: account.id, inReplyTo: nil, to: to, cc: cc, subject: subject,
                                  body: body, client: client, aiClient: aiClientOverride,
                                  toasts: toasts, settings: settings)
         draft.bcc = bcc
         composeDrafts[draft.id] = draft
-        openComposeWindow?(draft.id)
+        if docked {
+            compose.add(draft.id, as: .open)
+        } else {
+            compose.add(draft.id, as: .window)
+            openComposeWindow?(draft.id)
+        }
+    }
+
+    // MARK: Verfassen-Panel (M2.9 Stufe B)
+
+    /// „Lösen" im Inline-Entwurf: derselbe Entwurf wandert ins Panel, nichts
+    /// wird kopiert (§3.7).
+    func detachInlineDraft() {
+        guard let draft = mailbox.inlineCompose else {
+            PerfLog.shared.write("inline_detach none=1")
+            return
+        }
+        guard !compose.isFull else {
+            toasts.show("Höchstens \(ComposeDock.maxDrafts) Entwürfe – einen senden oder schließen")
+            PerfLog.shared.write("inline_detach refused=full")
+            return
+        }
+        mailbox.inlineCompose = nil
+        composeDrafts[draft.id] = draft
+        compose.add(draft.id, as: .open)
+        PerfLog.shared.write("inline_detach id=\(draft.id.uuidString.prefix(8))")
+    }
+
+    /// Der Thread wird zugeklappt oder gewechselt: ein nicht leerer Entwurf
+    /// wird zur Leiste, statt still zu verschwinden (§3.7).
+    func dockAbandonedInlineDraft(_ draft: ComposeDraft) {
+        guard composeDrafts[draft.id] == nil else { return }
+        guard !draft.isEmpty else { return }
+        guard !compose.isFull else {
+            toasts.show("Höchstens \(ComposeDock.maxDrafts) Entwürfe – einen senden oder schließen")
+            PerfLog.shared.write("inline_abandoned full=1")
+            return
+        }
+        composeDrafts[draft.id] = draft
+        compose.add(draft.id, as: .minimized)
+        PerfLog.shared.write("inline_abandoned id=\(draft.id.uuidString.prefix(8))")
+    }
+
+    /// Nach dem Senden: der Platz wird frei, der Fokus geht an die Liste.
+    func composeDraftLeft(_ draft: ComposeDraft, presentation: ComposePresentation,
+                          closeWindow: () -> Void) {
+        composeDrafts[draft.id] = nil
+        compose.remove(draft.id)
+        if presentation == .inline, mailbox.inlineCompose?.id == draft.id { mailbox.inlineCompose = nil }
+        if presentation == .window { closeWindow() }
+        mailbox.focusList()
+    }
+
+    /// „Rückgängig" nach dem Senden: der Entwurf kommt dorthin zurück, wo er war.
+    func composeDraftReturned(_ draft: ComposeDraft, presentation: ComposePresentation) {
+        switch presentation {
+        case .inline:
+            mailbox.inlineCompose = draft
+        case .window:
+            composeDrafts[draft.id] = draft
+            compose.add(draft.id, as: .window)
+            openComposeWindow?(draft.id)
+        case .docked:
+            composeDrafts[draft.id] = draft
+            compose.add(draft.id, as: .open)
+        }
+        toasts.show(Strings.undone)
+    }
+
+    /// `xmark` im Panel-Kopf: der Entwurf bleibt erhalten (wie Gmail), das
+    /// Panel schließt und der Fokus geht an die Liste.
+    func closeDockedDraft(_ id: UUID) {
+        guard let draft = composeDrafts[id] else { return }
+        composeDrafts[id] = nil
+        compose.remove(id)
+        mailbox.focusList()
+        if !draft.savedOnce, !draft.isEmpty {
+            Task { _ = await draft.saveNow() }
+            toasts.show("Entwurf gesichert")
+        }
+        PerfLog.shared.write("compose_close id=\(id.uuidString.prefix(8)) saved=\(draft.savedOnce ? 1 : 0)")
+    }
+
+    /// `trash` bzw. `⌘⇧⌫`: verwerfen, mit Rückgängig-Toast.
+    func discardDockedDraft(_ id: UUID) {
+        guard let draft = composeDrafts[id] else { return }
+        let hadContent = !draft.isEmpty
+        composeDrafts[id] = nil
+        compose.remove(id)
+        draft.discard()
+        mailbox.focusList()
+        guard hadContent else {
+            PerfLog.shared.write("compose_discard empty=1")
+            return
+        }
+        toasts.show("Entwurf verworfen", actionTitle: Strings.undo, action: { [weak self] in
+            guard let self else { return }
+            let copy = draft.restoredCopy()
+            self.composeDrafts[copy.id] = copy
+            self.compose.add(copy.id, as: .open)
+        })
+        PerfLog.shared.write("compose_discard id=\(id.uuidString.prefix(8))")
+    }
+
+    /// `⌘⇧⌫` ohne Maus: den offenen bzw. fokussierten Entwurf verwerfen.
+    func discardOpenDraft() {
+        if let id = compose.openId ?? compose.keyboardFocus {
+            discardDockedDraft(id)
+        } else if mailbox.inlineCompose != nil {
+            discardInlineDraft()
+        } else {
+            toasts.show("Kein Entwurf offen")
+        }
+    }
+
+    /// „Im Hauptfenster andocken" aus dem Fenster: der Entwurf wird offen.
+    func dockComposeWindow(_ id: UUID) {
+        compose.dock(id)
+        PerfLog.shared.write("compose_redock id=\(id.uuidString.prefix(8))")
+    }
+
+    /// Das Fenster wurde geschlossen (roter Knopf) oder der Entwurf verlässt es:
+    /// ein noch nicht gesendeter Entwurf wird zur Leiste.
+    func composeWindowClosed(_ id: UUID) {
+        guard let draft = composeDrafts[id], compose.state(id) != nil else { return }
+        guard compose.state(id) == .window else { return }
+        guard !compose.isFull else {
+            toasts.show("Höchstens \(ComposeDock.maxDrafts) Entwürfe – einen senden oder schließen")
+            return
+        }
+        compose.dock(id, as: .minimized)
+        PerfLog.shared.write("compose_window_closed id=\(id.uuidString.prefix(8)) saved=\(draft.savedOnce ? 1 : 0)")
+    }
+
+    /// `⌃Tab` / `⌃⇧Tab`: Fokus reihum, zuletzt zurück an die Liste (§3.5).
+    func cycleDraftFocus(backward: Bool = false) {
+        guard let id = compose.cycleFocus(backward: backward) else {
+            mailbox.focusList()
+            return
+        }
+        composeDrafts[id]?.editorHost?.focusEditor()
+    }
+
+    /// `⌘⇧M`: minimieren bzw. den letzten Entwurf wieder öffnen.
+    func toggleComposeDock() {
+        guard !compose.isEmpty else {
+            toasts.show("Kein Entwurf offen")
+            return
+        }
+        compose.toggleMinimize()
+        if let id = compose.openId { composeDrafts[id]?.editorHost?.focusEditor() }
     }
 
     /// A `mailto:` URL, from the system (`onOpenURL`, the bundle registers the

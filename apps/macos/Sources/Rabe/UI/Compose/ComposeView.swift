@@ -13,14 +13,33 @@ extension Notification.Name {
     static let rabeComposeAction = Notification.Name("de.streil.rabe.native.compose.action")
 }
 
+/// M2.9: Panel und Inline-Entwurf liegen im selben Fenster. Ein Kürzel aus dem
+/// Menü gehört nur dem Entwurf, den die Benachrichtigung nennt.
+extension Notification {
+    func isFor(_ id: UUID) -> Bool {
+        guard let target = userInfo?["draft"] as? UUID else { return true }
+        return target == id
+    }
+}
+
 /// Text composer, inline under a thread or in its own window (mockup `.composer`).
 /// M2.3 adds the AI bar (`ai_draft`), the proofread proposal (`ai_proofread`),
 /// quick replies (`ai_quick_replies`), the typed follow-ups (`ai_draft_actions`)
 /// and `⌘Z` for an AI change on the text.
 struct ComposeView: View {
     @Bindable var draft: ComposeDraft
-    let inline: Bool
+    /// M2.9: inline unter dem Thread, im eigenen Fenster oder angedockt im
+    /// Panel. Die Felder sind in allen drei Fällen dieselben (Entwurf §5).
+    let presentation: ComposePresentation
     var onClose: (() -> Void)? = nil
+    /// Panel: `Esc` schließt zuerst ein Popup, dann das Maximieren, dann
+    /// minimiert es den Entwurf (§3.3). Ohne Closure wird verworfen.
+    var onEscape: (() -> Void)? = nil
+    /// Panel: Zähler, damit `⌃Tab` den Fokus in den Editor legt.
+    var focusRequest: Int = 0
+
+    private var inline: Bool { presentation == .inline }
+    private var docked: Bool { presentation == .docked }
     @Environment(\.theme) private var theme
     @FocusState private var focus: Field?
     @State private var suggestions: [ContactSuggestion] = []
@@ -84,11 +103,11 @@ struct ComposeView: View {
                               onClose: { linkOpen = false; editor.focus() })
                 }
                 RichTextEditor(html: draft.bodyHtml, revision: draft.bodyRevision, theme: theme,
-                               controller: editor, minHeight: inline ? 84 : 200,
+                               controller: editor, minHeight: editorMinHeight,
                                onChange: { draft.syncEditorBody($0) },
                                onMention: { query in handleMentionQuery(query) },
                                onLink: { withAnimation(Motion.animation) { linkOpen = true } })
-                    .frame(minHeight: inline ? 84 : 200)
+                    .frame(minHeight: editorMinHeight, maxHeight: docked ? .infinity : nil)
                     .accessibilityLabel("Nachricht")
                     .overlay(alignment: .topLeading) {
                         if !mentionSuggestions.isEmpty {
@@ -105,6 +124,8 @@ struct ComposeView: View {
             if !draft.draftActions.isEmpty { followUpRow }
             ComposeFooter(draft: draft, theme: theme,
                           onDismissHint: false,
+                          escHint: docked ? "minimieren" : "verwerfen",
+                          onDetach: inline ? { AppModel.shared.detachInlineDraft() } : nil,
                           onAI: { withAnimation(Motion.animation) { aiOpen.toggle() } },
                           onAttach: { attachFiles() },
                           onSnippet: { snippetOpen = true },
@@ -116,13 +137,18 @@ struct ComposeView: View {
             .foregroundStyle(theme.ink3.color)
         }
         .padding(.horizontal, 12)
-        .padding(.vertical, 10)
-        .frame(maxWidth: inline ? 640 : .infinity, alignment: .leading)
-        .background(RoundedRectangle(cornerRadius: 12).fill(theme.surface.color))
-        .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(theme.accent.color, lineWidth: 1))
-        .shadow(color: theme.accent.color.opacity(0.25), radius: 10, y: 6)
+        .padding(.vertical, docked ? 8 : 10)
+        .frame(maxWidth: inline ? 640 : .infinity,
+               maxHeight: docked ? .infinity : nil, alignment: docked ? .topLeading : .leading)
+        // Das Panel liefert Fläche, Rand und Schatten selbst (ComposePanelView);
+        // im Fenster und unter dem Thread bleibt die Karte wie bisher.
+        .background(docked ? nil : RoundedRectangle(cornerRadius: 12).fill(theme.surface.color))
+        .overlay(docked ? nil : RoundedRectangle(cornerRadius: 12).strokeBorder(theme.accent.color, lineWidth: 1))
+        .shadow(color: docked ? .clear : theme.accent.color.opacity(0.25), radius: 10, y: 6)
         .background(WindowProbe(window: $window))
         .onAppear {
+            if docked { AppModel.shared.compose.takeFocus(draft.id) }
+            if inline { AppModel.shared.compose.takeInlineFocus(draft.id) }
             draft.editorHost = editor
             editor.onMentionPick = { suggestion in draft.addRecipient(suggestion.address) }
             // Esc first closes an open popup, only then the draft: with the
@@ -136,6 +162,8 @@ struct ComposeView: View {
                     mentionSuggestions = []
                     editor.mentionSuggestions = []
                     editor.focus()
+                } else if let onEscape {
+                    onEscape()
                 } else {
                     discard()
                 }
@@ -152,19 +180,27 @@ struct ComposeView: View {
                 Task { await draft.loadQuickReplies() }
             }
         }
-        .onDisappear { removeKeyMonitor() }
+        .onDisappear {
+            removeKeyMonitor()
+            if inline { AppModel.shared.compose.releaseInlineFocus(draft.id) }
+        }
         .onChange(of: aiOpen) { _, open in
             if open { DispatchQueue.main.async { aiFocused = true } }
         }
+        // `⌃Tab` (und `C`) legen den Fokus in den Editor des Panels.
+        .onChange(of: focusRequest) { _, _ in
+            guard docked, AppModel.shared.compose.keyboardFocus == draft.id else { return }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.02) { editor.focus() }
+        }
         .onReceive(NotificationCenter.default.publisher(for: .rabeComposeAI)) { note in
-            guard isKeyWindow else { return }
+            guard isKeyWindow, note.isFor(draft.id) else { return }
             switch note.object as? String {
             case "draft": withAnimation(Motion.animation) { aiOpen = true }
             case "proofread": Task { await draft.aiProofread() }
             default: break
             }
         }
-        .modifier(ComposeDefaultFocus(focus: $focus, field: initialField, active: !inline))
+        .modifier(ComposeDefaultFocus(focus: $focus, field: initialField, active: presentation == .window))
         // Esc: an open popup closes first, only then the draft. SwiftUI runs
         // this handler for a TextField's Esc even when the child already
         // consumed it — without the check, closing the link field threw the
@@ -177,6 +213,8 @@ struct ComposeView: View {
                 mentionSuggestions = []
                 editor.mentionSuggestions = []
                 editor.focus()
+            } else if let onEscape {
+                onEscape()
             } else {
                 discard()
             }
@@ -192,7 +230,7 @@ struct ComposeView: View {
         .sheet(isPresented: $sendLaterOpen) { sendLaterSheet }
         .sheet(isPresented: $snippetOpen) { snippetSheet }
         .onReceive(NotificationCenter.default.publisher(for: .rabeComposeAction)) { note in
-            guard isKeyWindow else { return }
+            guard isKeyWindow, note.isFor(draft.id) else { return }
             handleComposeAction(note.object as? String ?? "")
         }
     }
@@ -524,18 +562,13 @@ struct ComposeView: View {
         // `send_done` also archives the answered thread, like Tauri's send_done.
         let threadId = draft.threadId
         draft.send(variant: variant, onSent: {
-            if inline { model.mailbox.inlineCompose = nil } else { onClose?() }
+            model.composeDraftLeft(draft, presentation: presentation) { onClose?() }
             if variant == .done, let threadId, model.mailbox.index(of: threadId) != nil {
                 model.mailbox.archive(threadId)
                 PerfLog.shared.write("send_done thread=\(threadId)")
             }
-            model.mailbox.focusList()
         }, onUndo: { restored in
-            if inline { model.mailbox.inlineCompose = restored } else {
-                model.composeDrafts[restored.id] = restored
-                model.openComposeWindow?(restored.id)
-            }
-            model.toasts.show(Strings.undone)
+            model.composeDraftReturned(restored, presentation: presentation)
         })
     }
 
@@ -771,7 +804,21 @@ struct ComposeView: View {
     }
 
     private func discard() {
-        if inline { AppModel.shared.discardInlineDraft() } else { draft.discard(); onClose?() }
+        switch presentation {
+        case .inline: AppModel.shared.discardInlineDraft()
+        case .docked: AppModel.shared.discardDockedDraft(draft.id)
+        case .window: draft.discard(); onClose?()
+        }
+    }
+
+    /// Höhe des Editors: unter dem Thread knapp, im Fenster großzügig, im
+    /// Panel füllt er den Rest (Entwurf §3.2).
+    private var editorMinHeight: CGFloat {
+        switch presentation {
+        case .inline: 84
+        case .window: 200
+        case .docked: 120
+        }
     }
 }
 
@@ -811,7 +858,8 @@ private struct ComposeDefaultFocus: ViewModifier {
     }
 }
 
-/// `C`: new mail in its own window.
+/// `⌥C` bzw. „In eigenem Fenster": der Entwurf als eigenes Fenster. Der
+/// Gegenweg steht in der Kopfzeile („Im Hauptfenster andocken", M2.9 §3.3).
 struct ComposeWindowView: View {
     let draftID: UUID?
     @Environment(\.dismiss) private var dismiss
@@ -821,17 +869,32 @@ struct ComposeWindowView: View {
         Group {
             if let draftID, let draft = model.composeDrafts[draftID] {
                 VStack(alignment: .leading, spacing: 10) {
-                    Text(draft.title).font(.system(size: 15, weight: .semibold))
-                    ComposeView(draft: draft, inline: false) {
-                        model.composeDrafts[draftID] = nil
-                        dismiss()
+                    HStack(spacing: 8) {
+                        Text(draft.title).font(.system(size: 15, weight: .semibold))
+                        Spacer(minLength: 8)
+                        Button {
+                            model.dockComposeWindow(draftID)
+                            dismiss()
+                        } label: {
+                            HStack(spacing: 5) {
+                                Image(systemName: "rectangle.bottomhalf.inset.filled")
+                                Text("Im Hauptfenster andocken")
+                            }
+                            .font(.system(size: 11.5))
+                        }
+                        .buttonStyle(.plain)
+                        .help("Zurück ins Verfassen-Panel")
                     }
+                    ComposeView(draft: draft, presentation: .window) { dismiss() }
                 }
                 .padding(18)
             } else {
                 Text("Kein Entwurf").padding()
             }
         }
+        // Das Fenster schließt per rotem Knopf ohne Senden: der Entwurf wandert
+        // dann als Leiste ins Dock, statt unsichtbar liegen zu bleiben (M2.9).
+        .onDisappear { if let draftID { model.composeWindowClosed(draftID) } }
         // Tall enough for the AI bar, a proofread proposal and the undo row
         // without clipping the send row (M2.3).
         .frame(minWidth: 540, minHeight: 600)
@@ -848,6 +911,10 @@ private struct ComposeFooter: View {
     @Bindable var draft: ComposeDraft
     let theme: Theme
     let onDismissHint: Bool
+    /// „verwerfen" unter dem Thread und im Fenster, „minimieren" im Panel.
+    var escHint: String = "verwerfen"
+    /// Unter dem Thread: „Lösen" ins Panel (§3.7).
+    var onDetach: (() -> Void)? = nil
     let onAI: () -> Void
     let onAttach: () -> Void
     let onSnippet: () -> Void
@@ -861,11 +928,15 @@ private struct ComposeFooter: View {
         // Knöpfe im 620-pt-Fenster umbrochen und "Senden" abgeschnitten (M2.5-
         // Walkthrough, Screenshot m25-attachments.png).
         HStack(spacing: 8) {
-            HStack(spacing: 5) { KeyCap("Esc"); Text("verwerfen") }
+            HStack(spacing: 5) { KeyCap("Esc"); Text(escHint) }
                 .fixedSize()
             iconButton("sparkles", "⌘J", help: "Mit KI schreiben (⌘J)", tint: theme.accent.color, action: onAI)
             iconButton("paperclip", "⌘⇧A", help: "Dateien anhängen (⌘⇧A)", action: onAttach)
             iconButton("text.badge.plus", "⌘;", help: "Textbaustein einfügen (⌘;)", action: onSnippet)
+            if let onDetach {
+                iconButton("rectangle.portrait.and.arrow.right", "⌘⇧M",
+                           help: "In das Verfassen-Panel lösen (⌘⇧M)", action: onDetach)
+            }
             if draft.savedOnce {
                 Text(Strings.draftSaved).lineLimit(1).fixedSize()
             }

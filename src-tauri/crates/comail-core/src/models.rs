@@ -1566,6 +1566,9 @@ pub struct CalendarEvent {
     pub all_day: bool,
     pub status: Option<String>,
     pub method: Option<String>,
+    /// Why the last push to the calendar server failed (None = in sync or
+    /// never pushed). Shown by the app as "Nicht hochgeladen: …".
+    pub sync_error: Option<String>,
 }
 
 /// A discovered CalDAV calendar collection.

@@ -2304,10 +2304,34 @@ impl Core {
             .read(move |conn| repo::calendar::get(conn, event_id))
             .await?
             .ok_or_else(|| CoreError::NotFound("event".into()))?;
-        if !existing.is_local {
-            return Err(CoreError::Other(
-                "only events you organize can be edited".into(),
-            ));
+        // M2.16: Bearbeitungsrecht nach derselben Regel wie in der App
+        // (`CalendarPermissions`): Organisator und Kalender entscheiden, nicht
+        // die Herkunft. Vorher war jeder aus CalDAV gezogene Termin gesperrt —
+        // auch der eigene ohne Organisator, also fast der ganze Kalender.
+        let account_id = existing.account_id;
+        let account = self
+            .db
+            .read(move |conn| repo::accounts::get(conn, account_id))
+            .await?
+            .ok_or_else(|| CoreError::NotFound("account".into()))?;
+        let read_only = match existing.calendar_id {
+            Some(calendar_id) => Some(
+                self.db
+                    .read(move |conn| repo::caldav::get_calendar(conn, calendar_id))
+                    .await?
+                    .map(|c| c.read_only)
+                    .ok_or_else(|| CoreError::NotFound("calendar".into()))?,
+            ),
+            None => None,
+        };
+        if let Some(reason) = calendar::edit_blocked_reason(
+            existing.organizer.as_deref(),
+            existing.status.as_deref(),
+            read_only,
+            &account.email,
+            existing.is_local,
+        ) {
+            return Err(CoreError::Other(reason.into()));
         }
 
         // Preserve responses attendees already gave; new addresses start out
@@ -2547,6 +2571,7 @@ impl Core {
                 let tx = conn.transaction()?;
                 repo::caldav::upsert_config(&tx, &cfg)?;
                 let mut first_id = None;
+                let mut first_writable = None;
                 for c in &calendars {
                     let id = repo::caldav::upsert_calendar(
                         &tx,
@@ -2554,11 +2579,16 @@ impl Core {
                         &c.url,
                         c.display_name.as_deref(),
                         c.color.as_deref(),
-                        false,
+                        c.read_only,
                     )?;
                     first_id.get_or_insert(id);
+                    if !c.read_only {
+                        first_writable.get_or_insert(id);
+                    }
                 }
-                if let Some(id) = first_id {
+                // M2.16: Ein schreibgeschützter geteilter Kalender darf nicht
+                // Standard werden, sonst scheitert jeder neue Termin.
+                if let Some(id) = first_writable.or(first_id) {
                     // Keep an existing default if one is set; else first wins.
                     let has_default: i64 = tx.query_row(
                         "SELECT COUNT(*) FROM calendars WHERE account_id = ?1 AND is_default = 1",
@@ -2754,6 +2784,7 @@ impl Core {
                 repo::caldav::upsert_config(&tx, &cfg)?;
                 let mut default_id = None;
                 let mut first_id = None;
+                let mut first_writable = None;
                 for c in &discovered {
                     let id = repo::caldav::upsert_calendar(
                         &tx,
@@ -2764,11 +2795,15 @@ impl Core {
                         !c.can_edit,
                     )?;
                     first_id.get_or_insert(id);
-                    if c.is_default {
-                        default_id.get_or_insert(id);
+                    if c.can_edit {
+                        first_writable.get_or_insert(id);
+                        if c.is_default {
+                            default_id.get_or_insert(id);
+                        }
                     }
                 }
-                if let Some(id) = default_id.or(first_id) {
+                // M2.16: nur ein beschreibbarer Kalender wird Standard.
+                if let Some(id) = default_id.or(first_writable).or(first_id) {
                     // Keep an existing default if one is set; else Outlook's
                     // default calendar (or the first) wins.
                     let has_default: i64 = tx.query_row(
@@ -3699,19 +3734,37 @@ impl Core {
         // it answers in one pass over fewer seed sources.
         let on_device = ai::apple::is_apple(&cfg.base_url);
 
+        // M2.10: die festen Texte kommen in der Sprache der Oberfläche, nicht
+        // in der des Prompts.
+        let lang = cfg
+            .language
+            .as_deref()
+            .and_then(ai::language_code)
+            .unwrap_or("en")
+            .to_string();
+
         // RAG seed: the model always starts from the best hybrid matches.
         let seed = if on_device { 4 } else { 8 };
         let sources = self.retrieve_search(&question, seed).await?;
-        if sources.is_empty() {
+        // M2.10: eine leere Vorauswahl ist nur dann das Ende, wenn das Modell
+        // keine Werkzeuge hat (Apple on-device). Sonst bekommt es die Frage mit
+        // dem Hinweis, dass nichts vorausgewählt war, und sucht selbst.
+        let tools = ai::ask_tools();
+        let tools_available = !on_device
+            && tools
+                .as_array()
+                .map(|list| !list.is_empty())
+                .unwrap_or(false);
+        if !ai::ask_continues_without_seed(sources.is_empty(), tools_available) {
             return Ok(AskResult {
-                answer: "I couldn't find anything relevant in your mailbox. \
-                         Make sure semantic search is enabled and indexing has finished."
-                    .into(),
+                answer: ai::ask_text(&lang, ai::AskText::NoHits, ""),
                 citations: Vec::new(),
             });
         }
         // Surface the seed sources immediately; more are emitted as the model searches.
-        self.emit_ask_citations(&request_id, &sources);
+        if !sources.is_empty() {
+            self.emit_ask_citations(&request_id, &sources);
+        }
         // Excerpts of mail whose body hasn't downloaded yet are just the
         // snippet; fetch those so the model reads real text.
         let mut sources = self.ensure_bodies(sources).await;
@@ -3721,14 +3774,19 @@ impl Core {
             initial_context.push_str(&ai::format_excerpt(i + 1, m));
         }
         let ask_system = format!("{}{}", ai::AGENTIC_ASK_SYSTEM, ai::language_directive(&cfg));
+        let user_content = if sources.is_empty() {
+            format!(
+                "No email was preselected for this question. Search the mailbox yourself \
+                 (search_inbox, then read_email for whole threads) before you answer.\n\
+                 Question: {question}"
+            )
+        } else {
+            format!("Emails:\n\n{initial_context}\nQuestion: {question}")
+        };
         let mut messages: Vec<serde_json::Value> = vec![
             serde_json::json!({ "role": "system", "content": ask_system }),
-            serde_json::json!({
-                "role": "user",
-                "content": format!("Emails:\n\n{initial_context}\nQuestion: {question}"),
-            }),
+            serde_json::json!({ "role": "user", "content": user_content }),
         ];
-        let tools = ai::ask_tools();
 
         let reasoning = |text: String| {
             self.bus.emit(CoreEvent::AskReasoning {
@@ -3793,8 +3851,13 @@ impl Core {
                     for call in calls {
                         let (result, added) = match call.name.as_str() {
                             "search_inbox" => {
-                                self.run_search_inbox(&call.arguments, &mut sources, &reasoning)
-                                    .await
+                                self.run_search_inbox(
+                                    &call.arguments,
+                                    &mut sources,
+                                    &reasoning,
+                                    &lang,
+                                )
+                                .await
                             }
                             "read_email" => (
                                 self.run_read_email(&call.arguments, &sources, &reasoning)
@@ -3870,7 +3933,7 @@ impl Core {
         // Never settle on a blank answer - the model thought but produced no
         // user-facing text.
         let answer = if answer.trim().is_empty() {
-            "I couldn't find an answer to that in your mailbox.".to_string()
+            ai::ask_text(&lang, ai::AskText::NoAnswer, "")
         } else {
             answer
         };
@@ -3919,6 +3982,7 @@ impl Core {
         arguments: &str,
         sources: &mut Vec<MessageDetail>,
         progress: &impl Fn(String),
+        lang: &str,
     ) -> (String, usize) {
         let args: serde_json::Value =
             serde_json::from_str(arguments).unwrap_or_else(|_| serde_json::json!({}));
@@ -3932,7 +3996,7 @@ impl Core {
                 0,
             );
         }
-        progress(format!("\nSearching \u{201c}{query}\u{201d}\n"));
+        progress(ai::ask_text(lang, ai::AskText::Searching, &query));
         let limit = args["limit"].as_u64().unwrap_or(6).clamp(1, 8) as usize;
         let details = self
             .retrieve_search(&query, limit)

@@ -7,8 +7,6 @@ import SwiftUI
 /// how many lines fit, so a resize recomputes the layout once per row.
 struct CalendarMonthView: View {
     let store: CalendarStore
-    @Binding var editor: EventEditorRequest?
-    @Binding var detail: CalendarEvent?
     /// "Löschen …" from a context menu; the screen asks before it deletes.
     var onDelete: (CalendarEvent) -> Void = { _ in }
     @Environment(\.theme) private var theme
@@ -24,20 +22,68 @@ struct CalendarMonthView: View {
             let month = math.monthIndex(monthStart)
             let cells = math.monthGridDays(store.anchor)
             let weeks = (0..<6).map { Array(cells[($0 * 7)..<($0 * 7 + 7)]) }
-            let rowHeight = max(60, proxy.size.height / 6)
+            // M2.9 §7.2: das Band unter der Woche des Termins schiebt die
+            // übrigen Wochen zusammen, statt die Ansicht scrollen zu lassen.
+            let bandHeight = bandHeight(in: proxy.size.height)
+            let rowHeight = max(48, (proxy.size.height - bandHeight) / 6)
             let cap = max(1, Int((rowHeight - CalendarGrid.monthHeadPx - 2) / CalendarGrid.monthLinePx))
             let today = store.todayStart
+            let bandWeek = bandWeekIndex(weeks: weeks)
             VStack(spacing: 0) {
                 weekdayHeader(cells)
                 ForEach(Array(weeks.enumerated()), id: \.offset) { index, week in
-                    weekRow(week, month: month, today: today, cap: cap, rowHeight: rowHeight,
-                            index: index, math: math)
+                    VStack(spacing: 0) {
+                        weekRow(week, month: month, today: today, cap: cap, rowHeight: rowHeight,
+                                index: index, math: math)
+                        if index == bandWeek, bandHeight > 0 {
+                            band(height: bandHeight)
+                        }
+                    }
                 }
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: .rabeCalendarDayList)) { note in
             if let day = note.userInfo?["day"] as? Int64 { dayList = day }
         }
+    }
+
+    /// Höhe des Bands: 226 pt, aber nie mehr als die Ansicht hergibt (§7.2).
+    private func bandHeight(in total: CGFloat) -> CGFloat {
+        guard store.cardIsOpen else { return 0 }
+        let room = total - 6 * 56
+        return max(120, min(226, room))
+    }
+
+    /// Die Woche, unter der das Band steht: die des Termins (bzw. des neuen
+    /// Entwurfs), sonst die letzte.
+    private func bandWeekIndex(weeks: [[Int64]]) -> Int {
+        let start = store.openEvent?.startsAt ?? store.draft?.startsAt
+        guard let start else { return weeks.count - 1 }
+        let day = store.math.startOfDay(start)
+        for (index, week) in weeks.enumerated() where week.contains(day) { return index }
+        return weeks.count - 1
+    }
+
+    /// Das Band: die Karte in zwei Spalten, unten bündig in der Woche (§7.2).
+    private func band(height: CGFloat) -> some View {
+        HStack(spacing: 0) {
+            CalendarEventCard(store: store, layout: .band,
+                              onClose: {
+                              PerfLog.shared.write("calendar_card_close_button")
+                              store.closeCard()
+                          },
+                              onDelete: onDelete)
+                .frame(height: height - 8, alignment: .top)
+                .clipped()
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 8)
+        .padding(.bottom, 6)
+        .background(theme.bar.color.opacity(0.55))
+        .overlay(alignment: .top) {
+            Rectangle().fill(theme.line.color).frame(height: 0.5)
+        }
+        .transition(.opacity)
     }
 
     private func weekdayHeader(_ cells: [Int64]) -> some View {
@@ -112,7 +158,7 @@ struct CalendarMonthView: View {
                                            theme: theme,
                                            onOpen: { event in
                                                dayList = nil
-                                               detail = event
+                                               store.openCard(event.id)
                                            },
                                            onOpenDay: {
                                                dayList = nil
@@ -150,6 +196,8 @@ struct CalendarMonthView: View {
         let weekend = isWeekend(day)
         let isToday = day == today
         return Button {
+            // M2.12: eine offene Karte gibt der Tagesansicht Platz.
+            if store.cardIsOpen { store.closeCard() }
             store.go(to: day)
             store.setMode(.day)
         } label: {
@@ -179,7 +227,7 @@ struct CalendarMonthView: View {
         .contextMenu {
             Button("Neuer Termin an diesem Tag") {
                 let start = store.math.at(day, hour: 9)
-                editor = EventEditorRequest(startsAt: start, endsAt: start + 30 * 60_000)
+                store.beginDraft(CalendarEventDraft(startsAt: start, endsAt: start + 30 * 60_000))
             }
         }
         .help(CalendarChrome.longDay(day))
@@ -222,11 +270,17 @@ struct CalendarMonthView: View {
             .onTapGesture { clicked(span.event) }
             .contextMenu {
                 EventContextMenu(store: store, event: span.event,
-                                 onOpen: { detail = span.event },
-                                 onEdit: { edit(span.event) },
+                                 onOpen: { store.openCard(span.event.id) },
+                                 onEdit: { store.openCard(span.event.id, edit: true) },
                                  onDelete: { onDelete(span.event) })
             }
-            .eventDetailPopover(store: store, event: span.event, detail: $detail, editor: $editor)
+            .overlay {
+                if store.openEventId == span.event.id || store.selectedEventId == span.event.id {
+                    RoundedRectangle(cornerRadius: 4)
+                        .strokeBorder(color, lineWidth: store.openEventId == span.event.id ? 1.5 : 1)
+                        .allowsHitTesting(false)
+                }
+            }
             .help(span.event.summary ?? "")
     }
 
@@ -256,26 +310,27 @@ struct CalendarMonthView: View {
             .onTapGesture { clicked(event) }
             .contextMenu {
                 EventContextMenu(store: store, event: event,
-                                 onOpen: { detail = event },
-                                 onEdit: { edit(event) },
+                                 onOpen: { store.openCard(event.id) },
+                                 onEdit: { store.openCard(event.id, edit: true) },
                                  onDelete: { onDelete(event) })
             }
-            .eventDetailPopover(store: store, event: event, detail: $detail, editor: $editor)
+            .overlay {
+                if store.openEventId == event.id || store.selectedEventId == event.id {
+                    RoundedRectangle(cornerRadius: 4)
+                        .strokeBorder(color, lineWidth: store.openEventId == event.id ? 1.5 : 1)
+                        .allowsHitTesting(false)
+                }
+            }
             .help(event.summary ?? "")
     }
 
-    /// Single click opens the detail popover, double click the editor.
+    /// Ein Klick öffnet das Band unter der Woche, ein Doppelklick das Formular.
     private func clicked(_ event: CalendarEvent) {
         store.selectedEventId = event.id
         PerfLog.shared.write("calendar_click id=\(event.id) mode=month source=month")
-        clicks.click(String(event.id), onOpen: { detail = event }, onEdit: { edit(event) })
-    }
-
-    private func edit(_ event: CalendarEvent) {
-        detail = nil
-        editor = EventEditorRequest(event: event, startsAt: event.startsAt,
-                                    endsAt: CalendarEventRules.eventEnd(event),
-                                    allDay: event.allDay)
+        clicks.click(String(event.id),
+                     onOpen: { store.openCard(event.id) },
+                     onEdit: { store.openCard(event.id, edit: true) })
     }
 
     private func isWeekend(_ day: Int64) -> Bool {

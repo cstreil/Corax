@@ -28,6 +28,7 @@ fn from_row(row: &Row) -> rusqlite::Result<CalendarEvent> {
         all_day: row.get::<_, i64>("all_day")? != 0,
         status: row.get("status")?,
         method: row.get("method")?,
+        sync_error: row.get("sync_error")?,
     })
 }
 
@@ -369,6 +370,15 @@ pub fn hard_delete(conn: &Connection, event_id: i64) -> Result<()> {
     Ok(())
 }
 
+/// Remember why the last push of an event failed; None clears the hint.
+pub fn set_sync_error(conn: &Connection, event_id: i64, error: Option<&str>) -> Result<()> {
+    conn.execute(
+        "UPDATE calendar_events SET sync_error = ?2 WHERE id = ?1",
+        params![event_id, error],
+    )?;
+    Ok(())
+}
+
 /// After a successful PUT: record the server's identity for the row.
 pub fn clear_dirty_set_etag(
     conn: &Connection,
@@ -379,7 +389,8 @@ pub fn clear_dirty_set_etag(
     ical_raw: &str,
 ) -> Result<()> {
     conn.execute(
-        "UPDATE calendar_events SET dirty = 0, calendar_id = ?2, caldav_href = ?3,
+        "UPDATE calendar_events SET dirty = 0, sync_error = NULL,
+                calendar_id = ?2, caldav_href = ?3,
                 etag = COALESCE(?4, etag), ical_raw = ?5
          WHERE id = ?1",
         params![event_id, calendar_id, href, etag, ical_raw],

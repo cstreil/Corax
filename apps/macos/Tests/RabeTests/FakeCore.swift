@@ -38,8 +38,14 @@ actor FakeCore: MailCore {
     func setSaveDelay(_ delay: Duration) { saveDelay = delay }
     func setUndoResult(_ value: Bool) { undoResult = value }
 
-    func listThreads(view: MailView, splitId: Int64?, accountId: Int64?, cursor: Int64?, limit: Int) async throws -> ThreadPage {
-        ThreadPage(threads: threads, nextCursor: nil)
+    /// M2.9: the filters the list asked for, so a test can check that the
+    /// sidebar's label/folder choice reaches the core.
+    private(set) var listQueries: [(labelId: Int64?, folderId: Int64?)] = []
+
+    func listThreads(view: MailView, splitId: Int64?, accountId: Int64?, labelId: Int64?,
+                     folderId: Int64?, cursor: Int64?, limit: Int) async throws -> ThreadPage {
+        listQueries.append((labelId, folderId))
+        return ThreadPage(threads: threads, nextCursor: nil)
     }
 
     /// M2.8c: a test that opens a thread sets a detail here. Without one the

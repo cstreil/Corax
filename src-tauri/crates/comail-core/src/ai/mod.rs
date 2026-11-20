@@ -109,6 +109,58 @@ pub fn language_directive(cfg: &AiConfig) -> String {
     }
 }
 
+/// Two-letter code for a human-readable language name — the reverse of
+/// [`ui_language_name`]. Unknown or "system" gives `None`.
+pub fn language_code(name: &str) -> Option<&'static str> {
+    match name {
+        "German" => Some("de"),
+        "English" => Some("en"),
+        "Spanish" => Some("es"),
+        "French" => Some("fr"),
+        "Chinese" => Some("zh"),
+        "Vietnamese" => Some("vi"),
+        _ => None,
+    }
+}
+
+/// The fixed, user-facing texts of „Frag die KI". The UI has locale files, the
+/// core does not; these two languages are mapped here so a user who reads
+/// German never gets an English sentence in the middle of an answer (M2.10).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AskText {
+    /// Nothing found and the model may not search by itself.
+    NoHits,
+    /// The model answered but produced no text.
+    NoAnswer,
+    /// Progress line while a tool call searches.
+    Searching,
+}
+
+/// `arg` is the search term for [`AskText::Searching`], ignored otherwise.
+pub fn ask_text(lang: &str, key: AskText, arg: &str) -> String {
+    match (lang, key) {
+        ("de", AskText::NoHits) => "Ich habe in deinem Postfach nichts Passendes gefunden. \
+             Prüfe, ob die semantische Suche eingeschaltet ist und der Index fertig ist."
+            .into(),
+        ("de", AskText::NoAnswer) => {
+            "Dazu habe ich in deinem Postfach keine Antwort gefunden.".into()
+        }
+        ("de", AskText::Searching) => format!("\nIch suche nach „{arg}“\n"),
+        (_, AskText::NoHits) => "I couldn't find anything relevant in your mailbox. \
+             Make sure semantic search is enabled and indexing has finished."
+            .into(),
+        (_, AskText::NoAnswer) => "I couldn't find an answer to that in your mailbox.".into(),
+        (_, AskText::Searching) => format!("\nSearching \u{201c}{arg}\u{201d}\n"),
+    }
+}
+
+/// M2.10: an empty preselection only ends Ask when the model cannot use tools
+/// (the on-device model has no tool calling). Everything else gets the question
+/// with a note and searches the mailbox itself.
+pub fn ask_continues_without_seed(seed_is_empty: bool, tools_available: bool) -> bool {
+    !seed_is_empty || tools_available
+}
+
 /// Append [`language_directive`] to a prompt's leading system message.
 pub fn apply_language(mut msgs: Vec<ChatMessage>, cfg: &AiConfig) -> Vec<ChatMessage> {
     let directive = language_directive(cfg);
@@ -2422,6 +2474,48 @@ mod language_tests {
             usage_sink: None,
         };
         assert!(language_directive(&cfg).contains("in German"));
+    }
+}
+
+#[cfg(test)]
+mod ask_text_tests {
+    use super::*;
+
+    #[test]
+    fn fixed_texts_follow_the_ui_language() {
+        let de = ask_text("de", AskText::NoHits, "");
+        assert!(de.contains("nichts Passendes"), "deutsche Meldung: {de}");
+        assert!(
+            !de.contains("couldn't find"),
+            "kein englisches Reststück: {de}"
+        );
+        let en = ask_text("en", AskText::NoHits, "");
+        assert!(en.contains("couldn't find"), "englischer Rückfall: {en}");
+        // Eine unbekannte Sprache fällt auf Englisch zurück, nie auf leer.
+        let fallback = ask_text("xx", AskText::NoAnswer, "");
+        assert!(fallback.contains("couldn't find an answer"), "{fallback}");
+        assert!(ask_text("de", AskText::Searching, "Rechnung").contains("Ich suche nach"));
+        assert!(ask_text("en", AskText::Searching, "invoice").contains("Searching"));
+    }
+
+    #[test]
+    fn language_codes_round_trip() {
+        for code in ["de", "en", "es", "fr", "zh", "vi"] {
+            let name = ui_language_name(code).expect("Name vorhanden");
+            assert_eq!(language_code(name), Some(code));
+        }
+        assert_eq!(language_code("Klingonisch"), None);
+    }
+
+    #[test]
+    fn an_empty_preselection_only_stops_a_model_without_tools() {
+        // On-device (keine Werkzeuge): die feste Antwort bleibt.
+        assert!(!ask_continues_without_seed(true, false));
+        // Mit Werkzeugen: das Modell sucht selbst (M2.10).
+        assert!(ask_continues_without_seed(true, true));
+        // Mit Vorauswahl läuft es immer weiter.
+        assert!(ask_continues_without_seed(false, true));
+        assert!(ask_continues_without_seed(false, false));
     }
 }
 

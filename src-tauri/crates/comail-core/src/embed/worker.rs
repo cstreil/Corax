@@ -47,6 +47,52 @@ async fn run(db: Db, state: Arc<EmbedState>, paths: Arc<Paths>) {
     }
 }
 
+/// How long a freshly enqueued action still outranks indexing.
+const FOREGROUND_GRACE_MS: i64 = 120_000;
+
+/// Whether live mail or a user action outranks **indexing**. A user action
+/// counts only while it is really running: `inflight`, or enqueued moments ago
+/// and never deferred. The queue retries deferred actions for up to a day
+/// (`queue::record_deferral`), so counting those would keep the index stopped
+/// forever once one action can never succeed — exactly what six stuck rows did
+/// (M2.15a §1.4, fixed in M2.16).
+fn foreground_busy(conn: &rusqlite::Connection) -> Result<bool> {
+    let cutoff = crate::models::now_ms() - FOREGROUND_GRACE_MS;
+    Ok(conn.query_row(
+        "SELECT EXISTS(
+            SELECT 1 FROM accounts WHERE sync_state = 'syncing'
+            UNION ALL
+            SELECT 1 FROM pending_actions
+             WHERE state = 'inflight'
+                OR (
+                  state = 'pending'
+                  AND kind NOT LIKE 'cal!_%' ESCAPE '!'
+                  AND COALESCE(json_extract(payload, '$.deferrals'), 0) = 0
+                  AND created_at >= ?1
+                )
+            UNION ALL
+            SELECT 1
+              FROM messages m
+              JOIN accounts a ON a.id = m.account_id
+              JOIN folders f ON f.id = m.folder_id
+             WHERE m.uid IS NOT NULL
+               AND (a.provider = 'gmail' OR COALESCE(f.role, '') <> 'all')
+               AND (
+                 m.body_state = 'fetching'
+                 OR (
+                   m.body_state = 'none'
+                   AND NOT EXISTS (
+                     SELECT 1 FROM sync_failures sf
+                      WHERE sf.stage = 'content' AND sf.message_id = m.id
+                   )
+                 )
+               )
+         )",
+        [cutoff],
+        |row| row.get::<_, i64>(0),
+    )? != 0)
+}
+
 /// One cycle. Returns Ok(true) if it embedded at least one message.
 async fn tick(db: &Db, state: &Arc<EmbedState>, paths: &Arc<Paths>) -> Result<bool> {
     let settings = db.read(|conn| repo::settings::get(conn)).await?;
@@ -62,45 +108,21 @@ async fn tick(db: &Db, state: &Arc<EmbedState>, paths: &Arc<Paths>) -> Result<bo
     }
 
     // Live mail, user actions, and an opened message always outrank semantic
-    // indexing. Candle can otherwise consume several CPU cores while the IMAP
-    // actor is trying to make the Inbox usable.
-    let foreground_busy = db
-        .read(|conn| {
-            Ok(conn.query_row(
-                "SELECT EXISTS(
-                    SELECT 1 FROM accounts WHERE sync_state = 'syncing'
-                    UNION ALL
-                    SELECT 1 FROM pending_actions
-                     WHERE state IN ('pending','inflight')
-                       AND kind NOT LIKE 'cal!_%' ESCAPE '!'
-                    UNION ALL
-                    SELECT 1
-                      FROM messages m
-                      JOIN accounts a ON a.id = m.account_id
-                      JOIN folders f ON f.id = m.folder_id
-                     WHERE m.uid IS NOT NULL
-                       AND (a.provider = 'gmail' OR COALESCE(f.role, '') <> 'all')
-                       AND (
-                         m.body_state = 'fetching'
-                         OR (
-                           m.body_state = 'none'
-                           AND NOT EXISTS (
-                             SELECT 1 FROM sync_failures sf
-                              WHERE sf.stage = 'content' AND sf.message_id = m.id
-                           )
-                         )
-                       )
-                 )",
-                [],
-                |row| row.get::<_, i64>(0),
-            )? != 0)
-        })
-        .await?;
+    // **indexing**. Candle can otherwise consume several CPU cores while the
+    // IMAP actor is trying to make the Inbox usable. The model itself is loaded
+    // either way (M2.10, see below).
+    let foreground_busy = db.read(|conn| foreground_busy(conn)).await?;
+    // M2.10: das Modell **vor** der Beschäftigt-Prüfung laden. Vorher lud es
+    // nur `tick`, und `tick` stieg aus, solange irgendeine Mail noch keinen
+    // Inhalt hatte — in einem großen Postfach fast immer. Dann war
+    // `embed.embedder()` leer, die semantische Suche lieferte nichts und
+    // „Frag die KI“ brach mit „nichts gefunden“ ab. Das Laden ist einmalig und
+    // liest nur (`ensure_ready` kehrt sofort zurück, wenn das Modell steht);
+    // die Batch-Schleife wartet weiter.
+    ensure_ready(db, state, paths, &settings.embedding_model).await?;
     if foreground_busy {
         return Ok(false);
     }
-
-    ensure_ready(db, state, paths, &settings.embedding_model).await?;
 
     let embedder = match state.embedder().await {
         Some(e) => e,
@@ -210,4 +232,76 @@ async fn ensure_ready(
     }
     tracing::info!("embed ready: model={model_id}");
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn seed_action(
+        conn: &rusqlite::Connection,
+        kind: &str,
+        state: &str,
+        deferrals: i64,
+        created_at: i64,
+    ) {
+        conn.execute(
+            "INSERT INTO pending_actions (account_id, kind, payload, state, created_at)
+             VALUES (1, ?1, ?2, ?3, ?4)",
+            rusqlite::params![
+                kind,
+                format!("{{\"deferrals\":{deferrals}}}"),
+                state,
+                created_at
+            ],
+        )
+        .unwrap();
+    }
+
+    fn seeded() -> rusqlite::Connection {
+        let conn = crate::db::testutil::conn();
+        crate::db::testutil::seed_account(&conn);
+        conn
+    }
+
+    #[test]
+    fn stuck_deferred_action_does_not_block_indexing() {
+        let conn = seeded();
+        let now = crate::models::now_ms();
+        // M2.15a §1.4b: exactly this state kept the index stopped for hours.
+        seed_action(&conn, "move", "pending", 22, now - 4 * 60 * 60 * 1000);
+        assert!(!foreground_busy(&conn).unwrap());
+    }
+
+    #[test]
+    fn a_young_deferred_action_does_not_block_indexing() {
+        let conn = seeded();
+        let now = crate::models::now_ms();
+        seed_action(&conn, "trash", "pending", 1, now - 1_000);
+        assert!(!foreground_busy(&conn).unwrap());
+    }
+
+    #[test]
+    fn a_fresh_user_action_still_outranks_indexing() {
+        let conn = seeded();
+        let now = crate::models::now_ms();
+        seed_action(&conn, "trash", "pending", 0, now - 1_000);
+        assert!(foreground_busy(&conn).unwrap());
+    }
+
+    #[test]
+    fn a_running_action_always_outranks_indexing() {
+        let conn = seeded();
+        let now = crate::models::now_ms();
+        seed_action(&conn, "move", "inflight", 0, now - 4 * 60 * 60 * 1000);
+        assert!(foreground_busy(&conn).unwrap());
+    }
+
+    #[test]
+    fn calendar_actions_never_block_indexing() {
+        let conn = seeded();
+        let now = crate::models::now_ms();
+        seed_action(&conn, "cal_push", "pending", 0, now - 1_000);
+        assert!(!foreground_busy(&conn).unwrap());
+    }
 }

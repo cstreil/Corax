@@ -16,6 +16,8 @@ struct RabeApp: App {
     private let model: AppModel
 
     init() {
+        // M2.13 A: ein Hook-Build startet nur in der Sandbox (sonst exit 78).
+        StartGuard.enforce()
         model = AppModel.shared
     }
 
@@ -127,12 +129,32 @@ struct RabeCommands: Commands {
 
     var body: some Commands {
         CommandGroup(replacing: .newItem) {
-            Button("Neue E-Mail\t C") { ActionDispatcher.perform(.compose) }
+            // M2.14 §6: ⌘N heißt je nach Modus „Neue Mail“ oder „Neuer Termin“.
+            Button("Neue E-Mail\t C") {
+                if model.calendarOpen { ActionDispatcher.perform(.calendarNewEvent) }
+                else { ActionDispatcher.perform(.compose) }
+            }
+            .keyboardShortcut("n", modifiers: .command)
+            Button("Neue E-Mail im eigenen Fenster\t ⌥C") { ActionDispatcher.perform(.composeInWindow) }
+                .keyboardShortcut("c", modifiers: .option)
         }
         CommandMenu("Postfach") {
-            ForEach(MailView.allCases) { view in
-                Button(Strings.view(view)) { ActionDispatcher.perform(.view(view)) }
+            // M2.14 §6: ⌘1…⌘9 sind im Mailmodus die Postfächer, im Kalender
+            // Tag/Woche/Monat/Jahr/Liste — ein Punkt, der nach Modus verzweigt.
+            ForEach(Array(MailView.allCases.enumerated()), id: \.element) { index, view in
+                Button(Strings.view(view)) {
+                    let modes = CalendarStore.Mode.allCases
+                    if model.calendarOpen, index < modes.count {
+                        ActionDispatcher.perform(.calendarMode(modes[index]))
+                    } else {
+                        ActionDispatcher.perform(.view(view))
+                    }
+                }
+                .keyboardShortcut(KeyEquivalent(Character("\(index + 1)")), modifiers: .command)
             }
+            Divider()
+            Button("Jetzt synchronisieren\t ⇧⌘N") { ActionDispatcher.perform(.syncNow) }
+                .keyboardShortcut("n", modifiers: [.shift, .command])
             Divider()
             Button("Alle Konten") { ActionDispatcher.perform(.account(nil)) }
             ForEach(Array(model.mailbox.accounts.prefix(9).enumerated()), id: \.element.id) { index, account in
@@ -142,8 +164,10 @@ struct RabeCommands: Commands {
             Divider()
             Button("Konto hinzufügen …") { ActionDispatcher.perform(.addAccount) }
             Divider()
-            Button("Suchen\t /") { ActionDispatcher.perform(.search) }
-            Button("Befehlspalette") { ActionDispatcher.perform(.palette) }.keyboardShortcut("k", modifiers: .command)
+            Button("Suchen\t ⌥⌘F") { ActionDispatcher.perform(.search) }
+                .keyboardShortcut("f", modifiers: [.option, .command])
+            Button("Befehlspalette\t ⌘K") { ActionDispatcher.perform(.palette) }
+                .keyboardShortcut("k", modifiers: .command)
             Divider()
             // P2g: no keyboard shortcut (the list owns the plain keys). In the
             // sandbox it is always on and disabled — the sandbox writes freely.
@@ -154,40 +178,78 @@ struct RabeCommands: Commands {
             .disabled(!model.writeAccess.canToggle)
         }
         CommandMenu("E-Mail") {
-            Button("Antworten\t A") { ActionDispatcher.perform(.reply) }
-            Button("Allen antworten\t ⇧A") { ActionDispatcher.perform(.replyAll) }
-            Button("Weiterleiten\t W") { ActionDispatcher.perform(.forward) }
+            Button("Antworten\t R") { ActionDispatcher.perform(.reply) }
+                .keyboardShortcut("r", modifiers: .command)
+            Button("Allen antworten\t ⇧R") { ActionDispatcher.perform(.replyAll) }
+                .keyboardShortcut("r", modifiers: [.shift, .command])
+            Button("Weiterleiten\t F") { ActionDispatcher.perform(.forward) }
+                .keyboardShortcut("f", modifiers: [.shift, .command])
             Divider()
             Button("Erledigt\t E") { ActionDispatcher.perform(.archive) }
+                .keyboardShortcut("a", modifiers: [.control, .command])
+            Button("Zurück in den Posteingang\t ⇧E") { ActionDispatcher.perform(.unarchive) }
+                .keyboardShortcut("a", modifiers: [.shift, .control, .command])
             Button("In den Papierkorb\t #") { ActionDispatcher.perform(.trash) }
+                .keyboardShortcut(.delete, modifiers: .command)
             Menu("Zurückstellen") {
                 Button("Morgen, 8:00\t H") { ActionDispatcher.perform(.snoozeTomorrow) }
+                    .keyboardShortcut("h", modifiers: [.control, .command])
                 ForEach(Format.snoozePresets()) { preset in
                     Button(preset.name) { ActionDispatcher.perform(.snooze(presetID: preset.id)) }
                 }
             }
             Button("Markieren\t S") { ActionDispatcher.perform(.star) }
+                .keyboardShortcut("l", modifiers: [.shift, .command])
             Button("Gelesen / ungelesen\t U") { ActionDispatcher.perform(.unread) }
+                .keyboardShortcut("u", modifiers: [.shift, .command])
             Button(Strings.loadImages) { ActionDispatcher.perform(.loadImages) }
+                .keyboardShortcut("i", modifiers: [.shift, .command])
+            Button("Spam / kein Spam\t !") { ActionDispatcher.perform(.spam) }
+                .keyboardShortcut("j", modifiers: [.shift, .command])
             Divider()
-            // M2.4: Tauri's `unsubscribe` (⌘U) and `copy-verification-code`.
-            Button("Abmelden\t ⌘U") { ActionDispatcher.perform(.unsubscribe) }
-                .keyboardShortcut("u", modifiers: .command)
-            Button("Bestätigungscode kopieren") { ActionDispatcher.perform(.copyVerificationCode) }
+            Button("Verschieben …\t V") { ActionDispatcher.perform(.move) }
+                .keyboardShortcut("m", modifiers: [.control, .command])
+            Button("Label …\t L") { ActionDispatcher.perform(.label) }
+                .keyboardShortcut("l", modifiers: [.control, .command])
+            Divider()
+            // M2.4: Tauri's `unsubscribe` and `copy-verification-code`.
+            Button("Abmelden\t ⌃⌘U") { ActionDispatcher.perform(.unsubscribe) }
+                .keyboardShortcut("u", modifiers: [.control, .command])
+            Button("Bestätigungscode kopieren\t ⌥⇧⌘C") { ActionDispatcher.perform(.copyVerificationCode) }
+                .keyboardShortcut("c", modifiers: [.option, .shift, .command])
             Divider()
             Button("Ersten Anhang öffnen\t O") { ActionDispatcher.perform(.openAttachment) }
-                .disabled(model.mailbox.expandedId == nil)
+                .keyboardShortcut(.downArrow, modifiers: .command)
+            Button("Anhänge in Quick Look\t Y") { ActionDispatcher.perform(.previewAttachments) }
+                .keyboardShortcut("y", modifiers: .command)
             Divider()
             Button("Rückgängig\t Z") { ActionDispatcher.perform(.undo) }
+                .keyboardShortcut("z", modifiers: .command)
+        }
+        // M2.9 Stufe B: die Tasten des Verfassen-Panels. Als Menüpunkt, damit
+        // sie auch aus dem Editor des Panels heraus greifen.
+        // Feste Titel ohne `.disabled`: SwiftUI baut Commands beim Start aus und
+        // wertet Zustand danach nicht neu aus (im Sandbox-Lauf blieben beide
+        // Punkte dauerhaft ausgegraut, `menu … enabled=0`). Was nichts zu tun
+        // hat, sagt das beim Klick.
+        CommandMenu("Entwurf") {
+            Button("Entwurf minimieren / öffnen\t ⇧⌘M") { ActionDispatcher.perform(.toggleDock) }
+                .keyboardShortcut("m", modifiers: [.command, .shift])
+            Button("Entwurf verwerfen\t ⇧⌘⌫") { ActionDispatcher.perform(.discardDraft) }
+                .keyboardShortcut(.delete, modifiers: [.command, .shift])
+            Divider()
+            Button("Nächster Entwurf / Liste\t ⌃Tab") { model.cycleDraftFocus() }
+            Button("Neues Verfassen-Fenster\t ⌥C") { ActionDispatcher.perform(.composeInWindow) }
         }
         CommandMenu("Kalender") {
-            Button(model.calendarOpen ? "Kalender schließen\t 2" : "Kalender öffnen\t 2") {
-                ActionDispatcher.perform(.calendarToggle)
-            }
-            Button("Zurück zum Postfach\t 1") { ActionDispatcher.perform(.calendarClose) }
-                .disabled(!model.calendarOpen)
+            // M2.14 §6: ⌥⌘2 öffnet den Kalender, ⌥⌘1 geht zurück zur Post.
+            Button("Kalender öffnen\t ⌥⌘2") { ActionDispatcher.perform(.calendarToggle) }
+                .keyboardShortcut("2", modifiers: [.option, .command])
+            Button("Zurück zum Postfach\t ⌥⌘1") { ActionDispatcher.perform(.calendarClose) }
+                .keyboardShortcut("1", modifiers: [.option, .command])
             Divider()
             Button("Heute\t T") { ActionDispatcher.perform(.calendarToday) }
+                .keyboardShortcut("t", modifiers: .command)
             Button("Tagesansicht\t D") { ActionDispatcher.perform(.calendarMode(.day)) }
             Button("Wochenansicht\t W") { ActionDispatcher.perform(.calendarMode(.week)) }
             Button("Monatsansicht\t M") { ActionDispatcher.perform(.calendarMode(.month)) }
@@ -197,21 +259,22 @@ struct RabeCommands: Commands {
             Button(model.calendar.sidebarVisible ? "Seitenleiste ausblenden\t \\" : "Seitenleiste einblenden\t \\") {
                 ActionDispatcher.perform(.calendarSidebar)
             }
-            Button("Nächstem Meeting beitreten") { ActionDispatcher.perform(.joinNextMeeting) }
+            Button("Nächstem Meeting beitreten\t O") { ActionDispatcher.perform(.joinNextMeeting) }
+                .keyboardShortcut("o", modifiers: .command)
         }
         CommandMenu("KI") {
             Button(model.mailbox.inlineCompose != nil || !model.composeDrafts.isEmpty
-                   ? "Mit KI schreiben\t ⌘J" : "Zusammenfassen\t ⌘J") {
+                   ? "Mit KI schreiben\t ⌥⌘I" : "Zusammenfassen\t ⌥⌘I") {
                 ActionDispatcher.perform(.aiWrite)
             }
-            .keyboardShortcut("j", modifiers: .command)
-            Button("Korrekturlesen\t ⌘⇧P") { ActionDispatcher.perform(.aiProofread) }
-                .keyboardShortcut("p", modifiers: [.command, .shift])
+            .keyboardShortcut("i", modifiers: [.option, .command])
+            Button("Korrekturlesen\t ⌥⌘;") { ActionDispatcher.perform(.aiProofread) }
+                .keyboardShortcut(";", modifiers: [.option, .command])
             Divider()
-            Button("Fragen an das Postfach\t ⌘⇧K") { ActionDispatcher.perform(.aiAsk) }
-                .keyboardShortcut("k", modifiers: [.command, .shift])
-            Button("KI-Filter für die Suche\t ⌘O") { ActionDispatcher.perform(.aiSearchFilter) }
-                .keyboardShortcut("o", modifiers: .command)
+            Button("Fragen an das Postfach\t ⇧⌥⌘I") { ActionDispatcher.perform(.aiAsk) }
+                .keyboardShortcut("i", modifiers: [.option, .shift, .command])
+            Button("KI-Filter für die Suche\t ⌥⌘K") { ActionDispatcher.perform(.aiSearchFilter) }
+                .keyboardShortcut("k", modifiers: [.option, .command])
             Divider()
             Button("Intelligenz …") { ActionDispatcher.perform(.aiSettings) }
         }
@@ -224,15 +287,23 @@ struct RabeCommands: Commands {
             Button("Anfang\t Pos1") { ActionDispatcher.perform(.first) }
             Button("Ende\t Ende") { ActionDispatcher.perform(.last) }
         }
+        CommandGroup(after: .sidebar) {
+            Button(model.sidebar.isVisible ? "Seitenleiste ausblenden\t ⌃⌘S" : "Seitenleiste einblenden\t ⌃⌘S") {
+                ActionDispatcher.perform(.toggleSidebar)
+            }
+            .keyboardShortcut("s", modifiers: [.control, .command])
+        }
         CommandMenu("Darstellung") {
             ForEach(ThemeID.allCases) { theme in
                 Button(theme.title) { ActionDispatcher.perform(.theme(theme)) }
             }
             Divider()
-            Button("Leistungs-Overlay") { ActionDispatcher.perform(.perfOverlay) }.keyboardShortcut("p", modifiers: [.command, .option])
+            Button("Leistungs-Overlay") { ActionDispatcher.perform(.perfOverlay) }
+                .keyboardShortcut("p", modifiers: [.command, .option])
         }
         CommandGroup(replacing: .help) {
-            Button("Tastenkürzel\t ?") { ActionDispatcher.perform(.shortcuts) }
+            Button("Tastenkürzel\t ⌘/") { ActionDispatcher.perform(.shortcuts) }
+                .keyboardShortcut("/", modifiers: .command)
         }
     }
 }

@@ -275,11 +275,66 @@ enum CalendarWalkthrough {
     static func state() {
         let store = AppModel.shared.calendar
         let events = store.visibleEvents
-        log("calendar_state open=\(AppModel.shared.calendarOpen) mode=\(store.mode.rawValue) anchorDay=\(store.math.dayOfMonth(store.anchor)) days=\(store.days.count) events=\(events.count) bars=\(store.weekModel?.allDaySpans.count ?? -1) calendars=\(store.calendars.count) hidden=\(store.hiddenCalendars.sorted()) local=\(!store.hiddenLocal) layoutMs=\(String(format: "%.2f", store.lastLayoutMilliseconds))")
+        let sync: String
+        switch store.syncStatus {
+        case .noCalendars: sync = "noCalendars"
+        case .neverSynced: sync = "neverSynced"
+        case .current: sync = "current"
+        case .stale: sync = "stale"
+        }
+        // M2.13: `selDay` und `rows` belegen die Jahresansicht und die
+        // Terminliste (gewählter Tag, Zeilenzahl der Liste).
+        let rows = AgendaModel.rows(events: events, days: store.days,
+                                    openEvent: store.openEventId, today: store.todayStart)
+        log("calendar_state open=\(AppModel.shared.calendarOpen) mode=\(store.mode.rawValue) anchorDay=\(store.math.dayOfMonth(store.anchor)) selDay=\(store.math.dayOfMonth(store.selectedDayOrToday)) rows=\(rows.count) days=\(store.days.count) events=\(events.count) bars=\(store.weekModel?.allDaySpans.count ?? -1) calendars=\(store.calendars.count) hidden=\(store.hiddenCalendars.sorted()) local=\(!store.hiddenLocal) sync=\(sync) layoutMs=\(String(format: "%.2f", store.lastLayoutMilliseconds)) \(cardState())")
+    }
+
+    /// `calendar:card:…` — die Karte am Ort (M2.9 Stufe C), ohne Zeiger:
+    ///   card:open:<id> | edit | close | new | cancel | select:<±1> | save | state
+    static func card(_ argument: String) {
+        guard requireSandbox("card") else { return }
+        let store = AppModel.shared.calendar
+        // `argument` kommt als "card:open:…" an: das erste Stück ist der Befehl.
+        let spec = Array(argument.split(separator: ":").dropFirst()).map(String.init)
+        switch spec.first ?? "state" {
+        case "open":
+            // Ohne Kennung: den ausgewählten Termin (nach `select`).
+            if spec.count > 1, let id = Int64(spec[1]) {
+                store.openCard(id)
+            } else if let selected = store.selectedEvent {
+                store.openCard(selected.id)
+            }
+        case "edit":
+            store.editOpenCard()
+        case "close":
+            store.closeCard()
+        case "cancel":
+            store.cancelEdit()
+        case "new":
+            let start = store.math.at(store.math.startOfDay(store.anchor), hour: 11)
+            store.beginDraft(CalendarEventDraft(startsAt: start, endsAt: start + 60 * 60_000,
+                                                title: "Neuer Termin"))
+        case "select":
+            store.selectAdjacent(Int(spec.count > 1 ? spec[1] : "1") ?? 1)
+        case "save":
+            store.requestSave()
+        default:
+            break
+        }
+        log("card \(cardState())")
+    }
+
+    /// Der Zustand der Karte als eine Zeile.
+    static func cardState() -> String {
+        let store = AppModel.shared.calendar
+        return "open=\(store.openEventId.map(String.init) ?? "-")"
+            + " mode=\(store.cardMode.rawValue) draft=\(store.draft == nil ? 0 : 1)"
+            + " selected=\(store.selectedEventId.map(String.init) ?? "-")"
+            + " visible=\(store.visibleEvents.count)"
     }
 
     /// `calendar:click:<id>` — one click on a block, fed into the grid's own
-    /// handler (`click` → click router → detail popover). Used when a real
+    /// handler (`click` → click router → card). Used when a real
     /// pointer click cannot be delivered: on this Mac the user is working, and
     /// a background app drops synthetic HID clicks.
     static func click(id: Int64, times: Int) {
@@ -291,7 +346,7 @@ enum CalendarWalkthrough {
             }
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.4) {
-            PerfLog.shared.write("calendar_walk popover \(popoverState()) clicks=\(times) id=\(id)")
+            PerfLog.shared.write("calendar_walk card \(cardState()) clicks=\(times) id=\(id)")
         }
     }
 
@@ -305,13 +360,112 @@ enum CalendarWalkthrough {
         return "sheet=\(main?.attachedSheet != nil ? 1 : 0) windows=[\(others.joined(separator: ","))]"
     }
 
-    /// `calendar:body` — what the editor sheet has, so a test can tell an edit
-    /// from a new event.
+    /// `calendar:editorstate` — M2.9: die Bearbeitung liegt in der Karte, es
+    /// gibt kein Sheet und kein Popover mehr.
     static func editorState() {
         let main = NSApp.windows.first { $0.title == Instance.title }
         PerfLog.shared.write("calendar_walk editor sheet=\(main?.attachedSheet != nil ? 1 : 0) "
-                             + "selected=\(AppModel.shared.calendar.selectedEventId.map(String.init) ?? "-") "
-                             + "detail=\(popoverState())")
+                             + "firstResponder=\(String(describing: main?.firstResponder.map { type(of: $0) })) "
+                             + "\(cardState()) \(popoverState())")
+    }
+
+    // MARK: M2.12 — Verbinden, Status, Navigation
+
+    /// `calendar:seedm212` — fünf Termine in dieser Woche und zwei in der
+    /// nächsten, damit `↓` über den Wochenrand läuft. Räumt den Seed eines
+    /// früheren Laufs vorher weg (gleiche Sandbox-Datenbank).
+    static func seedM212() async {
+        guard requireSandbox("seedm212") else { return }
+        let model = AppModel.shared
+        let store = model.calendar
+        store.settings = model.settings
+        await store.loadCalendars()
+        guard let accountId = model.mailbox.accounts.first?.id, let client = store.client else {
+            log("seedm212 no_account"); return
+        }
+        let math = store.math
+        let weekStart = math.startOfWeek(store.anchor)
+        let range = (start: math.addDays(weekStart, -1), end: math.addDays(weekStart, 15))
+        let existing = (try? await client.listEvents(startMs: range.start, endMs: range.end)) ?? []
+        var removed = 0
+        for event in existing where (event.summary ?? "").hasPrefix("M212 ") {
+            try? await client.deleteEvent(event.id, notify: false)
+            removed += 1
+        }
+        func at(_ dayOffset: Int, _ hour: Int) -> Int64 {
+            math.at(math.addDays(weekStart, dayOffset), hour: hour)
+        }
+        let seed: [(String, Int64, Int64, String?)] = [
+            ("M212 Wochenstart", at(0, 9), at(0, 10), "Raum 2"),
+            ("M212 Dienstag", at(1, 11), at(1, 12), nil),
+            ("M212 Mittwoch", at(2, 14), at(2, 15), nil),
+            ("M212 Donnerstag", at(3, 8), at(3, 9), nil),
+            ("M212 Freitag", at(4, 16), at(4, 17), "Café Nord"),
+            ("M212 Montag nächste Woche", at(7, 10), at(7, 11), nil),
+            ("M212 Dienstag nächste Woche", at(8, 13), at(8, 14), nil),
+        ]
+        var ids: [Int64] = []
+        for (title, start, end, location) in seed {
+            if let event = try? await client.createEvent(CreateEventArgs(
+                accountId: accountId, calendarId: nil, summary: title, description: nil,
+                location: location, joinUrl: nil, startsAt: start, endsAt: end,
+                allDay: false, attendees: [])) {
+                ids.append(event.id)
+            }
+        }
+        store.anchor = weekStart
+        store.setMode(.week)
+        await store.refresh()
+        store.selectedEventId = ids.first
+        log("seedm212 removed=\(removed) created=\(ids.count) week=\(store.heading()) "
+            + "events=\(store.visibleEvents.count) first=\(ids.first ?? -1)")
+    }
+
+    /// `calendar:connect:<server>|<user>|<password>` — derselbe Aufruf wie der
+    /// „Verbinden“-Knopf der Einstellungen. Das Passwort steht nie im Log.
+    static func connect(_ argument: String) async {
+        guard requireSandbox("connect") else { return }
+        let model = AppModel.shared
+        let store = model.calendar
+        let payload = argument.hasPrefix("connect:")
+            ? String(argument.dropFirst("connect:".count)) : argument
+        let parts = payload.split(separator: "|", omittingEmptySubsequences: false).map(String.init)
+        let server = parts.count > 0 ? parts[0] : ""
+        let user = parts.count > 1 ? parts[1] : ""
+        let secret = parts.count > 2 ? parts[2] : ""
+        guard let accountId = model.mailbox.accounts.first?.id else {
+            log("connect no_account"); return
+        }
+        let ok = await store.connectCalendar(accountId: accountId, server: server,
+                                             username: user, password: secret)
+        log("connect done ok=\(ok ? 1 : 0) server=\(server) user=\(user) calendars=\(store.calendars.count) "
+            + "error=\(store.connectError ?? "-") notice=\(store.connectNotice ?? "-")")
+    }
+
+    /// `calendar:connectstate` — Statuszeile der Einstellungen als eine Zeile.
+    static func connectState() {
+        let store = AppModel.shared.calendar
+        let status: String
+        switch store.syncStatus {
+        case .noCalendars: status = "noCalendars"
+        case .neverSynced: status = "neverSynced"
+        case .current: status = "current"
+        case .stale: status = "stale"
+        }
+        log("connectstate status=\(status) calendars=\(store.calendars.count) "
+            + "lastSync=\(store.lastSyncAt.map(String.init) ?? "-") "
+            + "unconfirmed=\(store.lastSyncUnconfirmed ? 1 : 0) "
+            + "error=\(store.connectError ?? "-") notice=\(store.connectNotice ?? "-")")
+    }
+
+    /// `calendar:syncnow` — derselbe Aufruf wie „Jetzt synchronisieren“ in den
+    /// Einstellungen (inkl. der Bestätigung über `last_synced_at`).
+    static func syncNow() async {
+        guard requireSandbox("syncnow") else { return }
+        let store = AppModel.shared.calendar
+        let ok = await store.syncNow()
+        connectState()
+        log("syncnow confirmed=\(ok ? 1 : 0) toast=\(AppModel.shared.toasts.current?.text ?? "-")")
     }
 
     private static func requireSandbox(_ step: String) -> Bool {
@@ -340,5 +494,9 @@ enum CalendarWalkthrough {
     static func click(id: Int64, times: Int) {}
     static func editorState() {}
     static func state() {}
+    static func seedM212() async {}
+    static func connect(_ argument: String) async {}
+    static func connectState() {}
+    static func syncNow() async {}
 }
 #endif

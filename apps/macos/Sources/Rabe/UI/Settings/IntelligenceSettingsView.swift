@@ -58,6 +58,14 @@ struct IntelligenceSettingsView: View {
             modelID = s.aiModel
             decisionProvider = s.decisionProvider == "off" ? "openrouter" : s.decisionProvider
             await ai.refresh()
+            // M2.10: der Status läuft weiter, solange die Seite offen ist — der
+            // Index arbeitet im Hintergrund, und „Bereit"/„lädt" ändert sich
+            // ohne Zutun.
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(5))
+                guard !Task.isCancelled else { break }
+                await ai.refreshEmbedding()
+            }
         }
     }
 
@@ -282,15 +290,28 @@ struct IntelligenceSettingsView: View {
     private var embeddingSection: some View {
         Section("Semantischer Index") {
             if let embedding = ai.embedding {
-                SettingRow(title: embedding.enabled ? "Aktiv" : "Aus",
+                // M2.10: drei Zustände. „Aktiv" hieß vorher nur „eingeschaltet" –
+                // ob das Modell geladen ist, stand nirgends (`ready`).
+                SettingRow(title: embeddingTitle(embedding),
                            hint: "Grundlage für „Fragen an das Postfach“. Lokal gerechnet, ohne Netz.") {
-                    Text("\(embedding.embedded)/\(embedding.total) eingebettet"
-                         + (embedding.pending > 0 ? " · \(embedding.pending) offen" : ""))
+                    Text(EmbeddingStatusText.counts(embedded: embedding.embedded,
+                                                    total: embedding.total,
+                                                    pending: embedding.pending))
                         .font(.system(size: 12)).foregroundStyle(.secondary)
                 }
                 if embedding.total > 0 {
-                    ProgressView(value: Double(embedding.embedded), total: Double(max(1, embedding.total)))
-                        .frame(width: 260)
+                    // Der Balken stand auf halber Breite, weil er nur 260 pt
+                    // breit war – der Wert stimmte (11 034/11 071). Er nimmt
+                    // jetzt die ganze Zeile und nennt den Prozentwert.
+                    VStack(alignment: .leading, spacing: 3) {
+                        ProgressView(value: Double(embedding.embedded),
+                                     total: Double(max(1, embedding.total)))
+                            .frame(maxWidth: .infinity)
+                        Text("\(EmbeddingStatusText.percent(embedded: embedding.embedded, total: embedding.total)) %")
+                            .font(.system(size: 10.5).monospacedDigit())
+                            .foregroundStyle(.secondary)
+                    }
+                    .padding(.vertical, 2)
                 }
             } else {
                 Text(ai.loadingEmbedding ? "Wird geladen …" : "Status nicht verfügbar.")
@@ -304,6 +325,11 @@ struct IntelligenceSettingsView: View {
                 .disabled(ai.reindexing || ai.embedding?.enabled != true)
             }
         }
+    }
+
+    /// "Aus", "Aktiv · Modell wird geladen", "Bereit" (M2.10).
+    private func embeddingTitle(_ status: EmbeddingStatus) -> String {
+        EmbeddingStatusText.title(enabled: status.enabled, ready: status.ready)
     }
 
     // MARK: Decision provider

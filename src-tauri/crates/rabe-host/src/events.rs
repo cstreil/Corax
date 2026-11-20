@@ -125,6 +125,19 @@ fn emit(delegate: &Arc<dyn HostDelegate>, ev: CoreEvent) {
             state,
             error,
         },
+        CoreEvent::ActionFailed {
+            action_id,
+            kind,
+            thread_id,
+            reason,
+            error,
+        } => UiEvent::ActionFailed {
+            action_id,
+            kind,
+            thread_id,
+            reason,
+            error,
+        },
         CoreEvent::ThreadWoke { thread_id } => UiEvent::ThreadWoke { thread_id },
         CoreEvent::NetworkState { online } => UiEvent::NetworkState { online },
         CoreEvent::AccountState {
@@ -229,6 +242,33 @@ mod tests {
         assert_eq!(
             recorder.lines(),
             vec![r#"{"name":"mail:updated","payload":{"threadIds":[1,2,3]}}"#.to_string()]
+        );
+    }
+
+    #[test]
+    fn a_failed_move_reaches_the_ui_with_its_reason() {
+        let (_runtime, recorder, bus) = record();
+        bus.emit(CoreEvent::ActionFailed {
+            action_id: 9,
+            kind: "move".into(),
+            thread_id: Some(42),
+            reason: "source_missing".into(),
+            error: "move: the source message is not on the server".into(),
+        });
+        bus.emit(CoreEvent::ActionFailed {
+            action_id: 10,
+            kind: "trash".into(),
+            thread_id: None,
+            reason: "deferral_exhausted".into(),
+            error: "gone".into(),
+        });
+        std::thread::sleep(Duration::from_millis(400));
+        assert_eq!(
+            recorder.lines(),
+            vec![
+                r#"{"name":"action:failed","payload":{"actionId":9,"kind":"move","threadId":42,"reason":"source_missing","error":"move: the source message is not on the server"}}"#.to_string(),
+                r#"{"name":"action:failed","payload":{"actionId":10,"kind":"trash","threadId":null,"reason":"deferral_exhausted","error":"gone"}}"#.to_string(),
+            ]
         );
     }
 

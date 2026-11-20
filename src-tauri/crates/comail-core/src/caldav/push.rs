@@ -12,6 +12,7 @@ use crate::events::{CoreEvent, EventBus};
 use crate::models::now_ms;
 
 use super::Transport;
+use super::http::ICAL_CONTENT_TYPE;
 
 /// Push every dirty/tombstoned row of the account. Individual row failures
 /// are logged and left dirty for the next cycle; only auth errors abort.
@@ -31,10 +32,40 @@ pub async fn push_dirty(
             Ok(()) => any = true,
             Err(CoreError::NeedsReauth) => return Err(CoreError::NeedsReauth),
             Err(CoreError::Offline) => return Err(CoreError::Offline),
-            Err(e) => tracing::warn!("caldav push of event {} failed: {e}", row.event.id),
+            Err(e) => {
+                let event_id = row.event.id;
+                tracing::warn!("caldav push of event {event_id} failed: {e}");
+                // Make the rejection visible to the app: the row stays dirty and
+                // the calendar card/list show why it did not reach the server.
+                let reason = push_error_hint(&e);
+                match db
+                    .write(move |conn| {
+                        repo::calendar::set_sync_error(conn, event_id, Some(&reason))
+                    })
+                    .await
+                {
+                    Ok(()) => {
+                        // The app shows the hint on the card and in the list;
+                        // open windows reload their events on this event.
+                        bus.emit(CoreEvent::CalendarUpdated { account_id });
+                    }
+                    Err(e) => {
+                        tracing::warn!("caldav push: cannot record the error of {event_id}: {e}")
+                    }
+                }
+            }
         }
     }
     Ok(any)
+}
+
+/// What the app shows as "Nicht hochgeladen: …": the CalDAV message without
+/// the `caldav error:` kind prefix, other errors as they are.
+fn push_error_hint(e: &CoreError) -> String {
+    match e {
+        CoreError::CalDav(m) => m.clone(),
+        other => other.to_string(),
+    }
 }
 
 async fn push_row(
@@ -95,7 +126,14 @@ async fn push_row(
         None => vec![("If-None-Match", "*")],
     };
     let mut resp = t
-        .request("PUT", &abs_url, None, &headers, Some(body.clone()))
+        .request(
+            "PUT",
+            &abs_url,
+            None,
+            &headers,
+            Some(ICAL_CONTENT_TYPE),
+            Some(body.clone()),
+        )
         .await?;
     // Some servers strip the body's Content-Type check; retry a 415 without
     // conditional headers is NOT done - but a 412 on create means the uid
@@ -114,11 +152,14 @@ async fn push_row(
         .await;
     }
     if !resp.ok() {
-        return Err(super::err(format!("PUT {abs_url}: HTTP {}", resp.status)));
+        // URL in the log, a compact reason in the model: it is shown verbatim
+        // as "Nicht hochgeladen: …" in the calendar card and list.
+        tracing::warn!("PUT {abs_url}: HTTP {}", resp.status);
+        return Err(super::err(format!("HTTP {}", resp.status)));
     }
     // Servers may omit the ETag on PUT; re-read it cheaply then.
     if resp.etag.is_none() {
-        if let Ok(head) = t.request("HEAD", &abs_url, None, &[], None).await {
+        if let Ok(head) = t.request("HEAD", &abs_url, None, &[], None, None).await {
             resp.etag = head.etag;
         }
     }
@@ -157,7 +198,9 @@ async fn push_delete(db: &Db, t: &dyn Transport, row: &SyncRow) -> Result<()> {
         Some(etag) => vec![("If-Match", etag.as_str())],
         None => vec![],
     };
-    let resp = t.request("DELETE", &abs_url, None, &headers, None).await?;
+    let resp = t
+        .request("DELETE", &abs_url, None, &headers, None, None)
+        .await?;
     match resp.status {
         s if (200..300).contains(&s) || s == 404 => {
             db.write(move |conn| repo::calendar::hard_delete(conn, event_id))
@@ -195,7 +238,7 @@ async fn resolve_conflict(
     href_path: &str,
     row: &SyncRow,
 ) -> Result<()> {
-    let server = t.request("GET", abs_url, None, &[], None).await?;
+    let server = t.request("GET", abs_url, None, &[], None, None).await?;
     let event_id = row.event.id;
     let summary = row.event.summary.clone();
 
@@ -233,7 +276,8 @@ async fn resolve_conflict(
             let events = parse_ics(&ics);
             if let Some(master) = events.iter().find(|e| e.recurrence_id_ms.is_none()) {
                 tx.execute(
-                    "UPDATE calendar_events SET dirty = 0, deleted = 0 WHERE id = ?1",
+                    "UPDATE calendar_events SET dirty = 0, deleted = 0, sync_error = NULL
+                     WHERE id = ?1",
                     rusqlite::params![event_id],
                 )?;
                 repo::calendar::upsert_remote(
@@ -550,6 +594,12 @@ mod tests {
             headers[0].get("If-Match").map(String::as_str),
             Some("\"e0\"")
         );
+        // RFC 4791 §5.3.2: a VCALENDAR body goes out as text/calendar. iCloud
+        // answered 501 to the old application/xml header.
+        assert_eq!(
+            headers[0].get("Content-Type").map(String::as_str),
+            Some(crate::caldav::http::ICAL_CONTENT_TYPE)
+        );
         drop(seen);
         drop(headers);
 
@@ -566,6 +616,61 @@ mod tests {
                 .unwrap()
                 .is_empty()
         );
+    }
+
+    #[tokio::test]
+    async fn rejected_put_records_sync_error_and_next_push_clears_it() {
+        let (db, _dir) = seed_db().await;
+        let bus = EventBus::new();
+        let id = seed_synced_event(&db).await;
+        db.write(move |c| repo::calendar::update_local_fields(c, &edit(id), &[]))
+            .await
+            .unwrap();
+
+        // iCloud answers 501 when the body is labelled wrong: the row must stay
+        // queued, but the app has to see that it was not uploaded.
+        let rejected = DavResponse {
+            status: 501,
+            etag: None,
+            body: String::new(),
+        };
+        let t = MockTransport::new(vec![rejected]);
+        assert!(!push_dirty(&db, &bus, &t, 1).await.unwrap());
+
+        let row = db
+            .read(move |c| repo::calendar::sync_row_for(c, id))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(row.event.sync_error.as_deref(), Some("HTTP 501"));
+        assert_eq!(
+            row.etag.as_deref(),
+            Some("\"e0\""),
+            "a rejected PUT keeps the last known server identity"
+        );
+        assert_eq!(
+            db.read(|c| repo::calendar::dirty_rows(c, 1))
+                .await
+                .unwrap()
+                .len(),
+            1,
+            "a rejected event is retried on the next cycle"
+        );
+
+        // The next successful PUT clears the hint.
+        let ok = DavResponse {
+            status: 204,
+            etag: Some("\"e1\"".into()),
+            body: String::new(),
+        };
+        let t2 = MockTransport::new(vec![ok]);
+        assert!(push_dirty(&db, &bus, &t2, 1).await.unwrap());
+        let row = db
+            .read(move |c| repo::calendar::sync_row_for(c, id))
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(row.event.sync_error.is_none());
     }
 
     #[tokio::test]

@@ -42,6 +42,9 @@ public enum HostEvent: Sendable {
     case mailNew(accountId: Int64, threadIds: [Int64])
     case syncProgress
     case networkState(online: Bool)
+    /// A move-family action failed for good (`action:failed`); the app tells
+    /// the user instead of letting the mail jump back silently (M2.16).
+    case actionFailed(actionId: Int64, threadId: Int64?, kind: String, reason: String, error: String)
     /// A CalDAV sync changed the stored events (`calendar:updated`).
     case calendarUpdated
     /// A meeting starts soon (`calendar:reminder`).
@@ -83,6 +86,14 @@ public enum EventRouter {
             return .syncProgress
         case "thread:woke":
             return .mailUpdated(threadIds: [(payload["threadId"] as? NSNumber)?.int64Value ?? 0])
+        case "action:failed":
+            return .actionFailed(
+                actionId: (payload["actionId"] as? NSNumber)?.int64Value ?? 0,
+                threadId: (payload["threadId"] as? NSNumber)?.int64Value,
+                kind: text("kind") ?? "",
+                reason: text("reason") ?? "",
+                error: text("error") ?? ""
+            )
         case "calendar:updated":
             return .calendarUpdated
         case "calendar:reminder":

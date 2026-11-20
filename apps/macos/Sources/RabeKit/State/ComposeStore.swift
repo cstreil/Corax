@@ -183,6 +183,13 @@ public final class ComposeDraft: Identifiable {
         replaceBody(RichHTML.forwardFooter(forwardHTML: html, signatureHTML: signatureHtml ?? ""))
     }
 
+    /// M2.9: Titel im Panel und in der Leiste — der Betreff, sonst die
+    /// Bezeichnung des Entwurfs, wenn noch keiner da ist („Neue E-Mail").
+    public var panelTitle: String {
+        let trimmed = subject.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? title : trimmed
+    }
+
     public var title: String {
         switch mode {
         case .new: Strings.newMail

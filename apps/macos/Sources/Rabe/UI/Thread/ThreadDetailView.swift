@@ -103,7 +103,7 @@ struct ThreadDetailView: View {
     @ViewBuilder private func replyArea(_ detail: ThreadDetail) -> some View {
         Group {
             if let draft = box.inlineCompose {
-                ComposeView(draft: draft, inline: true)
+                ComposeView(draft: draft, presentation: .inline)
             } else {
                 Button { ActionDispatcher.perform(.reply) } label: {
                     HStack(spacing: 10) {

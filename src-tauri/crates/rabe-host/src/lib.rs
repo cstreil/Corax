@@ -271,6 +271,16 @@ pub enum UiEvent {
         state: String,
         error: Option<String>,
     },
+    /// A move-family action failed; the UI tells the user instead of letting
+    /// the mail jump back silently (M2.16).
+    #[serde(rename = "action:failed")]
+    ActionFailed {
+        action_id: i64,
+        kind: String,
+        thread_id: Option<i64>,
+        reason: String,
+        error: String,
+    },
     #[serde(rename = "thread:woke")]
     ThreadWoke { thread_id: i64 },
     #[serde(rename = "network:state")]

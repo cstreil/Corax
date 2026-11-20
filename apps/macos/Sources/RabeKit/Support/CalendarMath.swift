@@ -51,6 +51,14 @@ public struct CalendarMath: Sendable {
     /// Local midnight.
     public func startOfDay(_ ms: Int64) -> Int64 { stamp(calendar.startOfDay(for: date(ms))) }
 
+    /// Ganze Kalendertage zwischen zwei Zeitpunkten (jeweils Tagesanfang).
+    /// M2.15b (Audit): über den Kalender gerechnet, nicht mit festen 24 h —
+    /// sonst zählt „Tag 2 von 3" über die Zeitumstellung um einen Tag falsch.
+    public func daysBetween(_ from: Int64, _ to: Int64) -> Int {
+        calendar.dateComponents([.day], from: date(startOfDay(from)),
+                                to: date(startOfDay(to))).day ?? 0
+    }
+
     /// Week start at local 00:00, defaulting to the configured first day.
     public func startOfWeek(_ ms: Int64, weekStartsOn: CalendarWeekStart? = nil) -> Int64 {
         let day = calendar.startOfDay(for: date(ms))
@@ -163,8 +171,10 @@ public enum CalendarEventRules {
     }
 
     /// Local events we organize can be dragged/resized; invites are read-only.
-    public static func isDraggable(_ event: CalendarEvent) -> Bool {
-        event.isLocal && !isCancelled(event) && !event.allDay
+    /// M2.15b (2.2): `editable` kommt aus `CalendarPermissions`; ohne Angabe
+    /// bleibt es beim alten Verhalten (`isLocal`).
+    public static func isDraggable(_ event: CalendarEvent, editable: Bool? = nil) -> Bool {
+        (editable ?? event.isLocal) && !isCancelled(event) && !event.allDay
     }
 
     public enum RsvpKind: String, Sendable { case accepted, tentative, declined, needs }
@@ -203,6 +213,19 @@ public enum CalendarEventRules {
                 l.startsAt < eventEnd(event) && eventEnd(l) > event.startsAt
             }
         }
+    }
+
+    /// „Tag 2 von 3" für einen mehrtägigen Termin am Tag `day`; `nil`, wenn er
+    /// an einem Tag liegt. M2.15b (Audit): Tagesschritte über den Kalender, nicht
+    /// mit festen 24 h — über die Zeitumstellung stimmte die Zahl sonst nicht.
+    public static func dayCountLabel(_ event: CalendarEvent, day: Int64,
+                                     math: CalendarMath) -> String? {
+        let startDay = math.startOfDay(event.startsAt)
+        let endDay = math.startOfDay(max(eventEnd(event) - 1, event.startsAt))
+        guard endDay > startDay else { return nil }
+        let index = max(1, math.daysBetween(startDay, day) + 1)
+        let count = math.daysBetween(startDay, endDay) + 1
+        return "Tag \(index) von \(count)"
     }
 
     /// A day-crossing or all-day event is drawn as a spanning bar (month view).
@@ -517,7 +540,7 @@ public enum CalendarHitTest {
     public static func event(atX x: Double, y: Double, days: [Int64],
                              gutter: Double = CalendarGrid.gutterPx, columnWidth: Double,
                              positioned: [Int64: [PositionedEvent]],
-                             draggable: (CalendarEvent) -> Bool = CalendarEventRules.isDraggable)
+                             draggable: (CalendarEvent) -> Bool = { CalendarEventRules.isDraggable($0) })
         -> CalendarHit? {
         guard let index = dayIndex(atX: x, dayCount: days.count, gutter: gutter,
                                    columnWidth: columnWidth) else { return nil }

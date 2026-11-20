@@ -43,6 +43,9 @@ public struct CalendarEvent: Codable, Sendable, Identifiable, Hashable {
     public let allDay: Bool
     public let status: String?
     public let method: String?
+    /// M2.16: Warum der letzte Upload zum Kalender-Server scheiterte; nil =
+    /// nichts offen. Der Kern leert das Feld beim nächsten erfolgreichen PUT.
+    public var syncError: String? = nil
 }
 
 /// `Calendar` in `types.ts`: a discovered CalDAV collection.
@@ -130,6 +133,31 @@ public struct UpdateEventArgs: Encodable, Sendable, Equatable {
                   allDay: event.allDay,
                   attendees: event.attendees.map { Address(name: $0.name, email: $0.email) },
                   notify: notify)
+    }
+}
+
+/// `ConnectCalendarArgs` in `models.rs` (M2.12). The dispatcher takes it as
+/// `{"args": …}`. `kind` is `"google"` or `"generic"`; the native app sends only
+/// `"generic"` (CalDAV with a server URL and an app password) — Google and
+/// Microsoft go through their own OAuth paths in the core and belong to M3.
+///
+/// The password is only passed through: the core stores it in the keychain
+/// (`Slot::CaldavPassword`) and the app keeps no copy.
+public struct ConnectCalendarArgs: Encodable, Sendable, Equatable {
+    public var accountId: Int64
+    /// "google" | "generic"
+    public var kind: String
+    public var url: String?
+    public var username: String?
+    public var password: String?
+
+    public init(accountId: Int64, kind: String = "generic", url: String? = nil,
+                username: String? = nil, password: String? = nil) {
+        self.accountId = accountId
+        self.kind = kind
+        self.url = url
+        self.username = username
+        self.password = password
     }
 }
 

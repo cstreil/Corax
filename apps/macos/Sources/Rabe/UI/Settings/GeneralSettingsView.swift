@@ -95,6 +95,11 @@ struct GeneralSettingsView: View {
             SettingToggleRow(title: "Automatisch weiter",
                              hint: "Nach „Erledigt“ oder „Zurückstellen“ in einer Unterhaltung die nächste öffnen, statt zur Liste zurückzukehren.",
                              isOn: Binding(get: { s.autoAdvance }, set: { s.set("autoAdvance", $0) }))
+            // M2.14: die schnellen Einzeltasten abschaltbar; die ⌘-Kombis aus
+            // dem Menü bleiben in jedem Fall aktiv.
+            SettingToggleRow(title: "Einzeltasten-Kürzel",
+                             hint: "E, R, #, G … wirken nur außerhalb von Textfeldern. Aus: nur die ⌘-Kombis aus dem Menü.",
+                             isOn: Binding(get: { s.singleKeyShortcuts }, set: { s.set("singleKeyShortcuts", $0) }))
         }
     }
 

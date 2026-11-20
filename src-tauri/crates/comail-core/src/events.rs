@@ -42,6 +42,18 @@ pub enum CoreEvent {
         state: String,
         error: Option<String>,
     },
+    /// A move-family action ended in `failed`. Emitted in addition to
+    /// `ActionState`, so the app can tell the user instead of letting the mail
+    /// jump back to its source folder without a word (M2.16).
+    ActionFailed {
+        action_id: i64,
+        kind: String,
+        thread_id: Option<i64>,
+        /// Stable token: `source_missing` when the server no longer has the
+        /// message, `deferral_exhausted` or `failed` otherwise.
+        reason: String,
+        error: String,
+    },
     ThreadWoke {
         thread_id: i64,
     },

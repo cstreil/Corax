@@ -7,28 +7,125 @@ import os
 /// Every write goes through `CalendarCore` (the real client, or a fake in the
 /// tests) and is followed by a reload, so the UI never shows an event the core
 /// did not keep.
+/// Ein Termin, der in der Karte entsteht, bevor ihn der Kern kennt (§7.3).
+public struct CalendarEventDraft: Identifiable, Equatable, Sendable {
+    public let id = UUID()
+    /// Der bearbeitete Termin, `nil` bei einem neuen.
+    public var event: CalendarEvent?
+    public var startsAt: Int64
+    public var endsAt: Int64
+    public var allDay: Bool
+    public var title: String?
+    public var location: String?
+    public var notes: String?
+    public var attendees: [Address]
+
+    public init(event: CalendarEvent? = nil, startsAt: Int64, endsAt: Int64, allDay: Bool = false,
+                title: String? = nil, location: String? = nil, notes: String? = nil,
+                attendees: [Address] = []) {
+        self.event = event
+        self.startsAt = startsAt
+        self.endsAt = endsAt
+        self.allDay = allDay
+        self.title = title
+        self.location = location
+        self.notes = notes
+        self.attendees = attendees
+    }
+}
+
 @MainActor
 @Observable
 public final class CalendarStore {
     public enum Mode: String, Sendable, CaseIterable, Identifiable {
-        case day, week, month
+        case day, week, month, year, list
         public var id: String { rawValue }
         public var title: String {
             switch self {
             case .day: "Tag"
             case .week: "Woche"
             case .month: "Monat"
+            case .year: "Jahr"
+            case .list: "Liste"
             }
         }
+        /// Taste aus `TASTATUR.md` (nur Anzeige, die Tasten liegen im Raster).
+        public var shortcut: String {
+            switch self {
+            case .day: "D"
+            case .week: "W"
+            case .month: "M"
+            case .year: "Y"
+            case .list: "L"
+            }
+        }
+        /// M2.13: ⌘1–5 in der Reihenfolge der Werkzeugleiste.
+        public var commandNumber: Int {
+            switch self {
+            case .day: 1
+            case .week: 2
+            case .month: 3
+            case .year: 4
+            case .list: 5
+            }
+        }
+        /// Ansichten mit Zeitraster (die anderen zeichnen anders).
+        public var isGrid: Bool { self == .day || self == .week }
     }
 
     public private(set) var calendars: [CalendarCollection] = []
+    /// M2.15b (2.2): Adressen des Nutzers (Konto-Adressen, klein). Die App
+    /// setzt sie, sobald die Konten geladen sind; ohne sie gilt nur ein leerer
+    /// Organisator als eigener Termin.
+    public var ownEmails: Set<String> = []
     /// Everything the core returned for the visible range, unfiltered.
     public private(set) var events: [CalendarEvent] = []
     public private(set) var messageEvents: [Int64: [CalendarEvent]] = [:]
     public private(set) var loaded = false
     public private(set) var loading = false
     public private(set) var busy = false
+
+    // MARK: CalDAV connect and sync status (M2.12)
+
+    /// „Konto verbinden“ läuft gerade (`connect_calendar`).
+    public private(set) var connecting = false
+    /// Klartext des letzten Verbindungsversuchs, `nil` solange keiner scheiterte.
+    public private(set) var connectError: String?
+    /// Erfolgsmeldung des letzten Verbindungsversuchs.
+    public private(set) var connectNotice: String?
+    /// Ein „Jetzt synchronisieren“ lief ohne sichtbaren Fortschritt.
+    public private(set) var lastSyncUnconfirmed = false
+
+    /// How a sync cycle looks from the app's side. The core does not expose
+    /// `caldav_config.last_error` (M2.12 report), so the app can only tell
+    /// "synced recently", "synced long ago" and "never" — not *why* a cycle
+    /// fails. The wording in the settings window says so.
+    public enum SyncStatus: Equatable, Sendable {
+        case noCalendars
+        case neverSynced
+        case current(Int64)
+        case stale(Int64)
+    }
+
+    /// A pull runs every five minutes (`caldav/task.rs`, `POLL_SECS`); three
+    /// missed cycles mean something is wrong.
+    public static let staleSyncAfterSeconds: Int64 = 15 * 60
+
+    public static func syncStatus(lastSyncedAt: Int64?, hasCalendars: Bool,
+                                  now: Int64 = Int64(Date().timeIntervalSince1970 * 1000)) -> SyncStatus {
+        guard hasCalendars else { return .noCalendars }
+        guard let lastSyncedAt else { return .neverSynced }
+        let age = (now - lastSyncedAt) / 1000
+        return age > staleSyncAfterSeconds ? .stale(lastSyncedAt) : .current(lastSyncedAt)
+    }
+
+    /// Der jüngste erfolgreiche Abgleich über alle Kalender.
+    public var lastSyncAt: Int64? { calendars.compactMap(\.lastSyncedAt).max() }
+
+    public var syncStatus: SyncStatus {
+        Self.syncStatus(lastSyncedAt: lastSyncAt, hasCalendars: !calendars.isEmpty)
+    }
+
     /// Layout of the day/week grids for the current range (nil in month view).
     public private(set) var weekModel: CalendarWeekModel?
     /// Duration of the last grid build in milliseconds (same number as the
@@ -41,16 +138,226 @@ public final class CalendarStore {
     /// it, like the mail list's row cursor.
     public var selectedEventId: Int64?
 
+    // MARK: Karte am Ort (M2.9 Stufe C)
+    /// Wie die Karte eines Termins gerade aussieht.
+    public enum CardMode: String, Sendable { case view, edit }
+
+    /// Die Karte, die im Raster aufgeht. Getrennt von `selectedEventId`: die
+    /// Auswahl bleibt bestehen, wenn die Karte zu ist (`↑`/`↓` arbeiten weiter).
+    public private(set) var openEventId: Int64?
+    public private(set) var cardMode: CardMode = .view
+    /// Ein neuer Termin, der noch nicht gespeichert ist: der gestrichelte
+    /// Platzhalter im Raster und die Karte im Bearbeiten-Modus (§7.3).
+    public private(set) var draft: CalendarEventDraft?
+    /// Zähler für `⌘↵` aus dem Raster: die Karte in der Bearbeitung sichert.
+    public private(set) var saveRequest = 0
+
+    public var cardIsOpen: Bool { openEventId != nil || draft != nil }
+
+    /// Der Termin der offenen Karte, solange er im sichtbaren Zeitraum liegt.
+    public var openEvent: CalendarEvent? {
+        guard let openEventId else { return nil }
+        return visibleEvents.first { $0.id == openEventId }
+    }
+
+    /// Die Karte aufgehen lassen (Klick, `↵`, `O`).
+    public func openCard(_ id: Int64, edit: Bool = false) {
+        guard visibleEvents.contains(where: { $0.id == id }) else { return }
+        selectedEventId = id
+        draft = nil
+        openEventId = id
+        let editable = visibleEvents.first { $0.id == id }.map(canEdit) ?? false
+        cardMode = edit && editable ? .edit : .view
+        PerfLog.shared.write("calendar_card_open id=\(id) mode=\(cardMode.rawValue)")
+    }
+
+    public func closeCard() {
+        guard cardIsOpen else { return }
+        PerfLog.shared.write("calendar_card_close")
+        openEventId = nil
+        draft = nil
+        cardMode = .view
+    }
+
+    /// M2.12: a click on empty grid space closes the card instead of starting a
+    /// new event. Returns true when it consumed the click; the grid's create
+    /// gesture continues only on false.
+    public func closeCardOnEmptySpace() -> Bool {
+        guard cardIsOpen else { return false }
+        closeCard()
+        PerfLog.shared.write("calendar_empty_click_closed")
+        return true
+    }
+
+    /// M2.12 requirement 6: what `Esc` means right now. A pure decision so the
+    /// screen's monitor and the tests agree on the chain
+    /// Bearbeiten → Anzeige → Karte zu → Kalender zu.
+    public enum EscapeAction: Equatable, Sendable {
+        case cancelEdit
+        case closeCard
+        case leaveCalendar
+    }
+
+    public func escapeAction() -> EscapeAction {
+        guard cardIsOpen else { return .leaveCalendar }
+        return cardMode == .edit ? .cancelEdit : .closeCard
+    }
+
+    /// `↵` in der Anzeige bzw. der Stift: dieselbe Karte wird zum Formular.
+    public func editOpenCard() {
+        guard let event = openEvent, canEdit(event) else { return }
+        cardMode = .edit
+        PerfLog.shared.write("calendar_card_edit id=\(event.id)")
+    }
+
+    /// Esc im Bearbeiten: bei einem neuen Termin verschwindet der Platzhalter,
+    /// bei einem bestehenden kehrt die Anzeige zurück (Änderungen sind nicht
+    /// gespeichert, weil erst `⌘↵` schreibt).
+    public func cancelEdit() {
+        guard cardMode == .edit else { return }
+        if draft != nil {
+            draft = nil
+            openEventId = nil
+        }
+        cardMode = .view
+        PerfLog.shared.write("calendar_card_cancel")
+    }
+
+    /// Ein neuer Termin: Platzhalter im Raster, Karte im Bearbeiten-Modus.
+    public func beginDraft(_ draft: CalendarEventDraft) {
+        self.draft = draft
+        openEventId = nil
+        cardMode = .edit
+        selectedEventId = nil
+        PerfLog.shared.write("calendar_card_draft start=\(draft.startsAt) allDay=\(draft.allDay ? 1 : 0)")
+    }
+
+    /// Nach dem Sichern einer Bearbeitung: dieselbe Karte zeigt den neuen Stand.
+    public func savedOpenCard() {
+        draft = nil
+        cardMode = .view
+        PerfLog.shared.write("calendar_card_saved")
+    }
+
+    /// Der neue Termin wurde gespeichert: Karte zu, Liste neu.
+    public func draftSaved() {
+        draft = nil
+        openEventId = nil
+        cardMode = .view
+    }
+
+    public func requestSave() { saveRequest += 1 }
+
+    /// `↑`/`↓`: der vorige bzw. nächste Termin im sichtbaren Zeitraum, nach
+    /// Start sortiert (ganztägige zuerst, gleicher Start nach Titel). Eine
+    /// offene Karte wandert mit.
+    public func selectAdjacent(_ delta: Int) {
+        let ordered = navigationOrder()
+        guard !ordered.isEmpty else { return }
+        let current = selectedEventId.flatMap { id in ordered.firstIndex { $0.id == id } }
+        let next: Int
+        if let current {
+            next = min(max(current + delta, 0), ordered.count - 1)
+        } else {
+            next = delta >= 0 ? 0 : ordered.count - 1
+        }
+        let id = ordered[next].id
+        selectedEventId = id
+        if cardIsOpen, draft == nil { openCard(id) }
+        PerfLog.shared.write("calendar_select id=\(id) index=\(next) n=\(ordered.count)")
+    }
+
+    /// Die Reihenfolge für `↑`/`↓` (auch die Tests prüfen sie).
+    ///
+    /// M2.15b (2.3): In der Terminliste entscheidet die **Anzeige** die
+    /// Reihenfolge (Tagesgruppen, ganztägig zuerst, mehrtägige Termine nur an
+    /// der ersten Stelle). Vorher lief die Auswahl durch alle geladenen
+    /// Termine — sie sprang an der Liste vorbei.
+    public func navigationOrder() -> [CalendarEvent] {
+        if mode == .list {
+            let ordered = AgendaModel.orderedEvents(events: visibleEvents, days: listDays)
+            if !ordered.isEmpty { return ordered }
+        }
+        return visibleEvents.sorted { a, b in
+            if a.allDay != b.allDay { return a.allDay }
+            if a.startsAt != b.startsAt { return a.startsAt < b.startsAt }
+            return (a.summary ?? "").localizedStandardCompare(b.summary ?? "") == .orderedAscending
+        }
+    }
+
+    /// M2.12: was ein Schritt von `↑`/`↓`/`←`/`→` tut. Am Rand der sichtbaren
+    /// Spanne blättert die Ansicht eine Seite weiter statt stehenzubleiben.
+    public enum NavigationStep: Equatable, Sendable {
+        case select(Int64)
+        case page(Int)
+    }
+
+    /// Reine Funktion für die Tests: ohne Auswahl führt `+1` zum ersten und
+    /// `-1` zum letzten Termin; über den Rand hinaus wird geblättert.
+    public func navigationStep(_ delta: Int) -> NavigationStep {
+        let ordered = navigationOrder()
+        guard !ordered.isEmpty else { return .page(delta >= 0 ? 1 : -1) }
+        guard let current = selectedEventId.flatMap({ id in ordered.firstIndex { $0.id == id } }) else {
+            return .select(ordered[delta >= 0 ? 0 : ordered.count - 1].id)
+        }
+        let next = current + delta
+        guard ordered.indices.contains(next) else { return .page(delta >= 0 ? 1 : -1) }
+        return .select(ordered[next].id)
+    }
+
+    /// `↑`/`↓` bzw. `←`/`→` (M2.12): Auswahl wandert, am Rand wird geblättert;
+    /// die erste bzw. letzte Auswahl der neuen Seite wird nach dem Laden gesetzt.
+    public func navigate(_ delta: Int) {
+        switch navigationStep(delta) {
+        case .select(let id):
+            selectedEventId = id
+            if cardIsOpen, draft == nil { openCard(id) }
+            PerfLog.shared.write("calendar_navigate id=\(id)")
+        case .page(let direction):
+            pendingSelection = direction > 0 ? .first : .last
+            page(direction)
+            PerfLog.shared.write("calendar_navigate page=\(direction)")
+        }
+    }
+
+    private enum PendingSelection { case first, last }
+    private var pendingSelection: PendingSelection?
+
     /// The selected event while it is still in the visible range.
     public var selectedEvent: CalendarEvent? {
         guard let selectedEventId else { return nil }
         return visibleEvents.first { $0.id == selectedEventId }
     }
 
+    /// M2.15b (2.2): Darf dieser Termin bearbeitet werden? Die Regel steht in
+    /// `CalendarPermissions` (testbar ohne UI).
+    public func canEdit(_ event: CalendarEvent) -> Bool {
+        CalendarPermissions.canEdit(event, calendars: calendars, ownEmails: ownEmails)
+    }
+
+    /// M2.15b (2.2): Darf der Nutzer zu- oder absagen?
+    public func canRSVP(_ event: CalendarEvent) -> Bool {
+        CalendarPermissions.canRSVP(event, ownEmails: ownEmails)
+    }
+
     /// Local midnight of the focused day.
     public var anchor: Int64
     public var mode: Mode = .week
-    public var sidebarVisible = true
+    /// M2.9: die Seitenleiste ist jetzt die gemeinsame des Hauptfensters. Der
+    /// Kalender liest und schaltet dieselbe; ohne Shell (Tests) bleibt das
+    /// lokale Feld.
+    public weak var shell: SidebarState?
+    private var localSidebarVisible = true
+    public var sidebarVisible: Bool {
+        get { shell?.isVisible ?? localSidebarVisible }
+        set {
+            if let shell {
+                if shell.isVisible != newValue { shell.toggle() }
+            } else {
+                localSidebarVisible = newValue
+            }
+        }
+    }
     /// Calendars the user switched off (kept across launches).
     public var hiddenCalendars: Set<Int64> {
         didSet { UserDefaults.standard.set(hiddenCalendars.map(String.init), forKey: Self.hiddenKey) }
@@ -89,7 +396,39 @@ public final class CalendarStore {
         case .day: [math.startOfDay(anchor)]
         case .week: math.weekDays(anchor)
         case .month: math.monthGridDays(anchor)
+        case .year: yearDays
+        case .list: listDays
         }
+    }
+
+    /// M2.13: alle Tage des Jahres, in dem der Anker liegt (Schaltjahr inklusive).
+    public var yearDays: [Int64] {
+        let year = math.calendar.component(.year, from: math.date(anchor))
+        return YearGrid.days(year: year, calendar: math.calendar)
+    }
+
+    /// M2.13: das Fenster der Terminliste — 30 Tage zurück als Kontext, 30 voraus.
+    public var listDays: [Int64] {
+        let base = math.addDays(math.startOfDay(anchor), -CalendarStore.listDaysBack)
+        return (0..<(CalendarStore.listDaysBack + CalendarStore.listDaysForward))
+            .map { math.addDays(base, $0) }
+    }
+
+    public static let listDaysBack = 30
+    public static let listDaysForward = 31
+
+    /// M2.13: gewählter Tag in der Jahresansicht (0 = heute).
+    public var selectedDay: Int64 = 0
+    public var selectedDayOrToday: Int64 { selectedDay == 0 ? todayStart : selectedDay }
+
+    /// Setzt die Auswahl der Jahresansicht, ohne Daten nachzuladen.
+    public func selectDay(_ day: Int64) {
+        selectedDay = math.startOfDay(day)
+    }
+
+    /// Ein Schritt von 7 Tagen in der Jahresansicht (`↑`/`↓`).
+    public func moveSelectedDay(byDays days: Int) {
+        selectedDay = math.addDays(selectedDayOrToday, days)
     }
 
     /// Half-open epoch range the core is asked for.
@@ -143,11 +482,30 @@ public final class CalendarStore {
             lastFetchMilliseconds = Date().timeIntervalSince(fetchStarted) * 1000
             events = rows
             loaded = true
+            // M2.13 §8.5: der Messpunkt für „Jahr in einem Zug laden“.
+            if mode == .year {
+                PerfLog.shared.write("calendar_year_load ms=\(String(format: "%.1f", lastFetchMilliseconds)) "
+                                     + "events=\(rows.count) days=\(days.count)")
+            }
         } catch {
             toasts.error(error)
             return
         }
         rebuildWeekModel()
+        applyPendingSelection()
+    }
+
+    /// Nach dem Blättern am Rand (M2.12): der erste bzw. letzte Termin der neuen
+    /// Seite wird gewählt, eine offene Karte wandert mit.
+    private func applyPendingSelection() {
+        guard let pending = pendingSelection else { return }
+        pendingSelection = nil
+        let ordered = navigationOrder()
+        let target = pending == .first ? ordered.first : ordered.last
+        guard let id = target?.id else { selectedEventId = nil; return }
+        selectedEventId = id
+        if cardIsOpen, draft == nil { openCard(id) }
+        PerfLog.shared.write("calendar_navigate_after_page id=\(id) mode=\(mode.rawValue)")
     }
 
     /// Recomputes the day/week layout. The signpost interval is the measurement
@@ -193,7 +551,10 @@ public final class CalendarStore {
         case .day: anchor = math.addDays(anchor, delta)
         case .week: anchor = math.addDays(anchor, delta * 7)
         case .month: anchor = math.addMonths(math.startOfMonth(anchor), delta)
+        case .year: anchor = math.addMonths(anchor, delta * 12)
+        case .list: anchor = math.addDays(anchor, delta * 30)
         }
+        if mode == .year || mode == .list { selectedDay = anchor }
         refreshAfterNavigation()
     }
 
@@ -217,6 +578,11 @@ public final class CalendarStore {
             return format(anchor, "EEEE, d. MMMM yyyy")
         case .month:
             return format(math.startOfMonth(anchor), "LLLL yyyy")
+        case .year:
+            return format(anchor, "yyyy")
+        case .list:
+            if math.startOfDay(anchor) == todayStart { return "Ab heute" }
+            return "Ab " + format(anchor, "d. MMM yyyy")
         case .week:
             guard let first = days.first, let last = days.last else { return "" }
             if math.monthIndex(first) == math.monthIndex(last) {
@@ -308,11 +674,11 @@ public final class CalendarStore {
             try await client.deleteEvent(event.id, notify: true)
             events.removeAll { $0.id == event.id }
             rebuildWeekModel()
-            let invited = event.isLocal && !event.attendees.isEmpty
+            let invited = canEdit(event) && !event.attendees.isEmpty
             let text = invited
                 ? "Termin abgesagt, Absage an \(event.attendees.count) Teilnehmende gemailt"
                 : "Termin gelöscht"
-            if event.isLocal && event.attendees.isEmpty {
+            if canEdit(event) && event.attendees.isEmpty {
                 toasts.show(text, actionTitle: Strings.undo) { [weak self] in
                     guard let self else { return }
                     Task { await self.recreate(event) }
@@ -431,16 +797,146 @@ public final class CalendarStore {
         guard let client, !busy else { return false }
         busy = true
         defer { busy = false }
+        lastSyncUnconfirmed = false
+        let before = lastSyncAt
         do {
             try await client.calendarSyncNow(accountId: nil)
-            toasts.show("Abgleich gestartet")
             await loadCalendars()
+            guard !calendars.isEmpty else {
+                toasts.show("Kein Kalender verbunden.")
+                return true
+            }
+            let confirmed = await waitForSync(after: before)
+            lastSyncUnconfirmed = !confirmed
+            toasts.show(confirmed
+                        ? "Abgleich abgeschlossen"
+                        : "Abgleich angefordert – noch nicht bestätigt. Bleibt der Zeitstempel alt: "
+                            + "Server und App-Passwort prüfen (Konto verbinden).")
             await refresh()
-            return true
+            return confirmed
         } catch {
             toasts.error(error)
             return false
         }
+    }
+
+    /// `calendar_sync_now` nudges the core's task and returns at once, so the
+    /// only evidence of a real cycle is a moved `last_synced_at`. Six seconds
+    /// are enough for a local server; the real instance's CalDAV server may be
+    /// slower, which is why the wording says "nicht bestätigt" and not "failed".
+    private func waitForSync(after before: Int64?) async -> Bool {
+        for _ in 0..<12 {
+            try? await Task.sleep(for: .milliseconds(500))
+            await loadCalendars()
+            if let now = lastSyncAt, now > (before ?? -1) { return true }
+        }
+        return false
+    }
+
+    // MARK: Connecting a CalDAV account (M2.12)
+
+    /// `connect_calendar` with a server URL and an app password. The core runs
+    /// discovery, stores the password in the keychain and returns the found
+    /// collections; the app keeps no copy of the password.
+    @discardableResult
+    /// M2.15b (Audit): CalDAV nur über `https`; `http` bleibt dem lokalen Mock
+    /// vorbehalten. Sonst ginge das App-Passwort unverschlüsselt über das Netz.
+    public static func connectionProblem(_ server: String) -> String? {
+        let trimmed = server.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return "Bitte eine Server-Adresse angeben." }
+        guard let url = URL(string: trimmed), let scheme = url.scheme?.lowercased(),
+              let host = url.host?.lowercased(), !host.isEmpty else {
+            return "Bitte eine vollständige Adresse angeben, z. B. https://caldav.icloud.com."
+        }
+        if scheme == "https" { return nil }
+        if scheme == "http" {
+            let local = host == "localhost" || host == "127.0.0.1" || host == "::1"
+            return local ? nil
+                : "Unverschlüsselt nur für localhost. Für iCloud bitte https:// verwenden."
+        }
+        return "Nur https:// wird unterstützt."
+    }
+
+    public func connectCalendar(accountId: Int64, server: String, username: String,
+                                password: String) async -> Bool {
+        guard let client else {
+            connectError = "Der Kern läuft noch nicht."
+            return false
+        }
+        if let problem = Self.connectionProblem(server) {
+            connectError = problem
+            PerfLog.shared.write("calendar_connect rejected reason=not_https")
+            return false
+        }
+        guard !connecting else { return false }
+        connecting = true
+        connectError = nil
+        connectNotice = nil
+        defer { connecting = false }
+        let started = Date()
+        do {
+            let found = try await client.connectCalendar(ConnectCalendarArgs(
+                accountId: accountId, kind: "generic", url: server,
+                username: username, password: password))
+            await loadCalendars()
+            await refresh()
+            connectNotice = found.isEmpty
+                ? "Verbunden, aber der Server meldet keine Kalender."
+                : "Verbunden – \(found.count) Kalender gefunden. Der erste Abgleich läuft."
+            PerfLog.shared.write("calendar_connect ok calendars=\(found.count) "
+                                 + "ms=\(Int(Date().timeIntervalSince(started) * 1000))")
+            toasts.show(connectNotice ?? "")
+            return true
+        } catch {
+            let mapped = RabeClientError.from(error)
+            connectError = Self.connectErrorMessage(mapped)
+            PerfLog.shared.write("calendar_connect failed code=\(mapped.code) "
+                                 + "ms=\(Int(Date().timeIntervalSince(started) * 1000))")
+            return false
+        }
+    }
+
+    /// Klartext für die Einstellungen: die generische Fehlertabelle kennt
+    /// CalDAV nicht, und „NeedsReauth“ (HTTP 401) ist der häufigste Fall.
+    static func connectErrorMessage(_ error: RabeClientError) -> String {
+        guard case let .core(code, message) = error else { return Strings.errorText(error) }
+        switch code {
+        case "auth", "needs_reauth":
+            return "Anmeldung fehlgeschlagen – E-Mail-Adresse und App-Passwort prüfen."
+        case "caldav":
+            let detail = message.lowercased()
+            if detail.contains("401") {
+                return "Der Server hat die Anmeldung abgelehnt (HTTP 401). "
+                    + "Prüfe E-Mail-Adresse und App-Passwort."
+            }
+            if detail.contains("connect") || detail.contains("refused") {
+                return "Server nicht erreichbar. Prüfe die Adresse und deine Verbindung."
+            }
+            // Der Kern verschluckt Netzfehler in der Erkennung: ein toter Port,
+            // eine falsche Adresse und ein Server ohne CalDAV enden alle in
+            // „no current-user-principal found“. Also nicht „der Server meldet
+            // einen Fehler“ behaupten, sondern das sagen, was zutrifft.
+            if detail.contains("no current-user-principal") {
+                return "Unter dieser Adresse wurde kein Kalender gefunden. "
+                    + "Prüfe die Adresse (für iCloud https://caldav.icloud.com) "
+                    + "und ob sie erreichbar ist."
+            }
+            return "Der Kalenderserver meldet einen Fehler: \(message)"
+        case "offline":
+            return "Du bist offline oder der Server ist nicht erreichbar."
+        case "network":
+            return "Der Server ist nicht erreichbar. Prüfe die Adresse und deine Verbindung."
+        case "keyring":
+            return "Das Passwort konnte nicht im Schlüsselbund gespeichert werden."
+        default:
+            return Strings.errorText(error)
+        }
+    }
+
+    /// Beim Tippen in den Feldern: die alte Meldung soll nicht stehen bleiben.
+    public func clearConnectFeedback() {
+        connectError = nil
+        connectNotice = nil
     }
 
     // MARK: Hiding

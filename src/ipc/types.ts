@@ -663,6 +663,8 @@ export interface CalendarEvent {
   allDay: boolean;
   status: string | null;
   method: string | null;
+  /** Why the last push to the server failed; null = in sync. */
+  syncError: string | null;
 }
 
 /** A discovered CalDAV calendar collection. */

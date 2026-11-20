@@ -22,8 +22,15 @@ impl DavResponse {
     }
 }
 
+/// Content-Type for XML bodies (PROPFIND, REPORT). RFC 4918 verbs.
+pub const XML_CONTENT_TYPE: &str = "application/xml; charset=utf-8";
+/// Content-Type for iCalendar bodies (PUT of a `.ics` resource). RFC 4791 §5.3.2
+/// requires `text/calendar`; iCloud answers 501 to a VCALENDAR sent as XML.
+pub const ICAL_CONTENT_TYPE: &str = "text/calendar; charset=utf-8";
+
 /// One WebDAV request. `depth` adds a Depth header when Some; `extra` carries
-/// conditional headers (If-Match / If-None-Match).
+/// conditional headers (If-Match / If-None-Match); `content_type` is the body's
+/// media type, chosen per request (`XML_CONTENT_TYPE`, `ICAL_CONTENT_TYPE`).
 #[async_trait::async_trait]
 pub trait Transport: Send + Sync {
     async fn request(
@@ -32,6 +39,7 @@ pub trait Transport: Send + Sync {
         url: &str,
         depth: Option<&str>,
         extra: &[(&str, &str)],
+        content_type: Option<&str>,
         body: Option<String>,
     ) -> Result<DavResponse>;
 }
@@ -61,6 +69,7 @@ impl Transport for HttpTransport {
         url: &str,
         depth: Option<&str>,
         extra: &[(&str, &str)],
+        content_type: Option<&str>,
         body: Option<String>,
     ) -> Result<DavResponse> {
         let method = reqwest::Method::from_bytes(method.as_bytes())
@@ -78,7 +87,7 @@ impl Transport for HttpTransport {
         }
         if let Some(b) = body {
             req = req
-                .header("Content-Type", "application/xml; charset=utf-8")
+                .header("Content-Type", content_type.unwrap_or(XML_CONTENT_TYPE))
                 .body(b);
         }
         let resp = req.send().await.map_err(|e| {
@@ -137,8 +146,10 @@ impl Transport for MockTransport {
         url: &str,
         depth: Option<&str>,
         extra: &[(&str, &str)],
+        content_type: Option<&str>,
         body: Option<String>,
     ) -> Result<DavResponse> {
+        let has_body = body.is_some();
         self.seen
             .lock()
             .unwrap()
@@ -149,6 +160,12 @@ impl Transport for MockTransport {
             .collect();
         if let Some(d) = depth {
             headers.insert("Depth".into(), d.to_string());
+        }
+        // Mirror the wire: every body carries the effective Content-Type.
+        if let Some(ct) = content_type {
+            headers.insert("Content-Type".into(), ct.to_string());
+        } else if has_body {
+            headers.insert("Content-Type".into(), XML_CONTENT_TYPE.into());
         }
         self.headers_seen.lock().unwrap().push(headers);
         self.responses

@@ -1,69 +1,60 @@
 import RabeKit
 import SwiftUI
 
-/// Full calendar screen (Tauri `CalendarScreen`): header with navigation and the
-/// day/week/month switch, the sidebar (`\`), and the grid or month layout.
+/// Full calendar screen (Tauri `CalendarScreen`): the grid or month layout and
+/// the one card an event opens in.
 /// Reached with `2` or `m` from the mail list, `1`/`Esc` goes back.
+///
+/// M2.9 Stufe C: Anzeige und Bearbeiten liegen in der Karte **im** Raster; das
+/// Popover und das Editor-Sheet von M2.8b sind weg (§7.3).
 struct CalendarScreenView: View {
-    /// Height of the window's toolbar/titlebar band (see `WindowConfigurator`).
-    private static let titlebarBand: CGFloat = 52
-
     private var model: AppModel { AppModel.shared }
     private var store: CalendarStore { model.calendar }
     @Environment(\.theme) private var theme
-    @State private var editor: EventEditorRequest?
-    @State private var detail: CalendarEvent?
     @State private var focusRequest = 0
     /// "Löschen" from a context menu or `⌫`: one confirmation for every surface.
     @State private var pendingDelete: CalendarEvent?
     /// Single vs. double click from the hook (`calendar:click`), only so the
     /// walkthrough can reach the same decision the pointer makes.
     @State private var hookClicks = CalendarClickRouter()
-    /// Escape while a card is open. The popover holds the key and swallows the
-    /// key binding, so `onExitCommand` never fires (M2.8b): one local monitor
-    /// while a card is visible is the reliable path.
+    /// Esc while the card is open. Die Felder der Bearbeitung halten die Tastatur,
+    /// ein lokaler Monitor ist der verlässliche Weg (M2.8b, §7.4).
     @State private var escapeMonitor: Any?
 
     var body: some View {
-        VStack(spacing: 0) {
-            header
-            Divider().opacity(0.5)
-            HStack(spacing: 0) {
-                if store.sidebarVisible {
-                    CalendarSidebarView(store: store, accounts: model.mailbox.accounts)
-                }
-                content
-            }
-            hintBar
+        // M2.9: Kopf und Seitenleiste liegen im Hauptfenster (gemeinsame
+        // Werkzeugleiste, gemeinsame Seitenleiste); der Kalender ist nur noch
+        // das Raster.
+        //
+        // Die GeometryReader-Grenze gibt dem Raster eine feste Höhe: ohne sie
+        // nimmt der VStack aus Kopfzeile und ScrollView seine Idealhöhe
+        // (24 Stunden à 56 pt) an und schiebt die Kopfzeile aus dem Fenster
+        // (im Sandbox-Lauf gesehen).
+        //
+        // `ignoresSafeAreaEdges: []` bei den Hintergründen ist Pflicht: ein
+        // `.background` dehnt sich sonst in die Safe Area aus und legt sich
+        // über das Fensterband — die Kalender-Werkzeugleiste war dadurch
+        // unsichtbar (die Fläche dort war `win` statt `bar`).
+        GeometryReader { proxy in
+            content
+                .frame(width: proxy.size.width, height: proxy.size.height, alignment: .top)
+                .background(theme.win.color, ignoresSafeAreaEdges: [])
+                .background { catcher }
         }
-        // The window keeps 52 pt for its unified toolbar row (where the mail
-        // list draws its toolbar and the traffic lights live). The calendar
-        // starts below that band — content drawn under it is not visible.
-        .padding(.top, Self.titlebarBand)
-        .background(theme.win.color)
-        .background(
-            CalendarKeyCatcher(onKey: { event in
-                CalendarKeyboard.handle(
-                    event, store: store,
-                    openEditor: { openEditor() },
-                    openSelected: { selected in detail = selected },
-                    deleteSelected: { selected in pendingDelete = selected },
-                    closeOverlay: {
-                        guard detail != nil || editor != nil else { return false }
-                        detail = nil
-                        editor = nil
-                        return true
-                    },
-                    close: { model.calendarOpen = false; model.mailbox.focusList() })
-            }, focusRequest: focusRequest)
-        )
+        .background(theme.win.color, ignoresSafeAreaEdges: [])
         .task {
             store.settings = model.settings
+            store.ownEmails = CalendarPermissions.ownAddresses(model.mailbox.accounts.map(\.email))
             await store.loadCalendars()
             if !store.loaded { await store.refresh() }
         }
+        // M2.15b (2.2): Konten kommen asynchron; erst mit den eigenen Adressen
+        // lässt sich „mein Termin" von „Einladung" unterscheiden.
+        .onChange(of: model.mailbox.accounts.count, initial: true) { _, _ in
+            store.ownEmails = CalendarPermissions.ownAddresses(model.mailbox.accounts.map(\.email))
+        }
         .onReceive(NotificationCenter.default.publisher(for: .rabeCalendarNewEvent)) { _ in
-            openEditor()
+            openNewEvent()
         }
         // Hook build only: one click on an event, fed in where a pointer click
         // would end up (M2.8b walkthrough without foreground). Lives on the
@@ -74,11 +65,9 @@ struct CalendarScreenView: View {
             store.selectedEventId = id
             PerfLog.shared.write("calendar_click id=\(id) mode=\(store.mode.rawValue) source=hook")
             // The same router the pointer uses: one click opens, two edit.
-            hookClicks.click(String(id), onOpen: { detail = event }, onEdit: {
-                editor = EventEditorRequest(event: event, startsAt: event.startsAt,
-                                            endsAt: CalendarEventRules.eventEnd(event),
-                                            allDay: event.allDay)
-            })
+            hookClicks.click(String(id),
+                             onOpen: { store.openCard(event.id) },
+                             onEdit: { store.openCard(event.id, edit: true) })
         }
         .onReceive(NotificationCenter.default.publisher(for: .rabeCalendarPrefill)) { note in
             let info = note.userInfo ?? [:]
@@ -86,31 +75,29 @@ struct CalendarScreenView: View {
                 ?? Int64(Date().timeIntervalSince1970 * 1000) + 3_600_000
             let endsAt = (info["endsAt"] as? NSNumber)?.int64Value ?? startsAt + 3_600_000
             let location = info["location"] as? String ?? ""
-            editor = EventEditorRequest(
+            store.beginDraft(CalendarEventDraft(
                 startsAt: startsAt, endsAt: endsAt,
                 allDay: info["allDay"] as? Bool ?? false,
                 title: info["summary"] as? String,
-                location: location.isEmpty ? nil : location)
-        }
-        .sheet(item: $editor, onDismiss: { focusRequest += 1 }) { request in
-            CalendarEventEditorView(store: store, accounts: model.mailbox.accounts, request: request) {
-                editor = nil
-            }
-        }
-        .onChange(of: detail?.id) { _, id in
-            PerfLog.shared.write("calendar_detail open=\(id.map(String.init) ?? "-")")
+                location: location.isEmpty ? nil : location))
         }
         .onAppear { installKeyMonitor() }
         .onDisappear { removeEscapeMonitor() }
         .onChange(of: pendingDelete?.id) { _, id in
             PerfLog.shared.write("calendar_confirm event=\(id.map(String.init) ?? "-")")
         }
-        .onChange(of: editor?.id) { _, id in
-            guard id != nil else { return }
-            let event = editor?.event.map { String($0.id) } ?? "new"
-            PerfLog.shared.write("calendar_editor event=\(event)")
+        .onChange(of: store.cardMode) { _, mode in
+            PerfLog.shared.write("calendar_card_mode mode=\(mode.rawValue)")
+            if mode == .edit { DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { focusRequest += 1 } }
         }
-        .alert(pendingDelete?.isLocal == true && !(pendingDelete?.attendees.isEmpty ?? true)
+        // M2.12 requirement 7: after every close (Esc, ×, click into the grid)
+        // the keyboard belongs to the grid again.
+        .onChange(of: store.cardIsOpen) { _, open in
+            guard !open else { return }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { focusRequest += 1 }
+            PerfLog.shared.write("calendar_card_focus_return")
+        }
+        .alert(pendingDelete.map { store.canEdit($0) } == true && !(pendingDelete?.attendees.isEmpty ?? true)
                ? "Diesen Termin absagen?" : "Diesen Termin löschen?",
                isPresented: Binding(get: { pendingDelete != nil },
                                     set: { if !$0 { pendingDelete = nil } })) {
@@ -118,6 +105,7 @@ struct CalendarScreenView: View {
             Button("Löschen", role: .destructive) {
                 guard let event = pendingDelete else { return }
                 pendingDelete = nil
+                store.closeCard()
                 Task { await store.delete(event) }
                 focusRequest += 1
             }
@@ -126,84 +114,13 @@ struct CalendarScreenView: View {
         }
     }
 
-    // MARK: Header
-
-    private var header: some View {
-        HStack(spacing: 8) {
-            Button {
-                store.sidebarVisible.toggle()
-            } label: {
-                Image(systemName: "sidebar.left")
-                    .font(.system(size: 12))
-                    .foregroundStyle(store.sidebarVisible ? theme.ink.color : theme.ink3.color)
-                    .frame(width: 26, height: 24)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .help("Seitenleiste ein/aus (\\)")
-
-            Button("Heute") { store.jumpToToday() }
-                .buttonStyle(.plain)
-                .font(.system(size: 12, weight: .medium))
-                .padding(.horizontal, 9)
-                .padding(.vertical, 4)
-                .background(RoundedRectangle(cornerRadius: 6).strokeBorder(theme.line.color, lineWidth: 0.6))
-                .help("Heute (T)")
-
-            HStack(spacing: 2) {
-                chevron("chevron.left", help: "Zurück (-)") { store.page(-1) }
-                chevron("chevron.right", help: "Weiter (=)") { store.page(1) }
-            }
-
-            Text(store.heading())
-                .font(.system(size: 16.5, weight: .semibold))
-                .foregroundStyle(theme.ink.color)
-                .lineLimit(1)
-
-            Spacer(minLength: 8)
-
-            Picker("Ansicht", selection: Binding(
-                get: { store.mode },
-                set: { store.setMode($0) }
-            )) {
-                ForEach(CalendarStore.Mode.allCases) { mode in
-                    Text(mode.title).tag(mode)
-                }
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            .frame(width: 190)
-            .help("Tag (D), Woche (W), Monat (M)")
-
-            Button {
-                openEditor()
-            } label: {
-                HStack(spacing: 4) {
-                    Image(systemName: "plus").font(.system(size: 10.5, weight: .semibold))
-                    Text("Neuer Termin").font(.system(size: 12, weight: .medium))
-                }
-                .foregroundStyle(theme.accentInk.color)
-                .padding(.horizontal, 9)
-                .padding(.vertical, 4)
-                .background(RoundedRectangle(cornerRadius: 6).fill(theme.accent.color))
-            }
-            .buttonStyle(.plain)
-            .help("Neuer Termin (B)")
-        }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 7)
-    }
-
-    private func chevron(_ symbol: String, help: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Image(systemName: symbol)
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(theme.ink2.color)
-                .frame(width: 24, height: 24)
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .help(help)
+    /// Der Tastenempfänger des Rasters (`\(store.mode)`-unabhängig). In der
+    /// Anzeige bleibt die Tastatur beim Raster — die Karte ist **kein** erster
+    /// Responder; erst das Bearbeiten gibt sie an das Titelfeld (§7.4).
+    private var catcher: CalendarKeyCatcher {
+        // Dieselbe Auswertung wie im Monitor, damit es nur einen Weg gibt.
+        CalendarKeyCatcher(onKey: { event in keyHandled(event) },
+                           focusRequest: focusRequest)
     }
 
     // MARK: Content
@@ -220,84 +137,84 @@ struct CalendarScreenView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
             Group {
-                if store.mode == .month {
-                    CalendarMonthView(store: store, editor: $editor, detail: $detail,
-                                      onDelete: { pendingDelete = $0 })
-                } else {
-                    CalendarTimeGridView(store: store, editor: $editor, detail: $detail,
-                                         onDelete: { pendingDelete = $0 })
+                switch store.mode {
+                case .month:
+                    CalendarMonthView(store: store, onDelete: { pendingDelete = $0 })
+                case .year:
+                    // M2.13 §8.3: Klick wählt den Tag, Doppelklick oder ↵ öffnet
+                    // ihn, der Monatsname öffnet den Monat.
+                    CalendarYearView(store: store,
+                                     onOpenDay: { day in
+                                         store.selectDay(day)
+                                         store.go(to: day)
+                                         store.setMode(.day)
+                                     },
+                                     onOpenMonth: { month in
+                                         store.go(to: month)
+                                         store.setMode(.month)
+                                     })
+                case .list:
+                    CalendarListView(store: store, onDelete: { pendingDelete = $0 })
+                case .day, .week:
+                    CalendarTimeGridView(store: store, onDelete: { pendingDelete = $0 })
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
     }
 
-    private var hintBar: some View {
-        HStack(spacing: 14) {
-            hint("D / W / M", "Ansicht")
-            hint("- / =", "blättern")
-            hint("T", "heute")
-            hint("B", "neu")
-            hint("\\", "Seitenleiste")
-            hint("1 / Esc", "zurück")
-            Spacer()
-            if store.meetingReminderMinutes > 0 {
-                Text("Erinnerung \(store.meetingReminderMinutes) min vorher")
-                    .font(.system(size: 10.5))
-                    .foregroundStyle(theme.ink3.color)
-            }
-        }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 5)
-        .background(theme.win.color)
-        .overlay(alignment: .top) {
-            Rectangle().fill(theme.line.color).frame(height: 0.5)
-        }
-    }
-
-    private func hint(_ keys: String, _ label: String) -> some View {
-        HStack(spacing: 5) {
-            KeyCap(keys)
-            Text(label)
-                .font(.system(size: 11))
-                .foregroundStyle(theme.ink2.color)
-        }
-    }
-
-    /// One monitor for as long as the calendar screen is up. Installing and
-    /// removing it per card lost it across a sheet (M2.8b, sandbox finding); it
-    /// only acts while a card is open, so the rest keeps its key handling.
+    /// Esc und `↑`/`↓` bei offener Karte. Beim Bearbeiten hält ein Feld die
+    /// Tastatur, deshalb läuft die Kette hier statt im Tastenempfänger:
+    /// Bearbeiten → Anzeige → geschlossen (§7.4).
+    ///
+    /// `↑`/`↓` gehören hierher und nicht nur in den `CalendarKeyCatcher`: die
+    /// Karte liegt als Overlay über dem Raster und nimmt den Fokus, der
+    /// Tastenempfänger bekam die Pfeile dadurch nicht mehr (Sandbox-Lauf).
     private func installKeyMonitor() {
         guard escapeMonitor == nil else { return }
         escapeMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
-            // Only our own windows: not another app, not a sheet with a field.
-            let ours = event.window?.title == Instance.title
-                || String(describing: type(of: event.window as Any)).contains("Popover")
-            guard ours, let event43 = detail else { return event }
-            switch event.keyCode {
-            case 53:                                    // Esc: Karte zu
-                PerfLog.shared.write("calendar_escape source=monitor")
-                detail = nil
-                // The popover owned the key: hand the keyboard back to the grid,
-                // so `Return`/`⌫` keep working afterwards.
+            guard event.window?.title == Instance.title else { return event }
+            if event.keyCode == 53 {
+                guard store.cardIsOpen else { return event }
+                PerfLog.shared.write("calendar_escape source=monitor mode=\(store.cardMode.rawValue)")
+                // M2.12: eine Entscheidung für Monitor und Test (`escapeAction`):
+                // Bearbeiten → Anzeige, Anzeige → Karte zu. Ohne Karte lässt der
+                // Monitor die Taste weiter zum Raster („zurück zur Liste“).
+                switch store.escapeAction() {
+                case .cancelEdit: store.cancelEdit()
+                case .closeCard: store.closeCard()
+                case .leaveCalendar: return event
+                }
                 focusRequest += 1
                 return nil
-            case 36, 76:                                // Return: bearbeiten
-                PerfLog.shared.write("calendar_return source=monitor id=\(event43.id)")
-                detail = nil
-                editor = EventEditorRequest(event: event43, startsAt: event43.startsAt,
-                                            endsAt: CalendarEventRules.eventEnd(event43),
-                                            allDay: event43.allDay)
-                return nil
-            case 51, 117:                               // ⌫: löschen (mit Rückfrage)
-                PerfLog.shared.write("calendar_delete source=monitor id=\(event43.id)")
-                pendingDelete = event43
-                detail = nil
-                return nil
-            default:
+            }
+            // Ab hier: keine Karte im Bearbeiten-Modus und kein Textfeld —
+            // sonst gehört die Taste dem Feld (Titel, Suche, Datum).
+            let responder = event.window?.firstResponder
+            if responder is NSText || responder is NSTextView { return event }
+            guard store.cardMode == .view else { return event }
+            if model.shortcutsOpen || model.paletteOpen || event.window?.attachedSheet != nil {
                 return event
             }
+            // M2.13: alle Tasten laufen über denselben Handler wie im
+            // `CalendarKeyCatcher`. Der Monitor ist der verlässliche Weg: nach
+            // einem Ansichtswechsel (Jahr, Liste) hält der ScrollView den Fokus,
+            // und der Empfänger bekäme die Einzeltasten nie (Sandbox-Lauf).
+            return keyHandled(event) ? nil : event
         }
+    }
+
+    /// Ein Aufruf `CalendarKeyboard.handle` mit den Aktionen dieses Bildschirms.
+    private func keyHandled(_ event: NSEvent) -> Bool {
+        CalendarKeyboard.handle(
+            event, store: store,
+            openNew: { openNewEvent() },
+            openCard: { store.openCard($0.id) },
+            editCard: { store.editOpenCard() },
+            saveCard: { store.requestSave() },
+            deleteSelected: { pendingDelete = $0 },
+            joinMeeting: { join($0) },
+            close: { model.calendarOpen = false; model.mailbox.focusList() })
     }
 
     private func removeEscapeMonitor() {
@@ -306,18 +223,33 @@ struct CalendarScreenView: View {
         self.escapeMonitor = nil
     }
 
+    private func join(_ event: CalendarEvent) {
+        guard let url = MeetingLink.url(event.joinUrl) else { return }
+        PerfLog.shared.write("calendar_join id=\(event.id)")
+        model.platform.open(url)
+    }
+
     private var deleteMessage: String {
         guard let event = pendingDelete else { return "" }
-        if event.isLocal && !event.attendees.isEmpty {
+        if store.canEdit(event) && !event.attendees.isEmpty {
             return "\(event.attendees.count) Teilnehmende erhalten eine Absage per E-Mail."
         }
-        if !event.isLocal {
+        if !store.canEdit(event) {
             return "Der Termin verschwindet aus dem Kalender. Niemand wird benachrichtigt."
         }
         return "Der Termin wird gelöscht. Das lässt sich rückgängig machen, solange der Hinweis sichtbar ist."
     }
 
-    private func openEditor() {
+    /// `B` bzw. der Knopf: derselbe Weg wie ein Klick auf freie Fläche — ein
+    /// gestrichelter Platzhalter und die Karte im Bearbeiten-Modus.
+    private func openNewEvent() {
+        // M2.15b: In Jahr und Liste gibt es keinen Platz für den gestrichelten
+        // Platzhalter und die Karte — dort tat „Neuer Termin" deshalb nichts.
+        // Der Tag des Ankers wird im Tagesraster geöffnet (Architekt: Coder 1
+        // hat das im Sandbox-Lauf bemerkt).
+        if store.mode == .year || store.mode == .list {
+            store.setMode(.day)
+        }
         let now = Int64(Date().timeIntervalSince1970 * 1000)
         let base = store.math.startOfDay(store.anchor)
         let start: Int64
@@ -326,6 +258,6 @@ struct CalendarScreenView: View {
         } else {
             start = store.math.at(base, hour: 9)
         }
-        editor = EventEditorRequest(startsAt: start, endsAt: start + 30 * 60_000)
+        store.beginDraft(CalendarEventDraft(startsAt: start, endsAt: start + 30 * 60_000))
     }
 }

@@ -34,6 +34,19 @@ public protocol CalendarCore: Sendable {
     func setCalendarColor(_ id: Int64, color: String?) async throws
     func setDefaultCalendar(_ id: Int64) async throws
     func calendarSyncNow(accountId: Int64?) async throws
+    /// M2.12: CalDAV connect (`connect_calendar`). The core runs discovery
+    /// against `url` with `username`/`password`, stores the password in the
+    /// keychain and returns the collections it found.
+    func connectCalendar(_ args: ConnectCalendarArgs) async throws -> [CalendarCollection]
+}
+
+extension CalendarCore {
+    /// Test doubles that never connect a calendar keep compiling; the settings
+    /// view reports the refusal instead of pretending success.
+    public func connectCalendar(_ args: ConnectCalendarArgs) async throws -> [CalendarCollection] {
+        throw RabeClientError.core(code: "unsupported",
+                                   message: "connect_calendar is not supported by this client")
+    }
 }
 
 // MARK: - Typed wrappers
@@ -81,5 +94,10 @@ extension RabeClient: CalendarCore {
 
     public func calendarSyncNow(accountId: Int64? = nil) async throws {
         try await send("calendar_sync_now", IPCArgs.CalendarSyncNow(accountId: accountId))
+    }
+
+    /// M2.12: the same payload the Tauri command takes — `{"args": {…}}`.
+    public func connectCalendar(_ args: ConnectCalendarArgs) async throws -> [CalendarCollection] {
+        try await call("connect_calendar", WithArgs(args: args))
     }
 }

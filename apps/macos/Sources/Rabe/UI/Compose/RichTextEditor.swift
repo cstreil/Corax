@@ -433,20 +433,25 @@ final class RichEditorController {
             case "i": logFormat("key", "italic"); toggleItalic(); return true
             case "u": logFormat("key", "underline"); toggleUnderline(); return true
             case "k": onLinkRequest?(); return true
-            case "\\": logFormat("key", "clear"); clearFormatting(); return true
             default: break
             }
-            if code == 42 { clearFormatting(); return true }   // ⌘\ on the physical key
-            return false
+        } else {
+            switch key {
+            case "x": logFormat("key", "strike"); toggleStrike(); return true
+            default: break
+            }
         }
-        switch key {
-        case "x": logFormat("key", "strike"); toggleStrike(); return true
-        default: break
-        }
+        // M2.14b: `⌘\` und `⌘'` werden am Zeichen erkannt — auf deutscher
+        // Tastatur entstehen sie aus `⌘⌥⇧7` bzw. `⌘⇧#`. Auf der physischen
+        // US-Position lagen sie bisher falsch (⌘- bzw. ⌘9).
+        let press = KeyPress(event)
+        if ShortcutMap.matches("⌘\\", press) { logFormat("key", "clear"); clearFormatting(); return true }
+        if ShortcutMap.matches("⌘'", press) { logFormat("key", "quote"); toggleQuote(); return true }
+        // `⇧⌘7`/`⇧⌘8` lassen sich nicht am Zeichen erkennen: auf deutscher
+        // Tastatur sind das `/` und `(`. Hier entscheidet die physische Taste.
         switch code {
         case 26: logFormat("key", "ordered"); toggleList(.ordered); return true    // ⇧⌘7
         case 28: logFormat("key", "bullet"); toggleList(.bullet); return true      // ⇧⌘8
-        case 25: logFormat("key", "quote"); toggleQuote(); return true             // ⇧⌘9
         default: return false
         }
     }

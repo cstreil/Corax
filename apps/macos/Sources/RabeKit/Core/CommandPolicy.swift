@@ -130,6 +130,11 @@ enum CommandPolicy {
         "set_calendar_enabled",
         "set_calendar_color",
         "set_default_calendar",
+        // M2.12 — CalDAV connect. Writes the password into the keychain and the
+        // server/principal/collection rows into the database, then nudges the
+        // first sync; nothing leaves the machine before that sync. Released
+        // under `writing` because it changes the instance's state.
+        "connect_calendar",
         // M2.3 — local index and the keys in the keychain.
         "semantic_reindex",
         "set_ai_key",

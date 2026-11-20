@@ -122,72 +122,50 @@ struct CommandPalette: View {
 
 struct ShortcutSheet: View {
     @Environment(\.theme) private var theme
-    /// TASTATUR.md: list, open thread, draft, everywhere.
-    private let sections: [(String, [(String, [String])])] = [
-        ("Liste", [
-            ("Nächster / voriger Thread", ["↓", "↑", "J", "K"]), ("Seite weiter / zurück", ["Bild↓", "Bild↑"]),
-            ("Erster / letzter Thread", ["Pos1", "Ende"]), ("Aufklappen", ["↵", "O", "Space"]),
-        ]),
-        ("Thread aufgeklappt", [
-            ("In der Nachricht / nächste", ["↓", "↑", "J", "K"]), ("Seitenweise", ["Bild↓", "Bild↑"]),
-            ("Erste / letzte Nachricht", ["Pos1", "Ende"]), ("Zuklappen", ["↵", "Esc"]),
-            ("Ersten Anhang öffnen", ["O"]), ("", []),
-        ]),
-        ("Antworten (auf die fokussierte Nachricht)", [
-            ("Antworten", ["A", "R"]), ("Allen antworten", ["⇧A", "⇧R"]),
-            ("Weiterleiten", ["W", "F"]), ("Senden", ["⌘", "↵"]),
-            ("Entwurf verwerfen", ["Esc"]), ("Rückgängig", ["Z"]),
-        ]),
-        ("Thread", [
-            ("Erledigt", ["E"]), ("Papierkorb", ["#", "⌫"]),
-            ("Später (morgen 8:00)", ["H"]), ("Markieren", ["S"]),
-            ("Gelesen / ungelesen", ["U"]), ("Neue E-Mail", ["C"]),
-        ]),
-        ("Überall", [
-            ("Suchen", ["/"]), ("Tab wechseln", ["Tab", "⇧Tab"]),
-            ("Befehlspalette", ["⌘", "K"]), ("Diese Übersicht", ["?"]),
-        ]),
-    ]
 
     var body: some View {
+        GeometryReader { geo in
         ZStack {
             Color.black.opacity(0.18).ignoresSafeArea().onTapGesture { AppModel.shared.shortcutsOpen = false }
-            VStack(alignment: .leading, spacing: 10) {
-                Text(Strings.shortcuts).font(.system(size: 16, weight: .semibold))
-                ForEach(sections, id: \.0) { section in
-                    Text(section.0.uppercased(with: Format.locale))
-                        .font(.system(size: 10.5, weight: .semibold)).tracking(0.6)
-                        .foregroundStyle(theme.ink3.color)
-                        .padding(.top, 4)
-                    Grid(horizontalSpacing: 28, verticalSpacing: 0) {
-                        ForEach(0..<(section.1.count / 2), id: \.self) { row in
-                            GridRow {
-                                cell(section.1[row * 2])
-                                cell(section.1[row * 2 + 1])
+            VStack(alignment: .leading, spacing: 0) {
+                HStack(alignment: .firstTextBaseline) {
+                    Text(Strings.shortcuts).font(.system(size: 16, weight: .semibold))
+                    Spacer()
+                    Text("? oder ⌘/ schließt").font(.system(size: 11)).foregroundStyle(theme.ink3.color)
+                }
+                .padding(EdgeInsets(top: 18, leading: 26, bottom: 10, trailing: 26))
+                Divider()
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 12) {
+                        ForEach(Array(ShortcutMap.sections.enumerated()), id: \.offset) { _, section in
+                            Text(section.0.title.uppercased(with: Format.locale))
+                                .font(.system(size: 10.5, weight: .semibold)).tracking(0.6)
+                                .foregroundStyle(theme.ink3.color)
+                                .padding(.top, 6)
+                            ForEach(section.1) { shortcut in
+                                HStack(alignment: .firstTextBaseline, spacing: 18) {
+                                    Text(shortcut.action).frame(maxWidth: .infinity, alignment: .leading)
+                                    Text(ShortcutMap.keys(shortcut))
+                                        .font(.system(size: 11.5, design: .monospaced))
+                                        .foregroundStyle(theme.ink2.color)
+                                }
+                                .padding(.vertical, 4)
+                                .overlay(alignment: .bottom) { Rectangle().fill(theme.line.color).frame(height: 0.5) }
                             }
                         }
                     }
+                    .padding(EdgeInsets(top: 4, leading: 26, bottom: 22, trailing: 26))
                 }
             }
             .foregroundStyle(theme.ink.color)
-            .padding(EdgeInsets(top: 20, leading: 26, bottom: 20, trailing: 26))
-            .frame(width: 620)
+            .frame(width: min(760, geo.size.width - 48), height: min(620, geo.size.height - 48))
             .background(RoundedRectangle(cornerRadius: 14).fill(theme.surface.color))
             .shadow(color: .black.opacity(0.4), radius: 40, y: 20)
             .onKeyPress(.escape) { AppModel.shared.shortcutsOpen = false; return .handled }
         }
         .accessibilityElement(children: .contain)
         .accessibilityLabel(Strings.shortcuts)
-    }
-
-    private func cell(_ item: (String, [String])) -> some View {
-        HStack {
-            Text(item.0)
-            Spacer()
-            HStack(spacing: 4) { ForEach(item.1, id: \.self) { KeyCap($0) } }
         }
-        .padding(.vertical, 5)
-        .overlay(alignment: .bottom) { Rectangle().fill(theme.line.color).frame(height: 0.5) }
     }
 }
 

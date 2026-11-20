@@ -5,6 +5,7 @@
 
 use url::Url;
 
+use super::http::XML_CONTENT_TYPE;
 use super::xml;
 use super::{Transport, err};
 use crate::error::Result;
@@ -15,6 +16,8 @@ pub struct DiscoveredCalendar {
     pub url: String,
     pub display_name: Option<String>,
     pub color: Option<String>,
+    /// Server said this user only has read access (current-user-privilege-set).
+    pub read_only: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -40,7 +43,14 @@ async fn propfind(
     body: String,
 ) -> Result<xml::Multistatus> {
     let resp = t
-        .request("PROPFIND", url, Some(depth), &[], Some(body))
+        .request(
+            "PROPFIND",
+            url,
+            Some(depth),
+            &[],
+            Some(XML_CONTENT_TYPE),
+            Some(body),
+        )
         .await?;
     if resp.status != 207 {
         return Err(err(format!("PROPFIND {url}: HTTP {}", resp.status)));
@@ -62,6 +72,7 @@ pub async fn discover(t: &dyn Transport, base_url: &str) -> Result<Discovery> {
                         url: base_url.to_string(),
                         display_name: item.displayname.clone(),
                         color: item.color.clone(),
+                        read_only: item.read_only(),
                     }],
                 });
             }
@@ -113,6 +124,7 @@ pub async fn discover(t: &dyn Transport, base_url: &str) -> Result<Discovery> {
                 url: resolve(&home, &i.href)?,
                 display_name: i.displayname.clone(),
                 color: i.color.clone(),
+                read_only: i.read_only(),
             })
         })
         .collect::<Result<_>>()?;
@@ -162,6 +174,45 @@ mod tests {
         assert_eq!(d.calendars.len(), 1);
         assert_eq!(d.calendars[0].url, "https://dav.example.com/cal/me/work/");
         assert_eq!(d.calendars[0].display_name.as_deref(), Some("Work"));
+        assert!(
+            !d.calendars[0].read_only,
+            "no privilege set = unknown, treated as writable"
+        );
+    }
+
+    /// The same listing with current-user-privilege-set: a read-only shared
+    /// collection and a writable one.
+    const COLLECTIONS_PRIVS: &str = r#"<d:multistatus xmlns:d="DAV:" xmlns:c="urn:ietf:params:xml:ns:caldav"><d:response><d:href>/cal/me/</d:href><d:propstat><d:prop><d:resourcetype><d:collection/></d:resourcetype></d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response><d:response><d:href>/cal/me/shared/</d:href><d:propstat><d:prop><d:resourcetype><d:collection/><c:calendar/></d:resourcetype><d:displayname>Team</d:displayname><d:current-user-privilege-set><d:privilege><d:read/></d:privilege></d:current-user-privilege-set></d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response><d:response><d:href>/cal/me/work/</d:href><d:propstat><d:prop><d:resourcetype><d:collection/><c:calendar/></d:resourcetype><d:displayname>Work</d:displayname><d:current-user-privilege-set><d:privilege><d:read/></d:privilege><d:privilege><d:write/></d:privilege><d:privilege><d:write-content/></d:privilege></d:current-user-privilege-set></d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response><d:response><d:href>/cal/me/all/</d:href><d:propstat><d:prop><d:resourcetype><d:collection/><c:calendar/></d:resourcetype><d:displayname>Sammelrecht</d:displayname><d:current-user-privilege-set><d:privilege><d:all/></d:privilege></d:current-user-privilege-set></d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response></d:multistatus>"#;
+
+    #[tokio::test]
+    async fn privilege_set_marks_shared_calendars_read_only() {
+        let t = MockTransport::new(vec![
+            ms(NOT_A_CALENDAR),
+            ms(PRINCIPAL),
+            ms(HOME),
+            ms(COLLECTIONS_PRIVS),
+        ]);
+        let d = discover(&t, "https://dav.example.com/").await.unwrap();
+        assert_eq!(d.calendars.len(), 3);
+        let team = d
+            .calendars
+            .iter()
+            .find(|c| c.display_name.as_deref() == Some("Team"))
+            .expect("read-only collection");
+        let work = d
+            .calendars
+            .iter()
+            .find(|c| c.display_name.as_deref() == Some("Work"))
+            .expect("writable collection");
+        assert!(team.read_only, "DAV:read only -> read_only");
+        assert!(!work.read_only, "DAV:write present -> writable");
+        // RFC 3744: DAV:all ist das Sammelrecht und schließt das Schreiben ein.
+        let all = d
+            .calendars
+            .iter()
+            .find(|c| c.display_name.as_deref() == Some("Sammelrecht"))
+            .expect("collection with DAV:all");
+        assert!(!all.read_only, "DAV:all -> writable");
     }
 
     #[tokio::test]
