@@ -163,24 +163,62 @@ echo "==> codesign"
 # iCloud/Finder leave `com.apple.FinderInfo` and fileprovider xattrs on the
 # freshly written bundle; codesign refuses those ("detritus not allowed").
 # iCloud can put them back between the cleanup and the signing, so retry.
+#
+# Inside iCloud Drive the file provider re-adds them within a second, so the
+# in-place attempt can never win there (M2.8b: the bundle ended up unsigned and
+# without `_CodeSignature`). In that case sign a copy in a scratch directory
+# outside iCloud and copy it back with `ditto`, then verify at the real path.
 identity="${RABE_SIGN_IDENTITY:-$(security find-identity -v -p codesigning | awk 'NR==1 {print $2}')}"
 if [ -z "${identity:-}" ]; then
     echo "error: no codesigning identity; set RABE_SIGN_IDENTITY" >&2
     exit 1
 fi
-for attempt in 1 2 3; do
-    xattr -cr "$app"
-    if codesign --force --timestamp=none --sign "$identity" --identifier de.streil.rabe.native "$app"; then
-        break
-    fi
-    if [ "$attempt" = 3 ]; then
-        echo "error: codesign failed after $attempt attempts" >&2
+
+# sign_bundle <bundle>: up to three attempts; on failure the last codesign
+# error goes to stderr, so the caller can explain what happened.
+sign_bundle() {
+    bundle="$1"
+    attempt=0
+    err="$(mktemp "${TMPDIR:-/tmp}/rabe-codesign.XXXXXX")"
+    while [ "$attempt" -lt 3 ]; do
+        attempt=$((attempt + 1))
+        xattr -cr "$bundle" 2>/dev/null || true
+        if codesign --force --timestamp=none --sign "$identity" \
+            --identifier de.streil.rabe.native "$bundle" 2>"$err"; then
+            rm -f "$err"
+            return 0
+        fi
+        if [ "$attempt" -lt 3 ]; then
+            echo "note: codesign left bundle detritus behind, retrying ($attempt/3)"
+            sleep 1
+        fi
+    done
+    cat "$err" >&2
+    rm -f "$err"
+    return 1
+}
+
+if sign_bundle "$app"; then
+    codesign --verify --verbose=2 "$app"
+else
+    scratch="$(mktemp -d "${TMPDIR:-/tmp}/rabe-sign.XXXXXX")"
+    echo "note: signing in place failed (iCloud keeps FinderInfo on the bundle root);"
+    echo "      signing a copy in $scratch and copying it back."
+    ditto --norsrc "$app" "$scratch/Rabe Native.app"
+    if ! sign_bundle "$scratch/Rabe Native.app"; then
+        echo "error: codesign failed in the scratch copy as well" >&2
         exit 1
     fi
-    echo "note: codesign left bundle detritus behind, retrying ($attempt/3)"
-    sleep 1
-done
-codesign --verify --verbose=2 "$app"
+    codesign --verify --verbose=2 "$scratch/Rabe Native.app"
+    rm -rf "$app"
+    ditto --norsrc "$scratch/Rabe Native.app" "$app"
+    rm -rf "$scratch"
+    xattr -cr "$app" 2>/dev/null || true
+    codesign --verify --verbose=2 "$app"
+    echo "note: bundle signed. iCloud sets com.apple.FinderInfo back on the bundle root,"
+    echo "      so \`codesign --verify --strict\` reports detritus there; plain"
+    echo "      \`codesign -v\`, which the release check uses, stays clean."
+fi
 
 echo
 echo "built: $app"

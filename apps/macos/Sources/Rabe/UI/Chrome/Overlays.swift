@@ -36,6 +36,7 @@ struct CommandPalette: View {
                         .textFieldStyle(.plain)
                         .font(.system(size: 15))
                         .focused($focused)
+                        .focusWhenShown($focused)
                         .onSubmit { run() }
                         .onKeyPress(.downArrow) { index = min(index + 1, matches.count - 1); return .handled }
                         .onKeyPress(.upArrow) { index = max(0, index - 1); return .handled }

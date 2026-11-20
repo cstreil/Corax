@@ -80,8 +80,13 @@ fn record_usage(
 
 /// Human-readable name for a stored UI language code, or `None` for "system" /
 /// an unknown code (the model then infers the language from the input).
+///
+/// Every code the locale folders under `src/i18n/locales` offer must appear
+/// here, otherwise the model gets no language at all and answers in whatever
+/// language the mail happens to be in (that is how German was missed).
 pub fn ui_language_name(code: &str) -> Option<&'static str> {
     match code {
+        "de" => Some("German"),
         "en" => Some("English"),
         "es" => Some("Spanish"),
         "fr" => Some("French"),
@@ -2372,6 +2377,52 @@ pub async fn intent(cfg: &AiConfig, query: &str) -> Result<crate::models::AiInte
         query: raw.query,
         view: raw.view,
     })
+}
+
+#[cfg(test)]
+mod language_tests {
+    use super::*;
+
+    /// Codes the Tauri UI can be switched to — the locale folders under
+    /// `src/i18n/locales` (`de en es fr vi zh`). Rust cannot read that folder at
+    /// test time (it would couple the crate to the app tree), so the list is
+    /// pinned here; `src/i18n/localeParity.test.ts` guards the folder side.
+    const I18N_CODES: [&str; 6] = ["de", "en", "es", "fr", "vi", "zh"];
+
+    #[test]
+    fn german_has_a_name() {
+        assert_eq!(ui_language_name("de"), Some("German"));
+    }
+
+    #[test]
+    fn every_ui_language_code_has_a_name() {
+        for code in I18N_CODES {
+            assert!(
+                ui_language_name(code).is_some(),
+                "i18n code {code} has no language name, so the model gets no language"
+            );
+        }
+    }
+
+    #[test]
+    fn system_and_unknown_codes_stay_open() {
+        assert_eq!(ui_language_name("system"), None);
+        assert_eq!(ui_language_name(""), None);
+        assert_eq!(ui_language_name("xx"), None);
+    }
+
+    #[test]
+    fn directive_carries_german() {
+        let cfg = AiConfig {
+            base_url: String::new(),
+            model: String::new(),
+            api_key: String::new(),
+            language: ui_language_name("de").map(str::to_string),
+            zero_retention: false,
+            usage_sink: None,
+        };
+        assert!(language_directive(&cfg).contains("in German"));
+    }
 }
 
 #[cfg(test)]

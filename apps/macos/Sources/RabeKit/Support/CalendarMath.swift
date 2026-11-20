@@ -445,3 +445,121 @@ public struct CalendarWeekModel: Sendable {
         return CalendarWeekModel(days: days, allDaySpans: spans, allDayRows: rows, positioned: positioned)
     }
 }
+
+// MARK: - Pointer geometry (M2.8b)
+
+/// Where one event block sits in the grid, in content coordinates (origin: top
+/// left of the scrolled grid, y runs from 00:00 of its day).
+public struct CalendarBlockRect: Sendable, Equatable {
+    public let x: Double
+    public let y: Double
+    public let width: Double
+    public let height: Double
+
+    public init(x: Double, y: Double, width: Double, height: Double) {
+        self.x = x
+        self.y = y
+        self.width = width
+        self.height = height
+    }
+
+    public func contains(x pointX: Double, y pointY: Double) -> Bool {
+        pointX >= x && pointX < x + width && pointY >= y && pointY < y + height
+    }
+}
+
+/// One event under a point.
+public struct CalendarHit: Sendable, Equatable {
+    public let event: CalendarEvent
+    public let rect: CalendarBlockRect
+    /// The point sits in the block's bottom band, where a drag resizes instead
+    /// of moving.
+    public let isResizeHandle: Bool
+}
+
+/// Pure hit test of the day/week grid: content point → event.
+///
+/// The grids draw `PositionedEvent`s with a fixed geometry (`lane * laneWidth +
+/// 2`, `laneWidth - 4` wide, `top + 1`, `height - 2` tall); this is the same
+/// arithmetic, so a click that lands on a block resolves to the event the eye
+/// sees — including overlapping lanes, where the block drawn last (the rightmost
+/// lane here) wins.
+public enum CalendarHitTest {
+    public static let blockInset = 2.0
+    public static let blockGap = 2.0
+    /// Height of the resize band at a block's bottom edge (the view uses 7).
+    public static let resizeHandle = 7.0
+    /// Blocks shorter than this cannot be resized (same rule as the view).
+    public static let resizableFrom = 26.0
+    /// Movement (pt) below this is a click, above it a drag.
+    public static let dragThreshold = 3.0
+
+    /// Day index of a content point, or nil in the hour gutter / outside.
+    public static func dayIndex(atX x: Double, dayCount: Int, gutter: Double = CalendarGrid.gutterPx,
+                                columnWidth: Double) -> Int? {
+        guard columnWidth > 0, dayCount > 0, x >= gutter else { return nil }
+        let index = Int((x - gutter) / columnWidth)
+        return index >= 0 && index < dayCount ? index : nil
+    }
+
+    /// The block rect of one positioned event inside its column.
+    public static func rect(of placed: PositionedEvent, columnWidth: Double) -> CalendarBlockRect {
+        let laneWidth = columnWidth / Double(max(placed.lanes, 1))
+        return CalendarBlockRect(
+            x: Double(placed.lane) * laneWidth + blockInset,
+            y: placed.top + 1,
+            width: laneWidth - blockGap - blockInset,
+            height: placed.height - blockGap)
+    }
+
+    /// The event under a content point, or nil for empty space (which creates a
+    /// new event at that time).
+    public static func event(atX x: Double, y: Double, days: [Int64],
+                             gutter: Double = CalendarGrid.gutterPx, columnWidth: Double,
+                             positioned: [Int64: [PositionedEvent]],
+                             draggable: (CalendarEvent) -> Bool = CalendarEventRules.isDraggable)
+        -> CalendarHit? {
+        guard let index = dayIndex(atX: x, dayCount: days.count, gutter: gutter,
+                                   columnWidth: columnWidth) else { return nil }
+        let localX = x - gutter - Double(index) * columnWidth
+        for placed in (positioned[days[index]] ?? []).reversed() {
+            let rect = rect(of: placed, columnWidth: columnWidth)
+            guard rect.contains(x: localX, y: y) else { continue }
+            let handle = draggable(placed.event) && placed.height > resizableFrom
+                && y > rect.y + rect.height - resizeHandle
+            return CalendarHit(event: placed.event, rect: rect, isResizeHandle: handle)
+        }
+        return nil
+    }
+}
+
+/// Single or double click, resolved from the time between two clicks. Pure so
+/// the two behaviours (`Kalender: Klick öffnet, Doppelklick bearbeitet`) have a
+/// test instead of a hope.
+public struct CalendarClickSequencer: Sendable {
+    public enum Kind: Sendable, Equatable { case single, double }
+
+    public var interval: TimeInterval
+    private var last: TimeInterval?
+    private var lastToken: String?
+
+    public init(interval: TimeInterval = 0.45) {
+        self.interval = interval
+    }
+
+    /// Feeds one click at `time` (seconds, monotonic) and says what it was.
+    ///
+    /// `token` names what was clicked: two clicks on different events are never
+    /// a double click. A double click consumes the pair, so the click after it
+    /// counts again.
+    public mutating func register(at time: TimeInterval, token: String = "") -> Kind {
+        guard let last, lastToken == token, time >= last, time - last <= interval else {
+            self.last = time
+            lastToken = token
+            return .single
+        }
+        self.last = nil
+        lastToken = nil
+        return .double
+    }
+}

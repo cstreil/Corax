@@ -140,6 +140,21 @@ enum SettingsWalkthrough {
         log("signout done ok=\(ok) remaining=\(model.mailbox.accounts.count)")
     }
 
+    /// `settings:language:system|de` — the picker's own path for "Sprache"
+    /// (M2.8b): pick "System" on a German Mac and the core must receive "de",
+    /// not "system" (which would leave the model without a language).
+    static func setLanguage(_ choice: String) async {
+        guard Instance.isSandbox else { log("language refused=not_sandbox"); return }
+        let store = AppModel.shared.settings
+        await store.load()
+        store.preferredLanguages = { ["de-DE", "en-US"] }
+        let before = store.language
+        store.setLanguage(choice)
+        await store.waitForPendingWrites()
+        log("language choice=\(choice) stored=\(store.language) before=\(before) "
+            + "picker=\(store.languageChoice) resolved=\(AILanguage.stored(choice, preferred: ["de-DE"]))")
+    }
+
     private static func log(_ text: String) {
         PerfLog.shared.write("walkthrough \(text)")
     }

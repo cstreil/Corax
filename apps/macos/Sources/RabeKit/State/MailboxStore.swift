@@ -55,6 +55,9 @@ public final class MailboxStore {
     public private(set) var unread: UnreadCounts?
     /// Called whenever the counts were refreshed (M2.4: Dock badge).
     public var onUnreadCounts: (@MainActor (UnreadCounts) -> Void)?
+    /// A mailbox, account, tab or search the user picked by hand (M2.8b): the
+    /// calendar screen closes on it, so the choice is visible.
+    public var onUserNavigation: (@MainActor () -> Void)?
 
     // List
     public private(set) var threads: [ThreadSummary] = [] {
@@ -273,7 +276,7 @@ public final class MailboxStore {
         do {
             try await client.removeAccount(id)
             accounts.removeAll { $0.id == id }
-            if accountId == id { setAccount(nil) }
+            if accountId == id { setAccount(nil, byUser: false) }
             PerfLog.shared.write("account_removed id=\(id)")
             return true
         } catch {
@@ -282,7 +285,14 @@ public final class MailboxStore {
         }
     }
 
-    public func setView(_ newView: MailView) {
+    /// `byUser: false` is for calls the app makes itself (restoring a view,
+    /// clearing the account after it was removed); only a choice the user made
+    /// closes the calendar screen.
+    public func setView(_ newView: MailView, byUser: Bool = true) {
+        // M2.8c: the calendar closes on *every* choice of a view, also when it
+        // is the one that was set before the calendar opened (Inbox → Kalender
+        // → Inbox). The unchanged-guard therefore comes after the callback.
+        if byUser { onUserNavigation?() }
         guard newView != view || searchQuery != nil else { return }
         view = newView
         searchQuery = nil
@@ -291,7 +301,8 @@ public final class MailboxStore {
         resetAndReload()
     }
 
-    public func setAccount(_ id: Int64?) {
+    public func setAccount(_ id: Int64?, byUser: Bool = true) {
+        if byUser { onUserNavigation?() }
         guard id != accountId else { return }
         accountId = id
         resetAndReload()
@@ -299,6 +310,9 @@ public final class MailboxStore {
     }
 
     public func setTab(_ id: String) {
+        // The tab is picked by hand only (MainView, ⌃Tab, palette); picking the
+        // current tab while the calendar is open still leaves the calendar.
+        onUserNavigation?()
         guard id != tabID else { return }
         tabID = id
         resetAndReload()
@@ -961,7 +975,10 @@ public final class MailboxStore {
         selectedId = next
         selectedIds = next.map { [$0] } ?? []
         selectAnchorId = next
-        if wasExpanded, let next { expand(next) }
+        // M2.8c: "Automatisch weiter" decides whether the neighbour opens. Off
+        // (Tauri: `autoAdvance === false`) the removal returns to the list and
+        // the cursor stands on the neighbour, collapsed.
+        if wasExpanded, settings.autoAdvance, let next { expand(next) }
         if Self.coreCanUndo(kind) {
             showUndoToast(groupLabel(label, count: removedIds.count))
         } else {
@@ -1301,6 +1318,7 @@ public final class MailboxStore {
         userNavigation = true
         let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !query.isEmpty else { endSearch(); return }
+        onUserNavigation?()
         searchQuery = query
         expandedId = nil
         inlineCompose = nil

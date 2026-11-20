@@ -205,9 +205,16 @@ enum MailWalkthrough {
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
             let box = model.mailbox
+            // M2.8a: where the focus landed — the live test found it in the
+            // list search after `V`.
+            let window = NSApp.keyWindow ?? NSApp.mainWindow
+            let responder = window?.firstResponder.map { String(describing: type(of: $0)) } ?? "-"
+            // The placeholder says *which* field: the picker's or the list search.
+            let field = (window?.firstResponder as? NSTextView)?.delegate as? NSTextField
+            let placeholder = field?.placeholderString ?? "-"
             PerfLog.shared.write("picker_state move=\(model.moveOpen ? 1 : 0) label=\(model.labelOpen ? 1 : 0) "
                                  + "split=\(model.splitOpen ? 1 : 0) delete=\(model.permanentDeleteOpen ? 1 : 0) "
-                                 + "folders=\(box.folders.count)")
+                                 + "folders=\(box.folders.count) focus=\(responder) field=\(placeholder)")
         }
     }
 

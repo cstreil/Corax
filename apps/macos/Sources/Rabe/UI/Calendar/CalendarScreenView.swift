@@ -14,6 +14,15 @@ struct CalendarScreenView: View {
     @State private var editor: EventEditorRequest?
     @State private var detail: CalendarEvent?
     @State private var focusRequest = 0
+    /// "Löschen" from a context menu or `⌫`: one confirmation for every surface.
+    @State private var pendingDelete: CalendarEvent?
+    /// Single vs. double click from the hook (`calendar:click`), only so the
+    /// walkthrough can reach the same decision the pointer makes.
+    @State private var hookClicks = CalendarClickRouter()
+    /// Escape while a card is open. The popover holds the key and swallows the
+    /// key binding, so `onExitCommand` never fires (M2.8b): one local monitor
+    /// while a card is visible is the reliable path.
+    @State private var escapeMonitor: Any?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -34,8 +43,18 @@ struct CalendarScreenView: View {
         .background(theme.win.color)
         .background(
             CalendarKeyCatcher(onKey: { event in
-                CalendarKeyboard.handle(event, store: store, openEditor: { openEditor() },
-                                        close: { model.calendarOpen = false; model.mailbox.focusList() })
+                CalendarKeyboard.handle(
+                    event, store: store,
+                    openEditor: { openEditor() },
+                    openSelected: { selected in detail = selected },
+                    deleteSelected: { selected in pendingDelete = selected },
+                    closeOverlay: {
+                        guard detail != nil || editor != nil else { return false }
+                        detail = nil
+                        editor = nil
+                        return true
+                    },
+                    close: { model.calendarOpen = false; model.mailbox.focusList() })
             }, focusRequest: focusRequest)
         )
         .task {
@@ -45,6 +64,21 @@ struct CalendarScreenView: View {
         }
         .onReceive(NotificationCenter.default.publisher(for: .rabeCalendarNewEvent)) { _ in
             openEditor()
+        }
+        // Hook build only: one click on an event, fed in where a pointer click
+        // would end up (M2.8b walkthrough without foreground). Lives on the
+        // screen so it works in day, week and month alike.
+        .onReceive(NotificationCenter.default.publisher(for: .rabeCalendarClick)) { note in
+            guard let id = (note.userInfo?["id"] as? NSNumber)?.int64Value,
+                  let event = store.visibleEvents.first(where: { $0.id == id }) else { return }
+            store.selectedEventId = id
+            PerfLog.shared.write("calendar_click id=\(id) mode=\(store.mode.rawValue) source=hook")
+            // The same router the pointer uses: one click opens, two edit.
+            hookClicks.click(String(id), onOpen: { detail = event }, onEdit: {
+                editor = EventEditorRequest(event: event, startsAt: event.startsAt,
+                                            endsAt: CalendarEventRules.eventEnd(event),
+                                            allDay: event.allDay)
+            })
         }
         .onReceive(NotificationCenter.default.publisher(for: .rabeCalendarPrefill)) { note in
             let info = note.userInfo ?? [:]
@@ -62,6 +96,33 @@ struct CalendarScreenView: View {
             CalendarEventEditorView(store: store, accounts: model.mailbox.accounts, request: request) {
                 editor = nil
             }
+        }
+        .onChange(of: detail?.id) { _, id in
+            PerfLog.shared.write("calendar_detail open=\(id.map(String.init) ?? "-")")
+        }
+        .onAppear { installKeyMonitor() }
+        .onDisappear { removeEscapeMonitor() }
+        .onChange(of: pendingDelete?.id) { _, id in
+            PerfLog.shared.write("calendar_confirm event=\(id.map(String.init) ?? "-")")
+        }
+        .onChange(of: editor?.id) { _, id in
+            guard id != nil else { return }
+            let event = editor?.event.map { String($0.id) } ?? "new"
+            PerfLog.shared.write("calendar_editor event=\(event)")
+        }
+        .alert(pendingDelete?.isLocal == true && !(pendingDelete?.attendees.isEmpty ?? true)
+               ? "Diesen Termin absagen?" : "Diesen Termin löschen?",
+               isPresented: Binding(get: { pendingDelete != nil },
+                                    set: { if !$0 { pendingDelete = nil } })) {
+            Button("Abbrechen", role: .cancel) { pendingDelete = nil }
+            Button("Löschen", role: .destructive) {
+                guard let event = pendingDelete else { return }
+                pendingDelete = nil
+                Task { await store.delete(event) }
+                focusRequest += 1
+            }
+        } message: {
+            Text(deleteMessage)
         }
     }
 
@@ -160,9 +221,11 @@ struct CalendarScreenView: View {
         } else {
             Group {
                 if store.mode == .month {
-                    CalendarMonthView(store: store, editor: $editor, detail: $detail)
+                    CalendarMonthView(store: store, editor: $editor, detail: $detail,
+                                      onDelete: { pendingDelete = $0 })
                 } else {
-                    CalendarTimeGridView(store: store, editor: $editor, detail: $detail)
+                    CalendarTimeGridView(store: store, editor: $editor, detail: $detail,
+                                         onDelete: { pendingDelete = $0 })
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -199,6 +262,59 @@ struct CalendarScreenView: View {
                 .font(.system(size: 11))
                 .foregroundStyle(theme.ink2.color)
         }
+    }
+
+    /// One monitor for as long as the calendar screen is up. Installing and
+    /// removing it per card lost it across a sheet (M2.8b, sandbox finding); it
+    /// only acts while a card is open, so the rest keeps its key handling.
+    private func installKeyMonitor() {
+        guard escapeMonitor == nil else { return }
+        escapeMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            // Only our own windows: not another app, not a sheet with a field.
+            let ours = event.window?.title == Instance.title
+                || String(describing: type(of: event.window as Any)).contains("Popover")
+            guard ours, let event43 = detail else { return event }
+            switch event.keyCode {
+            case 53:                                    // Esc: Karte zu
+                PerfLog.shared.write("calendar_escape source=monitor")
+                detail = nil
+                // The popover owned the key: hand the keyboard back to the grid,
+                // so `Return`/`⌫` keep working afterwards.
+                focusRequest += 1
+                return nil
+            case 36, 76:                                // Return: bearbeiten
+                PerfLog.shared.write("calendar_return source=monitor id=\(event43.id)")
+                detail = nil
+                editor = EventEditorRequest(event: event43, startsAt: event43.startsAt,
+                                            endsAt: CalendarEventRules.eventEnd(event43),
+                                            allDay: event43.allDay)
+                return nil
+            case 51, 117:                               // ⌫: löschen (mit Rückfrage)
+                PerfLog.shared.write("calendar_delete source=monitor id=\(event43.id)")
+                pendingDelete = event43
+                detail = nil
+                return nil
+            default:
+                return event
+            }
+        }
+    }
+
+    private func removeEscapeMonitor() {
+        guard let escapeMonitor else { return }
+        NSEvent.removeMonitor(escapeMonitor)
+        self.escapeMonitor = nil
+    }
+
+    private var deleteMessage: String {
+        guard let event = pendingDelete else { return "" }
+        if event.isLocal && !event.attendees.isEmpty {
+            return "\(event.attendees.count) Teilnehmende erhalten eine Absage per E-Mail."
+        }
+        if !event.isLocal {
+            return "Der Termin verschwindet aus dem Kalender. Niemand wird benachrichtigt."
+        }
+        return "Der Termin wird gelöscht. Das lässt sich rückgängig machen, solange der Hinweis sichtbar ist."
     }
 
     private func openEditor() {

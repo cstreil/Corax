@@ -63,6 +63,7 @@ struct AskPanelView: View {
                     .textFieldStyle(.plain)
                     .font(.system(size: 14))
                     .focused($focused)
+                    .focusWhenShown($focused)
                     .onSubmit { run() }
                     .onKeyPress(.escape) { close(); return .handled }
                     .accessibilityLabel(Strings.aiAskPlaceholder)

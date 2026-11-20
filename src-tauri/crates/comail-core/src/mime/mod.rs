@@ -2535,4 +2535,25 @@ mod tests {
         // A subject without Cc is returned unchanged, byte for byte.
         assert_eq!(sanitize_subject("Grüße  aus  Kiel"), "Grüße  aus  Kiel");
     }
+
+    // MARK: Formatting survives the send path (M2.8a)
+
+    /// The composer's bold, italic and underline must reach the `text/html`
+    /// part unchanged: `build_message` hands the body through untouched.
+    #[test]
+    fn formatting_survives_build_message() {
+        let html = concat!(
+            "<p><b>fett</b> <i>kursiv</i> <u>unterstrichen</u> ",
+            "<b><i>beides</i></b></p>"
+        );
+        let (_, raw) =
+            build_message(&outgoing("fett kursiv unterstrichen beides", Some(html))).unwrap();
+        let parsed = mail_parser::MessageParser::default().parse(&raw).unwrap();
+        let body = parsed.body_html(0).expect("html part");
+        for tag in ["<b>", "</b>", "<i>", "</i>", "<u>", "</u>"] {
+            assert!(body.contains(tag), "missing {tag} in:\n{body}");
+        }
+        // And the tags are real markup for the parser, not escaped text.
+        assert!(!body.contains("&lt;b&gt;"), "tags were escaped:\n{body}");
+    }
 }

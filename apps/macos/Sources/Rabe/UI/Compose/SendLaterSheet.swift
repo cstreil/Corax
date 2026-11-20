@@ -20,6 +20,7 @@ struct SendLaterSheet: View {
             TextField("z. B. morgen 9:00, in 2 stunden, montag", text: $text)
                 .textFieldStyle(.roundedBorder)
                 .focused($focused)
+                .focusWhenShown($focused)
                 .onSubmit { pickParsed() }
                 .accessibilityLabel("Sendezeit")
             Text(parsed.map { "↵ Senden \($0.label)" } ?? "Weiter tippen …")
@@ -89,6 +90,7 @@ struct SnippetPickerView: View {
                 .focused($focused)
                 .onChange(of: query) { _, _ in index = 0 }
                 .onSubmit { pick() }
+                .focusWhenShown($focused)
                 .accessibilityLabel("Baustein suchen")
             ScrollView {
                 VStack(spacing: 2) {

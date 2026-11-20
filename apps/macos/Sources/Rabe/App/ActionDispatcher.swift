@@ -179,6 +179,13 @@ enum ActionDispatcher {
     static func perform(_ action: AppAction) {
         let model = AppModel.shared
         let box = model.mailbox
+        // M2.8b: while the calendar covers the mail list, a thread action must
+        // not run on whatever the list still has selected. Found in the sandbox:
+        // `⌫` in the calendar went to the list and trashed a mail.
+        if model.calendarOpen, targetsSelectedThread(action) {
+            PerfLog.shared.write("action_refused_in_calendar \(action)")
+            return
+        }
         // W3: right after a list update moved the selection by itself, the first
         // action key would hit a thread the user never saw — ignore it once.
         if targetsSelectedThread(action), box.shouldIgnoreActionOnAutoSelection() { return }

@@ -42,7 +42,14 @@ actor FakeCore: MailCore {
         ThreadPage(threads: threads, nextCursor: nil)
     }
 
+    /// M2.8c: a test that opens a thread sets a detail here. Without one the
+    /// call throws (as before), and the resulting error toast replaces the undo
+    /// toast — which ends the undo window in the middle of a test.
+    var detail: ThreadDetail?
+    func setDetail(_ value: ThreadDetail?) { detail = value }
+
     func getThread(_ id: Int64) async throws -> ThreadDetail {
+        if let detail { return detail }
         throw RabeClientError.core(code: "not_found", message: "thread \(id)")
     }
 

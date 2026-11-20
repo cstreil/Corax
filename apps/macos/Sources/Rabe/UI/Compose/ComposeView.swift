@@ -68,7 +68,7 @@ struct ComposeView: View {
             VStack(alignment: .leading, spacing: 4) {
                 FormatBar(controller: editor, theme: theme,
                           onLink: { withAnimation(Motion.animation) { linkOpen.toggle() } },
-                          onImage: { embedImage() })
+                          onAttach: { attachFiles() })
                 if linkOpen {
                     LinkField(theme: theme,
                               onApply: { value in
@@ -609,7 +609,8 @@ struct ComposeView: View {
                 .map { "\($0)=\(html.components(separatedBy: $0).count - 1)" }
                 .joined(separator: " ")
             PerfLog.shared.write("compose_html bytes=\(html.count) text=\(draft.aiBodyText.count) "
-                                 + "tags=\(counts) tail=\(html.suffix(220).debugDescription)")
+                                 + "tags=\(counts) head=\(html.prefix(160).debugDescription) "
+                                 + "tail=\(html.suffix(160).debugDescription)")
         } else if command == "signature" {
             PerfLog.shared.write("compose_signature bytes=\(draft.signatureHtml?.count ?? 0)")
         }

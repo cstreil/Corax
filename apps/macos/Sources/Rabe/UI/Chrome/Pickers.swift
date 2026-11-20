@@ -118,6 +118,7 @@ struct MovePickerView: View {
                     .frame(height: 34)
                     .onChange(of: query) { _, _ in index = 0 }
                     .onSubmit { pick() }
+                    .focusWhenShown($focused)
                     .accessibilityLabel("Ordner suchen")
                 Divider()
                 ScrollViewReader { proxy in
@@ -205,6 +206,7 @@ struct LabelPickerView: View {
                     .frame(height: 34)
                     .onChange(of: query) { _, _ in index = 0 }
                     .onSubmit { toggle() }
+                    .focusWhenShown($focused)
                     .accessibilityLabel("Label suchen")
                 Divider()
                 ScrollViewReader { proxy in
@@ -280,6 +282,7 @@ struct SplitPickerView: View {
                         .textFieldStyle(.roundedBorder)
                         .focused($focused)
                         .onSubmit { create(suggestion) }
+                        .focusWhenShown($focused)
                         .accessibilityLabel("Name des Tabs")
                     Text("Regel: Absender enthält „\(suggestion.sender)“")
                         .font(.system(size: 11))

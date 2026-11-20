@@ -9,9 +9,13 @@ struct CalendarMonthView: View {
     let store: CalendarStore
     @Binding var editor: EventEditorRequest?
     @Binding var detail: CalendarEvent?
+    /// "Löschen …" from a context menu; the screen asks before it deletes.
+    var onDelete: (CalendarEvent) -> Void = { _ in }
     @Environment(\.theme) private var theme
     /// M2.6: the day whose "+N weitere" card is open.
     @State private var dayList: Int64?
+    /// Single vs. double click on a bar or chip (M2.8b).
+    @State private var clicks = CalendarClickRouter()
 
     var body: some View {
         GeometryReader { proxy in
@@ -78,16 +82,13 @@ struct CalendarMonthView: View {
                 .frame(width: proxy.size.width, height: proxy.size.height)
                 ForEach(layout.bars) { span in
                     bar(span, colWidth: colWidth)
-                        .frame(width: (CGFloat(span.endCol - span.startCol + 1) * colWidth)
-                               - (span.clippedStart ? 0 : 4) - (span.clippedEnd ? 0 : 4))
                         .offset(x: CGFloat(span.startCol) * colWidth + (span.clippedStart ? 0 : 4),
                                 y: CalendarGrid.monthHeadPx + CGFloat(span.row) * CalendarGrid.monthLinePx + 1)
                 }
                 ForEach(Array(week.enumerated()), id: \.element) { col, day in
                     let column = layout.columns[col]
                     ForEach(Array(column.chips.enumerated()), id: \.element.id) { line, event in
-                        chip(event)
-                            .frame(width: colWidth - 4)
+                        chip(event, colWidth: colWidth)
                             .offset(x: CGFloat(col) * colWidth + 2,
                                     y: CalendarGrid.monthHeadPx
                                         + CGFloat(column.firstLine + line) * CalendarGrid.monthLinePx)
@@ -175,16 +176,26 @@ struct CalendarMonthView: View {
         .overlay(alignment: .leading) {
             if col > 0 { Rectangle().fill(theme.line.color).frame(width: 0.5) }
         }
+        .contextMenu {
+            Button("Neuer Termin an diesem Tag") {
+                let start = store.math.at(day, hour: 9)
+                editor = EventEditorRequest(startsAt: start, endsAt: start + 30 * 60_000)
+            }
+        }
         .help(CalendarChrome.longDay(day))
+    }
+
+    /// Width and hit area of one bar (the click area is exactly what is drawn;
+    /// a tap area wider than the bar would open events from empty cell space).
+    private func barWidth(_ span: EventSpan, colWidth: CGFloat) -> CGFloat {
+        (CGFloat(span.endCol - span.startCol + 1) * colWidth)
+            - (span.clippedStart ? 0 : 4) - (span.clippedEnd ? 0 : 4)
     }
 
     private func bar(_ span: EventSpan, colWidth: CGFloat) -> some View {
         let color = CalendarChrome.color(for: span.event, calendars: store.calendars, theme: theme)
         let cancelled = CalendarEventRules.isCancelled(span.event)
-        return Button {
-            detail = span.event
-        } label: {
-            HStack(spacing: 3) {
+        return HStack(spacing: 3) {
                 if !span.event.allDay && !span.clippedStart {
                     Text(CalendarChrome.time(span.event.startsAt))
                         .font(.system(size: 9.5).monospacedDigit())
@@ -205,22 +216,26 @@ struct CalendarMonthView: View {
                     Rectangle().fill(color).frame(width: 3)
                 }
             }
+            .frame(width: barWidth(span, colWidth: colWidth), alignment: .leading)
             .clipShape(RoundedRectangle(cornerRadius: 4))
             .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .help(span.event.summary ?? "")
+            .onTapGesture { clicked(span.event) }
+            .contextMenu {
+                EventContextMenu(store: store, event: span.event,
+                                 onOpen: { detail = span.event },
+                                 onEdit: { edit(span.event) },
+                                 onDelete: { onDelete(span.event) })
+            }
+            .eventDetailPopover(store: store, event: span.event, detail: $detail, editor: $editor)
+            .help(span.event.summary ?? "")
     }
 
-    private func chip(_ event: CalendarEvent) -> some View {
+    private func chip(_ event: CalendarEvent, colWidth: CGFloat) -> some View {
         let color = CalendarChrome.color(for: event, calendars: store.calendars, theme: theme)
         let rsvp = CalendarEventRules.rsvpKind(event)
         let hollow = rsvp == .tentative || rsvp == .needs
         let cancelled = CalendarEventRules.isCancelled(event)
-        return Button {
-            detail = event
-        } label: {
-            HStack(spacing: 4) {
+        return HStack(spacing: 4) {
                 Circle()
                     .strokeBorder(color, lineWidth: hollow ? 1.2 : 0)
                     .background(Circle().fill(hollow ? .clear : color))
@@ -236,11 +251,31 @@ struct CalendarMonthView: View {
                 Spacer(minLength: 0)
             }
             .padding(.horizontal, 3)
-            .frame(height: 20)
+            .frame(width: colWidth - 4, height: 20, alignment: .leading)
             .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .help(event.summary ?? "")
+            .onTapGesture { clicked(event) }
+            .contextMenu {
+                EventContextMenu(store: store, event: event,
+                                 onOpen: { detail = event },
+                                 onEdit: { edit(event) },
+                                 onDelete: { onDelete(event) })
+            }
+            .eventDetailPopover(store: store, event: event, detail: $detail, editor: $editor)
+            .help(event.summary ?? "")
+    }
+
+    /// Single click opens the detail popover, double click the editor.
+    private func clicked(_ event: CalendarEvent) {
+        store.selectedEventId = event.id
+        PerfLog.shared.write("calendar_click id=\(event.id) mode=month source=month")
+        clicks.click(String(event.id), onOpen: { detail = event }, onEdit: { edit(event) })
+    }
+
+    private func edit(_ event: CalendarEvent) {
+        detail = nil
+        editor = EventEditorRequest(event: event, startsAt: event.startsAt,
+                                    endsAt: CalendarEventRules.eventEnd(event),
+                                    allDay: event.allDay)
     }
 
     private func isWeekend(_ day: Int64) -> Bool {

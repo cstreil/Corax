@@ -114,6 +114,9 @@ final class AppModel {
         mailbox.onUnreadCounts = { counts in
             AppModel.shared.updateBadge(counts)
         }
+        // M2.8b: picking a mailbox, account, tab or search leaves the calendar
+        // (Tauri's `setView`/`selectFolder` do the same), so the choice shows.
+        mailbox.onUserNavigation = { AppModel.shared.leaveCalendarForMail() }
         aux.use(toasts)
         aux.copyToClipboard = { text in AppModel.shared.platform.copyToClipboard(text) }
         aux.openURL = { url in AppModel.shared.platform.open(url) }
@@ -168,6 +171,10 @@ final class AppModel {
             coreReady = true
             PerfLog.shared.write("host_ready ms=\(PerfLog.shared.elapsedMilliseconds)")
             await settings.load()
+            // M2.8b: a language that follows the OS is stored as a concrete
+            // code for the core; re-resolve it so a changed macOS language
+            // arrives on the next launch.
+            settings.syncSystemLanguage()
             avatars.enabled = settings.showSenderPhotos
             await mailbox.bootstrap()
             sync.refreshSoon()
@@ -176,6 +183,15 @@ final class AppModel {
         } catch {
             startError = RabeClientError.from(error).errorDescription
         }
+    }
+
+    /// Leaves the calendar for the mail list. A no-op while the calendar is
+    /// closed, so every navigation path can call it.
+    func leaveCalendarForMail() {
+        guard calendarOpen else { return }
+        calendarOpen = false
+        mailbox.focusList()
+        PerfLog.shared.write("calendar_left reason=navigation")
     }
 
     /// Called by the settings window when it appears: the editors load their

@@ -278,6 +278,42 @@ enum CalendarWalkthrough {
         log("calendar_state open=\(AppModel.shared.calendarOpen) mode=\(store.mode.rawValue) anchorDay=\(store.math.dayOfMonth(store.anchor)) days=\(store.days.count) events=\(events.count) bars=\(store.weekModel?.allDaySpans.count ?? -1) calendars=\(store.calendars.count) hidden=\(store.hiddenCalendars.sorted()) local=\(!store.hiddenLocal) layoutMs=\(String(format: "%.2f", store.lastLayoutMilliseconds))")
     }
 
+    /// `calendar:click:<id>` — one click on a block, fed into the grid's own
+    /// handler (`click` → click router → detail popover). Used when a real
+    /// pointer click cannot be delivered: on this Mac the user is working, and
+    /// a background app drops synthetic HID clicks.
+    static func click(id: Int64, times: Int) {
+        guard requireSandbox("click") else { return }
+        for index in 0..<max(1, times) {
+            DispatchQueue.main.asyncAfter(deadline: .now() + Double(index) * 0.08) {
+                NotificationCenter.default.post(name: .rabeCalendarClick, object: nil,
+                                                userInfo: ["id": NSNumber(value: id)])
+            }
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.4) {
+            PerfLog.shared.write("calendar_walk popover \(popoverState()) clicks=\(times) id=\(id)")
+        }
+    }
+
+    /// Which windows besides the main one are on screen (the detail card is an
+    /// `_NSPopoverWindow`; the editor is the window's sheet).
+    static func popoverState() -> String {
+        let main = NSApp.windows.first { $0.title == Instance.title }
+        let others = NSApp.windows
+            .filter { $0 !== main && $0.isVisible && $0.frame.width > 80 && $0.frame.height > 40 }
+            .map { "\(String(describing: type(of: $0))):\(Int($0.frame.width))x\(Int($0.frame.height))" }
+        return "sheet=\(main?.attachedSheet != nil ? 1 : 0) windows=[\(others.joined(separator: ","))]"
+    }
+
+    /// `calendar:body` — what the editor sheet has, so a test can tell an edit
+    /// from a new event.
+    static func editorState() {
+        let main = NSApp.windows.first { $0.title == Instance.title }
+        PerfLog.shared.write("calendar_walk editor sheet=\(main?.attachedSheet != nil ? 1 : 0) "
+                             + "selected=\(AppModel.shared.calendar.selectedEventId.map(String.init) ?? "-") "
+                             + "detail=\(popoverState())")
+    }
+
     private static func requireSandbox(_ step: String) -> Bool {
         guard Instance.isSandbox else {
             log("\(step) refused=not_sandbox")
@@ -301,6 +337,8 @@ enum CalendarWalkthrough {
     static func join(dry: Bool) async {}
     static func sidebar() {}
     static func dayList(_ argument: String) {}
+    static func click(id: Int64, times: Int) {}
+    static func editorState() {}
     static func state() {}
 }
 #endif

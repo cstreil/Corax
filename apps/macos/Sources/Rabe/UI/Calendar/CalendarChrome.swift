@@ -103,7 +103,14 @@ struct CalendarKeyCatcher: NSViewRepresentable {
         view.onKey = onKey
         guard context.coordinator.lastFocusRequest != focusRequest else { return }
         context.coordinator.lastFocusRequest = focusRequest
+        // AppKit hands the focus back to the responder that had it *before* the
+        // sheet, and it does so after the sheet ends: one runloop turn is too
+        // early, so `⌫` landed in the mail list and trashed a mail (M2.8b).
         DispatchQueue.main.async { view.window?.makeFirstResponder(view) }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) {
+            guard let window = view.window, window.firstResponder !== view else { return }
+            window.makeFirstResponder(view)
+        }
     }
 
     func makeCoordinator() -> Coordinator { Coordinator() }
@@ -116,13 +123,29 @@ struct CalendarKeyCatcher: NSViewRepresentable {
 @MainActor
 enum CalendarKeyboard {
     static func handle(_ event: NSEvent, store: CalendarStore, openEditor: () -> Void,
+                       openSelected: (CalendarEvent) -> Void = { _ in },
+                       deleteSelected: (CalendarEvent) -> Void = { _ in },
+                       closeOverlay: () -> Bool = { false },
                        close: () -> Void) -> Bool {
         let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
         if flags.contains(.command) || flags.contains(.control) || flags.contains(.option) { return false }
         switch event.keyCode {
-        case 53: close(); return true                           // Esc
+        case 53:                                                // Esc
+            // An open card closes first; only without one does the calendar
+            // give way to the mail list (as in Tauri, where the drawer closes).
+            if closeOverlay() { return true }
+            close()
+            return true
         case 123: store.page(-1); return true                   // ←
         case 124: store.page(1); return true                    // →
+        case 36, 76:                                            // Return, Enter
+            guard let selected = store.selectedEvent else { return true }
+            openSelected(selected)
+            return true
+        case 51, 117:                                           // ⌫, forward delete
+            guard let selected = store.selectedEvent else { return true }
+            deleteSelected(selected)
+            return true
         default: break
         }
         guard let typed = event.charactersIgnoringModifiers?.lowercased(), !typed.isEmpty else {
@@ -141,5 +164,101 @@ enum CalendarKeyboard {
         default: return false
         }
         return true
+    }
+}
+
+// MARK: - Pointer behaviour (M2.8b)
+
+/// Turns the raw clicks of one surface into "open" or "edit".
+///
+/// The live test found that a plain click on an event did nothing: the grid's
+/// `DragGesture` only started after one point of movement, so a click with no
+/// movement never ended. The grid now treats a press without movement as a
+/// click, and this decides what a click means — a single one opens the detail
+/// popover (after the double-click window, otherwise every double click would
+/// open it first), a double one opens the editor.
+@MainActor
+final class CalendarClickRouter {
+    private var sequencer = CalendarClickSequencer()
+    private var pending: DispatchWorkItem?
+
+    /// A click on `token` (an event id): runs `onOpen` after the double-click
+    /// window, or `onEdit` at once when the second click arrives in time.
+    func click(_ token: String, onOpen: @escaping () -> Void, onEdit: @escaping () -> Void) {
+        switch sequencer.register(at: ProcessInfo.processInfo.systemUptime, token: token) {
+        case .double:
+            pending?.cancel()
+            pending = nil
+            onEdit()
+        case .single:
+            pending?.cancel()
+            let work = DispatchWorkItem(block: onOpen)
+            pending = work
+            DispatchQueue.main.asyncAfter(deadline: .now() + sequencer.interval, execute: work)
+        }
+    }
+
+    /// Drops a click the surface still owes (the popover closed, the view went
+    /// away): nothing should open afterwards.
+    func cancel() {
+        pending?.cancel()
+        pending = nil
+    }
+}
+
+/// The detail popover of one event, shared by grid blocks, month bars and
+/// chips, so every surface behaves the same.
+///
+/// Before, only the grid attached it: in the month view a click set `detail`
+/// and nothing appeared — which is why events looked dead there.
+struct EventDetailPopover: ViewModifier {
+    let store: CalendarStore
+    let event: CalendarEvent
+    @Binding var detail: CalendarEvent?
+    @Binding var editor: EventEditorRequest?
+
+    func body(content: Content) -> some View {
+        content.popover(isPresented: Binding(
+            get: { detail?.id == event.id },
+            set: { if !$0, detail?.id == event.id { detail = nil } }
+        ), arrowEdge: .trailing) {
+            CalendarEventDetailView(store: store, event: event, onEdit: {
+                detail = nil
+                editor = EventEditorRequest(event: event, startsAt: event.startsAt,
+                                            endsAt: CalendarEventRules.eventEnd(event),
+                                            allDay: event.allDay)
+            }, onClose: { detail = nil })
+                .onExitCommand { detail = nil }
+        }
+    }
+}
+
+extension View {
+    /// See `EventDetailPopover`.
+    func eventDetailPopover(store: CalendarStore, event: CalendarEvent,
+                            detail: Binding<CalendarEvent?>,
+                            editor: Binding<EventEditorRequest?>) -> some View {
+        modifier(EventDetailPopover(store: store, event: event, detail: detail, editor: editor))
+    }
+}
+
+/// The right-click menu of one event (M2.8b). Tauri has no context menu on the
+/// calendar, so this is ours: the same verbs as the keys, no "Duplizieren" (the
+/// core has no such command).
+struct EventContextMenu: View {
+    let store: CalendarStore
+    let event: CalendarEvent
+    let onOpen: () -> Void
+    let onEdit: () -> Void
+    let onDelete: () -> Void
+
+    var body: some View {
+        Button("Öffnen", action: onOpen)
+        if event.isLocal {
+            Button("Bearbeiten …", action: onEdit)
+        }
+        Divider()
+        Button(event.isLocal && !event.attendees.isEmpty ? "Absagen …" : "Löschen …",
+               role: .destructive, action: onDelete)
     }
 }

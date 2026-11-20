@@ -45,8 +45,8 @@ struct GeneralSettingsView: View {
                 ForEach(accentKeys, id: \.self) { Text(accentNames[$0] ?? $0).tag($0) }
             }
             SettingPickerRow(title: "Sprache", hint: "„System“ übernimmt die Sprache deines Geräts. Weitere Sprachen folgen.",
-                             selection: Binding(get: { s.language }, set: { s.set("language", $0) })) {
-                Text("System").tag("system")
+                             selection: Binding(get: { s.languageChoice }, set: { s.setLanguage($0) })) {
+                Text("System").tag(AILanguage.system)
                 Text("Deutsch").tag("de")
             }
             SettingPickerRow(title: "Inbox-Ansicht", hint: "Lege fest, wie die E-Mail-Liste aussieht.",

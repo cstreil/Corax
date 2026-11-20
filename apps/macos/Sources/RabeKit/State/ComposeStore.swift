@@ -168,9 +168,19 @@ public final class ComposeDraft: Identifiable {
 
     /// Puts the quoted original into a fresh reply (`A`/`⇧A`): below the caret,
     /// below the signature (mail order: text, signature, quote).
+    ///
+    /// M2.8a: the body also gets the empty paragraph the caret sits in and the
+    /// two blank lines Tauri puts between the answer and the original.
     public func quoteOriginal(_ html: String) {
         guard !html.isEmpty else { return }
-        replaceBody(RichHTML.settingQuote(html: bodyHtml, quoteHTML: html))
+        replaceBody(RichHTML.replyFooter(quoteHTML: html, signatureHTML: signatureHtml ?? ""))
+    }
+
+    /// The forwarded mail goes below the same opening; it keeps its own shape
+    /// (header block + original, no blockquote), as Tauri's `forwardBlock`.
+    public func appendForward(_ html: String) {
+        guard !html.isEmpty else { return }
+        replaceBody(RichHTML.forwardFooter(forwardHTML: html, signatureHTML: signatureHtml ?? ""))
     }
 
     public var title: String {
@@ -227,7 +237,9 @@ public final class ComposeDraft: Identifiable {
                                       to: last.to, subject: last.subject, date: last.dateValue)
                 : Quoting.replyHTML(bodyHTML: original.html, bodyText: original.text, from: last.from,
                                     date: last.dateValue)
-            if !quote.isEmpty { draft.quoteOriginal(quote) }
+            if !quote.isEmpty {
+                if mode == .forward { draft.appendForward(quote) } else { draft.quoteOriginal(quote) }
+            }
         }
         return draft
     }

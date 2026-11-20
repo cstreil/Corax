@@ -101,7 +101,52 @@ public final class SettingsStore {
 
     // MARK: M2.1 — general section
 
-    public var language: String { raw["language"] as? String ?? "system" }
+    public var language: String { raw["language"] as? String ?? AILanguage.system }
+
+    // MARK: Sprache und KI (M2.8b)
+
+    /// Marks a language that follows the OS language. The core only stores one
+    /// field (`language`) and understands concrete codes only, so "system" has
+    /// to be resolved to a code there; this flag keeps the picker honest.
+    private static let followsSystemKey = "rabe.languageFollowsSystem"
+
+    /// The OS language tag list; a property so the test does not depend on the
+    /// host's language.
+    public var preferredLanguages: () -> [String] = AILanguage.preferredLanguages
+
+    /// True while the stored language follows the OS language.
+    public var languageFollowsSystem: Bool {
+        if let flag = UserDefaults.standard.object(forKey: Self.followsSystemKey) as? Bool {
+            return flag
+        }
+        // No flag yet (an install from before M2.8b): "system" means it follows.
+        return language == AILanguage.system
+    }
+
+    /// What the "Sprache" picker shows: `"system"` while it follows the OS,
+    /// otherwise the chosen code.
+    public var languageChoice: String {
+        languageFollowsSystem ? AILanguage.system : language
+    }
+
+    /// Picker change. "System" is stored as the resolved code, so the core can
+    /// tell the model which language to answer in.
+    public func setLanguage(_ choice: String) {
+        UserDefaults.standard.set(choice == AILanguage.system, forKey: Self.followsSystemKey)
+        set("language", AILanguage.stored(choice, preferred: preferredLanguages()))
+    }
+
+    /// Re-resolves a language that follows the OS. Called after `load()`, so a
+    /// macOS language change reaches the core on the next launch.
+    public func syncSystemLanguage() {
+        guard loaded, languageFollowsSystem else { return }
+        // From here on the state is explicit: the stored value is a code now,
+        // so the "follows the system" bit has to be remembered separately.
+        UserDefaults.standard.set(true, forKey: Self.followsSystemKey)
+        let resolved = AILanguage.stored(AILanguage.system, preferred: preferredLanguages())
+        guard resolved != language else { return }
+        set("language", resolved)
+    }
     public var soundEnabled: Bool { raw["soundEnabled"] as? Bool ?? true }
     public var copyVerificationCodes: Bool { raw["copyVerificationCodes"] as? Bool ?? true }
     public var selectAdvance: Bool { raw["selectAdvance"] as? Bool ?? true }

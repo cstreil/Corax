@@ -60,6 +60,10 @@ enum DebugAutomation {
             press(spec[0], flags: flags)
         case "type":
             for ch in parts[1] { press(String(ch), flags: ch.isUppercase ? [.shift] : [], literal: true) }
+        case "postkey":
+            // Same key, but through the event queue instead of `sendEvent`, so
+            // local monitors see it (M2.8b: Escape while a card is open).
+            post(key: parts[1])
         case "scrollrun":
             ScrollRun.start(seconds: Double(parts[1]) ?? 20)
         case "theme":   // theme:paper|carbon|snow|system (writes the setting; sandbox only)
@@ -127,6 +131,9 @@ enum DebugAutomation {
                 Task { await SettingsWalkthrough.run() }
             } else if parts[1] == "signout" {
                 Task { await SettingsWalkthrough.signOutFirstAccount() }
+            } else if parts[1].hasPrefix("language:") {
+                let choice = String(parts[1].dropFirst("language:".count))
+                Task { await SettingsWalkthrough.setLanguage(choice) }
             } else if let page = SettingsPage(rawValue: parts[1]) {
                 SettingsWalkthrough.open(page)
             }
@@ -155,6 +162,15 @@ enum DebugAutomation {
                     CalendarWalkthrough.dayList(spec.count > 1 ? spec[1] : "")
                 }
             case "state": CalendarWalkthrough.state()
+            case "click":
+                // M2.8b: one click (click:<id>) or a double click (click2:<id>)
+                // through the grid's own handler; then the popover state.
+                let id = Int64(spec.count > 1 ? spec[1] : "0") ?? 0
+                CalendarWalkthrough.click(id: id, times: 1)
+            case "click2":
+                let id = Int64(spec.count > 1 ? spec[1] : "0") ?? 0
+                CalendarWalkthrough.click(id: id, times: 2)
+            case "editorstate": CalendarWalkthrough.editorState()
             default: PerfLog.shared.write("calendar_cmd unknown=\(parts[1])")
             }
         case "ai":
@@ -265,6 +281,27 @@ enum DebugAutomation {
         default:
             break
         }
+    }
+
+    /// Posts one key through the app's event queue (`NSApp.postEvent`), which
+    /// is what a physical key does before `sendEvent` — monitors included.
+    private static func post(key: String) {
+        guard let window = NSApp.keyWindow ?? NSApp.mainWindow else { return }
+        let lower = key.lowercased()
+        let chars: String = switch lower {
+        case "escape": "\u{1b}"
+        case "delete": "\u{7f}"
+        case "return": "\r"
+        default: lower
+        }
+        guard let event = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [],
+                                           timestamp: ProcessInfo.processInfo.systemUptime,
+                                           windowNumber: window.windowNumber, context: nil,
+                                           characters: chars, charactersIgnoringModifiers: chars,
+                                           isARepeat: false, keyCode: keyCodes[lower] ?? 0)
+        else { return }
+        NSApp.postEvent(event, atStart: false)
+        PerfLog.shared.write("debug_postkey \(lower)")
     }
 
     private static func press(_ key: String, flags: NSEvent.ModifierFlags, literal: Bool = false) {

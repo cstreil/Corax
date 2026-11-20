@@ -29,6 +29,9 @@ struct CalendarTimeGridView: View {
     let store: CalendarStore
     @Binding var editor: EventEditorRequest?
     @Binding var detail: CalendarEvent?
+    /// "Löschen …" from a block's context menu: the screen asks before it
+    /// deletes (an event with attendees mails them).
+    var onDelete: (CalendarEvent) -> Void = { _ in }
     @Environment(\.theme) private var theme
 
     private var days: [Int64] { store.weekModel?.days ?? store.days }
@@ -47,6 +50,10 @@ struct CalendarTimeGridView: View {
 
     @State private var preview: Preview?
     @State private var allDayOpen = false
+    /// Single vs. double click on a block (M2.8b).
+    @State private var clicks = CalendarClickRouter()
+    /// Last pointer position inside a column, for "Neuer Termin hier".
+    @State private var hoverY: [Int: CGFloat] = [:]
 
     var body: some View {
         VStack(spacing: 0) {
@@ -76,6 +83,24 @@ struct CalendarTimeGridView: View {
                 .defaultScrollAnchor(UnitPoint(x: 0.5,
                                                y: workingHour * CalendarGrid.hourPx / contentHeight))
                 .onAppear { PerfLog.shared.write("calendar_grid_shown hour=\(Int(workingHour))") }
+                // The detail popover hangs on the grid, not on the block: a
+                // popover anchored inside the scrolling content is never
+                // presented (M2.8b — the click arrived, `detail` was set, and
+                // nothing appeared).
+                .popover(isPresented: Binding(
+                    get: { detail != nil },
+                    set: { if !$0 { detail = nil } }
+                ), arrowEdge: .trailing) {
+                    if let event = detail {
+                        CalendarEventDetailView(store: store, event: event,
+                                                onEdit: { edit(event) },
+                                                onClose: { detail = nil })
+                            // Esc comes from the screen's local monitor (the
+                            // popover swallows the key binding), so the card
+                            // must not steal the focus from the grid.
+                            .onExitCommand { detail = nil }
+                    }
+                }
         }
     }
 
@@ -174,7 +199,7 @@ struct CalendarTimeGridView: View {
     private func allDayBar(_ span: EventSpan, colWidth: CGFloat) -> some View {
         let color = CalendarChrome.color(for: span.event, calendars: store.calendars, theme: theme)
         return Button {
-            detail = span.event
+            click(span.event)
         } label: {
             Text(span.event.summary ?? "(kein Titel)")
                 .font(.system(size: 11, weight: .medium))
@@ -193,6 +218,12 @@ struct CalendarTimeGridView: View {
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .contextMenu {
+            EventContextMenu(store: store, event: span.event,
+                             onOpen: { click(span.event) },
+                             onEdit: { edit(span.event) },
+                             onDelete: { onDelete(span.event) })
+        }
         .help(span.event.summary ?? "")
     }
 
@@ -207,6 +238,17 @@ struct CalendarTimeGridView: View {
             Color.clear
                 .contentShape(Rectangle())
                 .gesture(createGesture(day: day, index: index, width: width))
+                // M2.8b: right-click on free space creates an event at the time
+                // under the pointer (Tauri has no menu here at all).
+                .onContinuousHover { phase in
+                    switch phase {
+                    case .active(let point): hoverY[index] = point.y
+                    case .ended: hoverY[index] = nil
+                    }
+                }
+                .contextMenu {
+                    Button("Neuer Termin hier") { createHere(day: day, index: index) }
+                }
             if isToday, let nowTop = nowTop(day) {
                 Rectangle()
                     .fill(Color.red.opacity(0.7))
@@ -231,31 +273,44 @@ struct CalendarTimeGridView: View {
         let color = CalendarChrome.color(for: event, calendars: store.calendars, theme: theme)
         let draggable = CalendarEventRules.isDraggable(event)
         let laneWidth = width / CGFloat(max(placed.lanes, 1))
-        return CalendarEventBlockView(event: event, color: color, height: placed.height,
-                                      draggable: draggable,
-                                      onOpen: { detail = event },
-                                      onMove: { translation, startIsOnHandle in
-                                          drag(event: event, day: day, index: index, width: width,
-                                               translation: translation, resizing: startIsOnHandle)
-                                      },
-                                      onDrop: { translation, startIsOnHandle in
-                                          drop(event: event, day: day, index: index, width: width,
-                                               translation: translation, resizing: startIsOnHandle)
-                                      },
-                                      onCancel: { preview = nil })
+        return CalendarEventBlockView(
+            store: store, event: event, color: color, height: placed.height, draggable: draggable,
+            onOpen: {
+                store.selectedEventId = event.id
+                detail = event
+            },
+            onClick: { click(event) },
+            onEdit: { edit(event) },
+            onDelete: { onDelete(event) },
+            onMove: { translation, startIsOnHandle in
+                drag(event: event, day: day, index: index, width: width,
+                     translation: translation, resizing: startIsOnHandle)
+            },
+            onDrop: { translation, startIsOnHandle in
+                drop(event: event, day: day, index: index, width: width,
+                     translation: translation, resizing: startIsOnHandle)
+            },
+            onCancel: { preview = nil })
             .frame(width: laneWidth - 4, height: placed.height - 2)
             .offset(x: CGFloat(placed.lane) * laneWidth + 2, y: placed.top + 1)
-            .popover(isPresented: Binding(
-                get: { detail?.id == event.id },
-                set: { if !$0, detail?.id == event.id { detail = nil } }
-            ), arrowEdge: .trailing) {
-                CalendarEventDetailView(store: store, event: event, onEdit: {
-                    detail = nil
-                    editor = EventEditorRequest(event: event, startsAt: event.startsAt,
-                                                endsAt: CalendarEventRules.eventEnd(event),
-                                                allDay: event.allDay)
-                }, onClose: { detail = nil })
-            }
+    }
+
+    /// One click of a block: single opens the detail (after the double-click
+    /// window), double opens the editor. The store keeps the event selected, so
+    /// `Return` and `⌫` have a target.
+    private func click(_ event: CalendarEvent) {
+        store.selectedEventId = event.id
+        // One line per click so the next live test can tell "the click never
+        // arrived" from "the popover did not show" (the M2.8a lesson).
+        PerfLog.shared.write("calendar_click id=\(event.id) mode=\(store.mode.rawValue) source=grid")
+        clicks.click(String(event.id), onOpen: { detail = event }, onEdit: { edit(event) })
+    }
+
+    private func edit(_ event: CalendarEvent) {
+        detail = nil
+        editor = EventEditorRequest(event: event, startsAt: event.startsAt,
+                                    endsAt: CalendarEventRules.eventEnd(event),
+                                    allDay: event.allDay)
     }
 
     @ViewBuilder
@@ -314,6 +369,15 @@ struct CalendarTimeGridView: View {
                 let (start, end) = snapped(startMs: startMs, endMs: endMs, day: day, moved: moved)
                 editor = EventEditorRequest(startsAt: start, endsAt: end)
             }
+    }
+
+    /// "Neuer Termin hier" from the empty-space menu: the event starts at the
+    /// time under the last pointer position in that column (snapped to 15 min).
+    private func createHere(day: Int64, index: Int) {
+        let y = Double(hoverY[index] ?? CGFloat(9 * CalendarGrid.hourPx))
+        let start = CalendarMath.snapMinutes(Double(CalendarMath.yToMs(y, dayStart: day) - day) / 60_000)
+        let startMs = day + Int64(start) * 60_000
+        editor = EventEditorRequest(startsAt: startMs, endsAt: startMs + 30 * 60_000)
     }
 
     private func snapped(startMs: Int64, endMs: Int64, day: Int64, moved: Bool) -> (Int64, Int64) {
@@ -440,12 +504,21 @@ struct CalendarTimeGridView: View {
 
 /// One event block in the time grid. It reports drags with the information the
 /// grid needs to distinguish "move" from "resize" (a press on the bottom edge).
+///
+/// A press without movement is a click (M2.8b): before, `minimumDistance: 1`
+/// meant a click never ended, so nothing opened. The distance check now happens
+/// inside the gesture (`CalendarHitTest.dragThreshold`), and the same gesture
+/// reports the click, so hover, drag and click all live on one surface.
 struct CalendarEventBlockView: View {
+    let store: CalendarStore
     let event: CalendarEvent
     let color: Color
     let height: Double
     let draggable: Bool
     let onOpen: () -> Void
+    let onClick: () -> Void
+    let onEdit: () -> Void
+    let onDelete: () -> Void
     let onMove: (CGSize, Bool) -> Void
     let onDrop: (CGSize, Bool) -> Void
     let onCancel: () -> Void
@@ -493,29 +566,39 @@ struct CalendarEventBlockView: View {
         .contentShape(Rectangle())
         .onHover { hovering = $0 }
         .gesture(
-            DragGesture(minimumDistance: 1)
+            DragGesture(minimumDistance: 0)
                 .onChanged { value in
+                    guard isDrag(value.translation) else { return }
                     // A press on the bottom handle resizes, everywhere else moves.
                     let resizing = hoverHandle(value.startLocation.y)
                     onMove(value.translation, resizing)
                 }
                 .onEnded { value in
-                    let resizing = hoverHandle(value.startLocation.y)
-                    if hypot(value.translation.width, value.translation.height) < 3 {
+                    guard isDrag(value.translation) else {
                         onCancel()
-                        onOpen()
-                    } else {
-                        onDrop(value.translation, resizing)
+                        onClick()
+                        return
                     }
+                    let resizing = hoverHandle(value.startLocation.y)
+                    onDrop(value.translation, resizing)
                 }
         )
+        .contextMenu {
+            EventContextMenu(store: store, event: event,
+                             onOpen: onOpen, onEdit: onEdit, onDelete: onDelete)
+        }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("\(event.summary ?? "(kein Titel)"), \(CalendarChrome.timeRange(event.startsAt, CalendarEventRules.eventEnd(event)))")
         .accessibilityAddTraits(.isButton)
-        .help(draggable ? "Ziehen zum Verschieben, unten ziehen für die Länge" : "")
+        .help(draggable ? "Klicken zum Öffnen, doppelt klicken zum Bearbeiten, ziehen zum Verschieben" : "")
+    }
+
+    /// Movement below this is a click, not a drag (`CalendarHitTest.dragThreshold`).
+    private func isDrag(_ translation: CGSize) -> Bool {
+        hypot(translation.width, translation.height) >= CalendarHitTest.dragThreshold
     }
 
     private func hoverHandle(_ y: CGFloat) -> Bool {
-        draggable && height > 26 && Double(y) > height - handle
+        draggable && height > CalendarHitTest.resizableFrom && Double(y) > height - handle
     }
 }

@@ -37,6 +37,16 @@ public final class CalendarStore {
     /// Duration of the last `list_events` round trip in milliseconds.
     public private(set) var lastFetchMilliseconds: Double = 0
 
+    /// The event a click last picked (M2.8b): `Return` opens it, `⌫` deletes
+    /// it, like the mail list's row cursor.
+    public var selectedEventId: Int64?
+
+    /// The selected event while it is still in the visible range.
+    public var selectedEvent: CalendarEvent? {
+        guard let selectedEventId else { return nil }
+        return visibleEvents.first { $0.id == selectedEventId }
+    }
+
     /// Local midnight of the focused day.
     public var anchor: Int64
     public var mode: Mode = .week

@@ -103,18 +103,62 @@ public enum RichHTML {
     /// Writes the parts in mail order — text, signature, quote — with one blank
     /// line between them, as Tauri's `<br><br>` separators do.
     public static func compose(_ parts: Parts) -> String {
+        compose(parts, blankLinesBeforeSignature: 1, blankLinesBeforeQuote: 1, keepContentEdge: false)
+    }
+
+    /// `blankLinesBeforeQuote` is 2 for a fresh reply: Tauri writes
+    /// `body + "<br><br>" + quote`, so the caret line is followed by two blank
+    /// lines and the original is clearly apart from the answer (M2.8a).
+    /// `keepContentEdge` keeps a leading empty paragraph that the trimming
+    /// below would otherwise fold away — that is the paragraph the caret sits in.
+    static func compose(_ parts: Parts, blankLinesBeforeSignature: Int, blankLinesBeforeQuote: Int,
+                        keepContentEdge: Bool) -> String {
         var blocks: [RichBlock] = []
-        func add(_ group: [RichBlock]) {
+        func add(_ group: [RichBlock], blanks: Int, keepEdges: Bool = false) {
             var group = group
-            while let last = group.last, last.isEmpty, !last.hasImages { group.removeLast() }
-            while let first = group.first, first.isEmpty, !first.hasImages { group.removeFirst() }
+            if !keepEdges {
+                while let last = group.last, last.isEmpty, !last.hasImages { group.removeLast() }
+                while let first = group.first, first.isEmpty, !first.hasImages { group.removeFirst() }
+            }
             guard !group.isEmpty else { return }
-            if !blocks.isEmpty { blocks.append(RichBlock()) }
+            if !blocks.isEmpty {
+                for _ in 0..<max(0, blanks) { blocks.append(RichBlock()) }
+            }
             blocks += group
         }
-        add(parts.content)
-        add(parts.signature)
-        add(parts.quote)
+        add(parts.content, blanks: 0, keepEdges: keepContentEdge)
+        add(parts.signature, blanks: blankLinesBeforeSignature)
+        add(parts.quote, blanks: blankLinesBeforeQuote)
+        return html(from: RichDocument(blocks: blocks))
+    }
+
+    /// A reply ready for typing (M2.8a): the caret gets its own empty
+    /// paragraph, two blank lines follow, then the signature and the quote.
+    ///
+    /// Tauri writes `body + "<br><br>" + quoteToHtml(quote)`, and `quoteToHtml`
+    /// is `div(attribution) + blockquote(original)`. Building the tail from the
+    /// parts directly — instead of re-splitting a composed body — keeps the
+    /// attribution out of the blockquote; `settingQuote`'s promotion had pulled
+    /// it in, so the caret stood on the original's first line.
+    public static func replyFooter(quoteHTML: String, signatureHTML: String) -> String {
+        footer(tail: parse(quoteHTML).blocks.filter { !$0.isSignature }, signatureHTML: signatureHTML)
+    }
+
+    /// A forward ready for typing: same opening, but the forwarded block keeps
+    /// its own shape — Tauri's `forwardBlock` has no blockquote.
+    public static func forwardFooter(forwardHTML: String, signatureHTML: String) -> String {
+        footer(tail: parse(forwardHTML).blocks, signatureHTML: signatureHTML)
+    }
+
+    private static func footer(tail: [RichBlock], signatureHTML: String) -> String {
+        var blocks = [RichBlock(), RichBlock(), RichBlock()]   // caret line + two blank lines
+        if !signatureHTML.isEmpty {
+            blocks += signatureDocument(signatureHTML).blocks
+            // One blank line between the signature and the tail: the wire text
+            // reads `Viele Grüße\n\n> Original`, as Tauri's `\n\n` separator.
+            blocks.append(RichBlock())
+        }
+        blocks += tail
         return html(from: RichDocument(blocks: blocks))
     }
 
@@ -179,8 +223,13 @@ public enum RichHTML {
     public static func settingQuote(html: String, quoteHTML: String) -> String {
         var parts = split(html)
         var quote = parse(quoteHTML).blocks.filter { !$0.isSignature }
-        if !quote.isEmpty {
-            for index in quote.indices where quote[index].quoteDepth == 0 { quote[index].quoteDepth = 1 }
+        // A quote that already carries blockquote markup keeps its shape: Tauri's
+        // reply writes the attribution line as its own paragraph *above* the
+        // quote (`quoteToHtml`). Promoting every paragraph here folded that line
+        // into the blockquote, so the caret's line started the original text
+        // (Live-Test 1, M2.8a). Input without any quote markup is quoted whole.
+        if !quote.isEmpty, !quote.contains(where: { $0.quoteDepth > 0 }) {
+            for index in quote.indices { quote[index].quoteDepth = 1 }
         }
         parts.quote = quote
         return compose(parts)

@@ -50,6 +50,7 @@ struct AISearchFilterCard: View {
                     .textFieldStyle(.plain)
                     .font(.system(size: 12))
                     .focused($focused)
+                    .focusWhenShown($focused)
                     .onSubmit { submitFreeText() }
                 Button("Weiter") { submitFreeText() }
                     .controlSize(.small)

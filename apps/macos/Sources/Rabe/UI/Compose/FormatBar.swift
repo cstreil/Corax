@@ -12,8 +12,8 @@ struct FormatBar: View {
     let theme: Theme
     /// Shows the link field under the bar.
     var onLink: () -> Void = {}
-    /// Opens the panel that embeds a picture.
-    var onImage: () -> Void = {}
+    /// Opens the file dialog (any file, as an attachment).
+    var onAttach: () -> Void = {}
 
     private var state: RichFormatState { controller.state }
 
@@ -33,7 +33,10 @@ struct FormatBar: View {
             toggle("text.quote", "Zitat (⌘⇧9)", active: state.quote) { controller.toggleQuote() }
             divider
             toggle("link", "Link (⌘K)", active: state.link != nil, action: onLink)
-            toggle("photo", "Bild einfügen", active: false, action: onImage)
+            // M2.8a: one button for every file, as Tauri's `attach-files`. Pictures
+            // pasted or dropped into the text are still embedded; a picture picked
+            // here is an attachment, like every other file.
+            toggle("paperclip", "Datei anhängen (⌘⇧A)", active: false, action: onAttach)
             toggle("textformat", "Formatierung entfernen (⌘\\)", active: false) { controller.clearFormatting() }
             Spacer(minLength: 0)
         }
@@ -47,6 +50,10 @@ struct FormatBar: View {
     private func toggle(_ symbol: String, _ help: String, active: Bool,
                         action: @escaping () -> Void) -> some View {
         Button {
+            // The bar's own call, in the log: a live run then shows whether the
+            // click reached the editor at all (M2.8a — the keyboard path logs as
+            // `fmt key`). No user content, only the button name and the state.
+            PerfLog.shared.write("fmt bar kind=\(symbol) active=\(active)")
             action()
             controller.focus()
         } label: {
@@ -79,6 +86,7 @@ struct LinkField: View {
                 .textFieldStyle(.plain)
                 .font(.system(size: 12))
                 .focused($focused)
+                .focusWhenShown($focused)
                 .onSubmit { onApply(text) }
                 .onExitCommand { onClose() }
                 .padding(.horizontal, 7)
