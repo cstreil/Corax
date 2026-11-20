@@ -54,6 +54,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         AppModel.shared.didBecomeActive()
     }
 
+    /// N2 aus dem Audit M2: a label action holds `mark_read` back for up to
+    /// 30 s. Quitting inside that window would leave the mails unread on the
+    /// server, so the app sends them first and waits at most 2 s.
+    ///
+    /// A second ⌘Q while the flush runs quits at once — the user asked twice.
+    private var terminationPrepared = false
+
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        guard !terminationPrepared else { return .terminateNow }
+        terminationPrepared = true
+        Task { @MainActor in
+            await AppModel.shared.prepareForTermination()
+            NSApp.reply(toApplicationShouldTerminate: true)
+        }
+        return .terminateLater
+    }
+
     func applicationWillTerminate(_ notification: Notification) {
         AppModel.shared.shutdown()
         // M2.5: Quick Look previews live in an app-owned temp directory.

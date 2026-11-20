@@ -768,6 +768,36 @@ public final class MailboxStore {
     /// Tests: waits until every queued write has run (the chain keeps chaining).
     func waitForPendingWrites() async { await writeChain?.value }
 
+    /// How long quitting waits for the deferred reads (N2). The host's own
+    /// shutdown grace is 500 ms; this is the outer bound for the whole flush.
+    static var terminationGrace: TimeInterval = 2
+
+    /// N2 aus dem Audit M2: a label action holds `mark_read` back for up to
+    /// 30 s (W6). Quitting inside that window would leave the opened mails
+    /// unread on the server, so `applicationShouldTerminate` calls this and
+    /// waits — at most `terminationGrace` — until the reads reached the core.
+    public func flushBeforeTermination() async {
+        labelExpiryTask?.cancel()
+        labelExpiryTask = nil
+        flushPendingMarkRead()
+        guard let chain = writeChain else { return }
+        // Race the chain against the deadline: `withTaskGroup` would wait for
+        // the chain even after the timeout fired.
+        let grace = Self.terminationGrace
+        let done = AsyncStream<Void> { continuation in
+            Task {
+                await chain.value
+                continuation.yield()
+                continuation.finish()
+            }
+            Task {
+                try? await Task.sleep(for: .seconds(grace))
+                continuation.finish()
+            }
+        }
+        for await _ in done { break }
+    }
+
     private func enqueueWrite(countsAsOtherAction: Bool = true, _ op: @escaping @MainActor () async -> Void) {
         if countsAsOtherAction, undoTicket != nil { coreActionsAfterTicket += 1 }
         let previous = writeChain
@@ -850,6 +880,17 @@ public final class MailboxStore {
         count > 1 ? "\(label) (\(count))" : label
     }
 
+    /// W7 aus dem Audit M2: above `GroupActionLimit.maxThreads` the core's
+    /// 150 ms undo window no longer covers the whole gesture, so the action is
+    /// refused before anything reaches the core — no partial run, no undo that
+    /// silently brings back only part of the group.
+    private func withinGroupLimit(_ hits: [ThreadSummary]) -> Bool {
+        guard !GroupActionLimit.allows(hits.count) else { return true }
+        PerfLog.shared.write("group_action_refused reason=limit n=\(hits.count) max=\(GroupActionLimit.maxThreads)")
+        toasts.show(GroupActionLimit.message)
+        return false
+    }
+
     /// One toast with one undo for the whole group (`undo_last` reverts the
     /// gesture, see `UndoEntry`).
     private func showUndoToast(_ text: String) {
@@ -902,7 +943,7 @@ public final class MailboxStore {
                              targets: [Int64]? = nil, params: ActionParams? = nil) {
         guard let client else { return }
         let hits = targets.map { rows(forIds: $0) } ?? rows(for: ids)
-        guard !hits.isEmpty else { return }
+        guard !hits.isEmpty, withinGroupLimit(hits) else { return }
         let removedIds = hits.map(\.id)
         let removedSet = Set(removedIds)
         let places = hits.compactMap { thread in index(of: thread.id).map { RemovedRow(thread: thread, index: $0) } }
@@ -957,7 +998,7 @@ public final class MailboxStore {
     public func toggleStar(_ id: Int64? = nil) {
         guard let client else { return }
         let hits = rows(for: id)
-        guard !hits.isEmpty else { return }
+        guard !hits.isEmpty, withinGroupLimit(hits) else { return }
         let makeStarred = !hits[0].isStarred
         let kind: ActionKind = makeStarred ? .star : .unstar
         let ids = Set(hits.map(\.id))
@@ -978,7 +1019,7 @@ public final class MailboxStore {
     public func toggleUnread(_ id: Int64? = nil) {
         guard let client else { return }
         let hits = rows(for: id)
-        guard !hits.isEmpty else { return }
+        guard !hits.isEmpty, withinGroupLimit(hits) else { return }
         // The first target decides the direction (Tauri's `toggleRead`).
         let makeUnread = !hits[0].isUnread
         let kind: ActionKind = makeUnread ? .markUnread : .markRead
@@ -1008,7 +1049,7 @@ public final class MailboxStore {
     public func setLabel(_ labelId: Int64, applied: Bool, targets: [Int64]? = nil) {
         guard let client else { return }
         let hits = targets.map { rows(forIds: $0) } ?? rows(for: nil)
-        guard !hits.isEmpty else { return }
+        guard !hits.isEmpty, withinGroupLimit(hits) else { return }
         let kind: ActionKind = applied ? .addLabel : .removeLabel
         let ids = Set(hits.map(\.id))
         beginUserAction()
@@ -1047,7 +1088,7 @@ public final class MailboxStore {
     public func deletePermanently(ids: [Int64]) {
         guard let client else { return }
         let hits = rows(forIds: ids)
-        guard !hits.isEmpty else { return }
+        guard !hits.isEmpty, withinGroupLimit(hits) else { return }
         let removedIds = hits.map(\.id)
         let removedSet = Set(removedIds)
         let places = hits.compactMap { thread in index(of: thread.id).map { RemovedRow(thread: thread, index: $0) } }

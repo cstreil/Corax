@@ -2109,6 +2109,55 @@ fn extract_data_uri_images(html: &str) -> (String, Vec<InlineImage>) {
     (out, images)
 }
 
+/// What may stand in a Subject header (M2.7, audit W1/N1).
+///
+/// `mail-builder` writes an unstructured header raw when it needs no encoding,
+/// so a CRLF in the subject becomes a second header line: `Hallo\r\nBcc: x@y`
+/// sends a hidden copy. Only control characters of category **Cc** go:
+/// CR, LF and TAB fold to one space, every other Cc is dropped. Format
+/// characters (**Cf**) stay — ZWJ, bidi marks and variation selectors carry
+/// emoji sequences and RTL text, and removing them breaks both.
+///
+/// Display names in address headers do not need this: `mail-builder` runs them
+/// through `rfc2047_encode`, which drops CR/LF (and encodes the rest).
+pub fn sanitize_subject(raw: &str) -> String {
+    if !raw.chars().any(is_cc) {
+        return raw.to_string();
+    }
+    let chars: Vec<char> = raw.chars().collect();
+    let mut out = String::with_capacity(raw.len());
+    let mut i = 0;
+    while i < chars.len() {
+        let ch = chars[i];
+        if matches!(ch, '\r' | '\n' | '\t') {
+            // A run of breaks, tabs and the spaces around it folds to one
+            // space; a subject without a break keeps its typed spaces.
+            while i < chars.len() && matches!(chars[i], '\r' | '\n' | '\t' | ' ') {
+                i += 1;
+            }
+            while out.ends_with(' ') {
+                out.pop();
+            }
+            if !out.is_empty() {
+                out.push(' ');
+            }
+            continue;
+        }
+        if is_cc(ch) {
+            i += 1;
+            continue;
+        }
+        out.push(ch);
+        i += 1;
+    }
+    out.trim().to_string()
+}
+
+/// Unicode general category Cc: U+0000–U+001F, U+007F and U+0080–U+009F.
+fn is_cc(c: char) -> bool {
+    matches!(c, '\u{0000}'..='\u{001F}' | '\u{007F}'..='\u{009F}')
+}
+
 /// Build a raw RFC 5322 message. Returns (message_id, raw_bytes).
 pub fn build_message(out: &OutgoingMessage) -> Result<(String, Vec<u8>)> {
     let msg_id = format!(
@@ -2140,7 +2189,7 @@ pub fn build_message(out: &OutgoingMessage) -> Result<(String, Vec<u8>)> {
             out.from.name.clone().unwrap_or_default(),
             out.from.email.clone(),
         ))
-        .subject(out.subject);
+        .subject(sanitize_subject(out.subject));
 
     // Body tree, built by hand: mail-builder's default lumps inline images
     // into a flat multipart/mixed, where Gmail / Apple Mail / Outlook won't
@@ -2424,5 +2473,66 @@ mod tests {
         let (rewritten, images) = extract_data_uri_images(html);
         assert!(images.is_empty());
         assert_eq!(rewritten, html);
+    }
+
+    // MARK: Subject hardening (M2.7, audit W1/N1)
+
+    fn outgoing_with_subject(subject: &str) -> OutgoingMessage<'_> {
+        let mut out = outgoing("text", None);
+        out.subject = subject;
+        out
+    }
+
+    /// A CRLF in the subject must not become a second header line.
+    #[test]
+    fn subject_crlf_cannot_inject_a_header() {
+        let (_, raw) = build_message(&outgoing_with_subject("Hi\r\nBcc: x@y")).unwrap();
+        let s = String::from_utf8_lossy(&raw);
+        assert_eq!(
+            s.matches("Subject:").count(),
+            1,
+            "exactly one Subject header:\n{s}"
+        );
+        assert!(
+            !s.lines().any(|l| l.starts_with("Bcc:")),
+            "no injected Bcc header:\n{s}"
+        );
+        let parsed = parse_message(&raw).unwrap();
+        assert_eq!(parsed.headers.subject, "Hi Bcc: x@y");
+        assert!(parsed.headers.bcc.is_empty());
+    }
+
+    /// Emoji sequences and RTL text survive byte for byte: ZWJ, RLM and the
+    /// variation selector are Cf/Mn, not Cc.
+    #[test]
+    fn subject_keeps_emoji_sequences_and_rtl_marks() {
+        for subject in [
+            "👨‍👩‍👧 Familie",
+            "🏳️‍🌈 Regenbogen",
+            "שלום\u{200F} עולם",
+            "مرحبا\u{061C} بالعالم",
+        ] {
+            assert_eq!(sanitize_subject(subject), subject, "unchanged: {subject:?}");
+            let (_, raw) = build_message(&outgoing_with_subject(subject)).unwrap();
+            let parsed = parse_message(&raw).unwrap();
+            assert_eq!(parsed.headers.subject, subject, "round trip: {subject:?}");
+        }
+    }
+
+    /// TAB folds to one space, other Cc characters are dropped, and a run of
+    /// breaks/tabs and the spaces around it never leaves two spaces.
+    #[test]
+    fn subject_folds_tab_and_drops_other_control_characters() {
+        assert_eq!(sanitize_subject("a\t\tb"), "a b");
+        assert_eq!(sanitize_subject("a\r\n\t b"), "a b");
+        assert_eq!(sanitize_subject("a  \r\nb"), "a b");
+        assert_eq!(sanitize_subject("a\u{0007}b"), "ab");
+        assert_eq!(sanitize_subject("a\u{0085}b"), "ab");
+        assert_eq!(sanitize_subject("\r\nHallo"), "Hallo");
+        assert_eq!(sanitize_subject("Hallo\r\n"), "Hallo");
+        // Two typed spaces are not a control character and stay as typed.
+        assert_eq!(sanitize_subject("a  b"), "a  b");
+        // A subject without Cc is returned unchanged, byte for byte.
+        assert_eq!(sanitize_subject("Grüße  aus  Kiel"), "Grüße  aus  Kiel");
     }
 }

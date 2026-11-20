@@ -194,6 +194,13 @@ final class AppModel {
         await splits.load()
     }
 
+    /// N2 aus dem Audit M2: before the process ends, send the `mark_read`s the
+    /// label window still holds back. `applicationShouldTerminate` waits for
+    /// this (at most 2 s), then lets the app quit.
+    func prepareForTermination() async {
+        await mailbox.flushBeforeTermination()
+    }
+
     func shutdown() {
         client?.shutdown()
         PerfLog.shared.write("host_shutdown")

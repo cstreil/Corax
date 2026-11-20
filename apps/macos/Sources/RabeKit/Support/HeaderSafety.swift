@@ -14,20 +14,35 @@ import Foundation
 public enum HeaderSafety {
     /// A Subject with the line breaks folded to spaces and every other control
     /// character removed.
+    ///
+    /// N1 aus dem Audit M2: only **Cc** goes. `CharacterSet.controlCharacters`
+    /// holds Cc *and* Cf, and removing Cf broke emoji sequences (ZWJ) and RTL
+    /// text (RLM, ALM) — including in replies to a foreign subject. The core
+    /// applies the same rule in `build_message` (`sanitize_subject`).
     public static func subject(_ raw: String) -> String {
         guard raw.unicodeScalars.contains(where: isControl) else { return raw }
+        let scalars = Array(raw.unicodeScalars)
         var out = String.UnicodeScalarView()
-        out.reserveCapacity(raw.unicodeScalars.count)
-        var lastWasSpace = true   // no leading space, also not from `\r\n`
-        for scalar in raw.unicodeScalars {
-            if isLineBreak(scalar) || scalar.value == 0x09 {
-                // A run of breaks (`\r\n`) or a tab folds to one space.
-                if !lastWasSpace { out.append(" "); lastWasSpace = true }
+        out.reserveCapacity(scalars.count)
+        var i = 0
+        while i < scalars.count {
+            let scalar = scalars[i]
+            if isFoldableBreak(scalar) {
+                // A run of breaks, tabs and the spaces around it folds to one
+                // space; a subject without a break keeps its typed spaces.
+                while i < scalars.count, isFoldableBreak(scalars[i]) || scalars[i].value == 0x20 {
+                    i += 1
+                }
+                while out.last?.value == 0x20 { out.removeLast() }
+                if !out.isEmpty { out.append(" ") }
                 continue
             }
-            if isControl(scalar) { continue }
+            if isControl(scalar) {
+                i += 1
+                continue
+            }
             out.append(scalar)
-            lastWasSpace = scalar.value == 0x20 || scalar.value == 0x09
+            i += 1
         }
         return String(out).trimmingCharacters(in: .whitespaces)
     }
@@ -52,13 +67,20 @@ public enum HeaderSafety {
 
     // MARK: - Kleinigkeiten
 
-    private static let lineBreaks = CharacterSet(charactersIn: "\n\r\u{0085}\u{2028}\u{2029}")
-    private static let control = CharacterSet.controlCharacters.union(lineBreaks)
     private static let forbiddenAddressScalars =
         CharacterSet.controlCharacters
             .union(.whitespacesAndNewlines)
             .union(CharacterSet(charactersIn: "<>,;\"\\()"))
 
-    private static func isLineBreak(_ scalar: Unicode.Scalar) -> Bool { lineBreaks.contains(scalar) }
-    private static func isControl(_ scalar: Unicode.Scalar) -> Bool { control.contains(scalar) }
+    /// CR, LF and TAB: the three Cc characters that fold to a space.
+    private static func isFoldableBreak(_ scalar: Unicode.Scalar) -> Bool {
+        scalar.value == 0x0D || scalar.value == 0x0A || scalar.value == 0x09
+    }
+
+    /// Unicode general category Cc: U+0000–U+001F, U+007F and U+0080–U+009F.
+    /// Deliberately not `CharacterSet.controlCharacters`, which also holds Cf.
+    private static func isControl(_ scalar: Unicode.Scalar) -> Bool {
+        let value = scalar.value
+        return value <= 0x1F || (0x7F...0x9F).contains(value)
+    }
 }

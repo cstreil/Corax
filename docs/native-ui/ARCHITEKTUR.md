@@ -208,6 +208,7 @@ Messung: `rabe-host` loggt Zeitstempel (`tracing`, Ziel `perf`), UIs loggen Erst
 4. **HTML ohne WebEngine unter Linux** sieht bei Newsletter-HTML schlechter aus → Knopf „Original anzeigen“ ist Pflicht in M1.
 5. **Doppelte UI-Arbeit** über zwei Plattformen; Mitigation: Store-Logik (Paging, optimistische Aktionen, Undo) in `rabe-host` halten, wo sie plattformneutral ist — aber erst, wenn beide UIs sie wirklich brauchen.
 6. **AGPL-3.0-only** gilt für die neuen Apps weiter (abgeleitetes Werk).
+7. **Undo bei sehr großen Gruppen (W7):** `undo_last` fasst nur Aktionen ±150 ms um die jüngste; ab etwa 750 Threads in einem Aufruf bleibt ein Rest zurück. Die App lehnt Gruppen über 500 Threads ab (`GroupActionLimit`). Der Kern-Fix (Gesten-ID für Undo) ist vorgemerkt für den Moment, in dem Comail-Code ersetzt wird.
 
 ## 8a. Ergebnis M2 (2026-11-20, `Work/Tasks/2026-11-19-rabe-native-m2/`)
 
@@ -228,3 +229,10 @@ Messung: `rabe-host` loggt Zeitstempel (`tracing`, Ziel `perf`), UIs loggen Erst
 - **Auflagen:** `⌘U` fragt vor dem Abmelden (Toast „Abmelden"), Ziehen eines Termins mit Teilnehmenden mailt erst nach Klick, `relabel_auto` aus der Palette fragt (Kosten), MCP-Hinweis „Eintrag heißt comail und ersetzt den der Tauri-App".
 - **K1/K2:** `maxHTMLBytes` zählt jetzt Bytes; Tag-Namen sind unabhängig von der Schreibweise (`<B>`, `<SCRIPT>`); alte Vorschau-Ordner werden nur noch bei totem Prozess gelöscht.
 - **W7 gemessen (Sandbox, `rabe-cli`, ohne UI):** 110 Threads → 25 ms Streuung, Undo vollständig; 810 Threads → Aktionen über 158 ms, Undo holt 780 von 810 zurück (30 bleiben archiviert). Ursache: `perform_action` schreibt je Thread; `undo_last` nimmt nur Aktionen ±150 ms um die jüngste. Fix wäre eine Gesten-ID im Kern (Freigabe des Nutzers).
+
+## 8c. M2.7 — Kern-Betreff, Gruppengrenze, N1/N2 (2026-11-20, `BERICHT-M2.7.md`)
+
+- **Kern:** `mime::sanitize_subject` in `build_message` entfernt nur Cc (CR/LF/TAB → ein Leerzeichen, übrige Cc weg); Cf (ZWJ, Bidi-Marken, Variationsselektoren) bleibt. Anzeigenamen brauchen das nicht: `mail-builder` schreibt sie über `rfc2047_encode`, das CR/LF verwirft.
+- **N1:** `HeaderSafety.subject` nutzt nicht mehr `CharacterSet.controlCharacters` (das enthält Cc **und** Cf), sondern eine eigene Cc-Prüfung; Emoji-Sequenzen und RTL-Text bleiben, auch in „Re: " auf einen fremden Betreff.
+- **N2:** `applicationShouldTerminate` schreibt ausstehende `mark_read`-Tickets vor dem Beenden (`MailboxStore.flushBeforeTermination`, höchstens 2 s).
+- **W7:** `GroupActionLimit.maxThreads = 500`; Gruppenaktionen darüber werden vor dem Kernaufruf mit Hinweis abgelehnt, `⌘A` darf weiter mehr wählen.
