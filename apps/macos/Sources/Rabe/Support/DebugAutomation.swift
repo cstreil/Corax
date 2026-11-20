@@ -27,6 +27,7 @@ enum DebugAutomation {
             MainActor.assumeIsolated { run(command) }
         }
         PerfLog.shared.write("debug_automation installed")
+        AIWalkthrough.install()
     }
 
     private static let keyCodes: [String: UInt16] = [
@@ -39,8 +40,10 @@ enum DebugAutomation {
 
     private static func run(_ command: String) {
         PerfLog.shared.write("debug_cmd \(command)")
+        // M2.5: commands without an argument (`contextmenu`, `folders`) are valid.
         let parts = command.split(separator: ":", maxSplits: 1).map(String.init)
-        guard parts.count == 2 else { return }
+        guard !parts.isEmpty, !parts[0].isEmpty else { return }
+        let argument = parts.count > 1 ? parts[1] : ""
         switch parts[0] {
         case "key":
             let spec = parts[1].split(separator: ":").map(String.init)
@@ -69,6 +72,27 @@ enum DebugAutomation {
                 var f = w.frame; f.origin.y += f.height - wh[1]; f.size = NSSize(width: wh[0], height: wh[1])
                 w.setFrame(f, display: true)
             }
+        case "winpos":
+            // winpos:x,y,w,h — fixes the main window, so a screen capture for a
+            // menu or the Quick Look panel covers exactly this app (M2.5).
+            let values = parts[1].split(separator: ",").compactMap { Double($0) }
+            if values.count == 4, let w = NSApp.windows.first(where: { $0.title == Instance.title }) {
+                w.setFrame(NSRect(x: values[0], y: values[1], width: values[2], height: values[3]), display: true)
+                PerfLog.shared.write("winpos \(Int(values[0])),\(Int(values[1])) \(Int(values[2]))x\(Int(values[3]))")
+            }
+        case "focuswin":
+            // focuswin:<title> — makes that window the key window of this app
+            // without activating it, so `key:`/`type:` land in the right place
+            // (the compose window is not key when it appears while the app is
+            // in the background).
+            if let w = NSApp.windows.first(where: { $0.title == parts[1] && $0.isVisible }) {
+                w.makeKeyAndOrderFront(nil)
+                PerfLog.shared.write("focuswin title=\(parts[1]) id=\(w.windowNumber) "
+                                     + "key=\(NSApp.keyWindow === w ? 1 : 0) "
+                                     + "responder=\(String(describing: w.firstResponder.map { type(of: $0) }))")
+            } else {
+                PerfLog.shared.write("focuswin missing=\(parts[1])")
+            }
         case "focuslist":
             AppModel.shared.mailbox.focusList()
         case "droplist":
@@ -87,6 +111,107 @@ enum DebugAutomation {
             } else {
                 PerfLog.shared.write("savedialog no_attachment")
             }
+        case "windowid":
+            // windowid — logs every visible window with its number, title and
+            // size, so a walkthrough can screenshot the right one.
+            PerfLog.shared.write("windows total=\(NSApp.windows.count) active=\(NSApp.isActive)")
+            for w in NSApp.windows where w.isVisible {
+                PerfLog.shared.write("window id=\(w.windowNumber) title=\(w.title) size=\(Int(w.frame.width))x\(Int(w.frame.height)) "
+                                     + "origin=\(Int(w.frame.origin.x)),\(Int(w.frame.origin.y))")
+            }
+        case "settings":
+            // settings:<page> — opens ⌘, on that page (M2.1 walkthrough);
+            // settings:scenario — create/change/delete per editor;
+            // settings:signout — removes the first sandbox account.
+            if parts[1] == "scenario" {
+                Task { await SettingsWalkthrough.run() }
+            } else if parts[1] == "signout" {
+                Task { await SettingsWalkthrough.signOutFirstAccount() }
+            } else if let page = SettingsPage(rawValue: parts[1]) {
+                SettingsWalkthrough.open(page)
+            }
+        case "calendar":
+            // calendar:open | close | mode:<day|week|month> | today | page:<n>
+            // | scenario | perf | state — the M2.2 walkthrough (sandbox only).
+            let spec = parts[1].split(separator: ":", maxSplits: 1).map(String.init)
+            switch spec.first ?? "" {
+            case "open": CalendarWalkthrough.open()
+            case "close":
+                AppModel.shared.calendarOpen = false
+                AppModel.shared.mailbox.focusList()
+            case "mode": if spec.count == 2 { CalendarWalkthrough.setMode(spec[1]) }
+            case "today": CalendarWalkthrough.today()
+            case "page": if spec.count == 2 { CalendarWalkthrough.page(Int(spec[1]) ?? 1) }
+            case "scenario": Task { await CalendarWalkthrough.runScenario() }
+            case "perf": Task { await CalendarWalkthrough.runPerf() }
+            case "seedday": Task { await CalendarWalkthrough.seedDay(count: Int(spec.count > 1 ? spec[1] : "6") ?? 6) }
+            case "join": Task { await CalendarWalkthrough.join(dry: spec.count > 1 && spec[1] == "dry") }
+            case "sidebar": CalendarWalkthrough.sidebar()
+            case "daylist":
+                if spec.count > 1, spec[1] == "close" {
+                    NotificationCenter.default.post(name: .rabeCalendarDayList, object: nil,
+                                                    userInfo: ["day": Int64(-1)])
+                } else {
+                    CalendarWalkthrough.dayList(spec.count > 1 ? spec[1] : "")
+                }
+            case "state": CalendarWalkthrough.state()
+            default: PerfLog.shared.write("calendar_cmd unknown=\(parts[1])")
+            }
+        case "ai":
+            // ai:status | summary | ask:<Frage> | draft:<Anweisung> | proofread
+            // | undo | filter:<Text> | palette:<Text> | settings | state — the
+            // M2.3 walkthrough (sandbox only, hook builds only).
+            let spec = parts[1].split(separator: ":", maxSplits: 1).map(String.init)
+            let argument = spec.count > 1 ? spec[1] : ""
+            switch spec.first ?? "" {
+            case "status": Task { await AIWalkthrough.status() }
+            case "summary": Task { await AIWalkthrough.summarize() }
+            case "ask": Task { await AIWalkthrough.ask(argument) }
+            case "draft": Task { await AIWalkthrough.draft(argument) }
+            case "draftwin": Task { await AIWalkthrough.draftWindow(argument) }
+            case "accept": Task { await AIWalkthrough.acceptProofread() }
+            case "proofread": Task { await AIWalkthrough.proofread() }
+            case "undo": Task { await AIWalkthrough.undo() }
+            case "filter": Task { await AIWalkthrough.filter(argument) }
+            case "palette": Task { await AIWalkthrough.palette(argument) }
+            case "settings": AIWalkthrough.settingsPage()
+            case "state": AIWalkthrough.state()
+            case "stream": AIWalkthrough.stream(argument)
+            default: PerfLog.shared.write("ai_cmd unknown=\(parts[1])")
+            }
+        case "statusprobe":
+            // M2.4: a plain AppKit status item next to the SwiftUI one, to tell
+            // "the MenuBarExtra scene never ran" from "no status item renders".
+            MenuBarProbe.install()
+        case "mailto":
+            // M2.4: the same parser/composer as `onOpenURL`, without asking
+            // LaunchServices which app owns the scheme (it could be the real
+            // instance or Tauri).
+            // The dispatcher splits at the first ":", so the scheme is gone.
+            AIWalkthrough.mailto("mailto:" + parts[1])
+        case "mail":
+            // mail:code — copy a one-time code; mail:unsubscribe — the ⌘U path
+            // for the open/selected thread.
+            switch parts[1] {
+            case "code":
+                AppModel.shared.copyLatestVerificationCode()
+                PerfLog.shared.write("mail code requested")
+            case "unsubscribe":
+                guard let id = AppModel.shared.mailbox.expandedId ?? AppModel.shared.mailbox.selectedId else {
+                    PerfLog.shared.write("mail unsubscribe no_thread")
+                    return
+                }
+                AppModel.shared.unsubscribeThread(id)
+                PerfLog.shared.write("mail unsubscribe thread=\(id)")
+            default:
+                PerfLog.shared.write("mail unknown=\(parts[1])")
+            }
+        case "avatars":
+            AIWalkthrough.avatars(parts[1])
+        case "window":
+            AIWalkthrough.window(parts[1])
+        case "reminder":
+            AIWalkthrough.reminder()
         case "writegate":
             // writegate:off|on — shows the real instance's read-only state in
             // the sandbox (P2g screenshots). Policy stays keyed on the process
@@ -106,12 +231,37 @@ enum DebugAutomation {
                 submenu.popUp(positioning: nil, at: NSPoint(x: 140, y: window.frame.height - 140),
                               in: window.contentView)
             }
+        case "select":
+            // M2.5: Mehrfachauswahl (all|down|up|toggle:<id>|range:<id>|none).
+            MailWalkthrough.selection(parts[1])
+        case "action":
+            // M2.5: Gruppenaktionen auf der Auswahl (archive, move:<id>, …).
+            MailWalkthrough.action(parts[1])
+        case "compose":
+            // M2.5: Anhänge, Textbausteine, Zitat, Senden-Varianten.
+            MailWalkthrough.compose(parts[1])
+        case "preview":
+            // M2.5: Quick Look (preview:attachments[:n] | preview:close).
+            if parts[1] == "close" { MailWalkthrough.closePreview() }
+            else if parts[1] == "index" { MailWalkthrough.previewIndex() }
+            else { MailWalkthrough.preview(parts[1]) }
+        case "picker":
+            // M2.5: Verschieben-/Label-/Split-Popover öffnen oder schließen.
+            MailWalkthrough.picker(parts[1])
+        case "snippet":
+            // M2.5: einen Test-Textbaustein sicherstellen (Sandbox).
+            MailWalkthrough.ensureSnippet()
+        case "contextmenu":
+            // M2.5: das Kontextmenü der Liste für einen Screenshot aufklappen.
+            MailWalkthrough.contextMenu()
+        case "folders":
+            MailWalkthrough.folds()
         case "log":
             PerfLog.shared.write("debug_log \(parts[1])")
         case "state":
             let box = AppModel.shared.mailbox
             let w = NSApp.keyWindow ?? NSApp.mainWindow
-            PerfLog.shared.write("debug_state title=\(w?.title ?? "-") key=\(NSApp.keyWindow != nil) active=\(NSApp.isActive) responder=\(String(describing: w?.firstResponder.map { type(of: $0) })) sel=\(box.selectedId ?? -1) open=\(box.expandedId ?? -1) threads=\(box.threads.count) compose=\(box.inlineCompose != nil) focus=\(box.expandedId.flatMap { box.details[$0] }.flatMap { box.focusedMessage(in: $0)?.id } ?? -1) vis=\(box.expandedId.flatMap { box.navigator?.visibleDetailRange($0) }.map { "\(Int($0.lowerBound))-\(Int($0.upperBound))" } ?? "-") frames=\(box.messageFrames.sorted { $0.value.minY < $1.value.minY }.map { "\($0.key):\(Int($0.value.minY))-\(Int($0.value.maxY))" }.joined(separator: ",")) toast=\(AppModel.shared.toasts.current?.text ?? "-") writes=\(AppModel.shared.writeAccess.allowed)")
+            PerfLog.shared.write("debug_state title=\(w?.title ?? "-") key=\(NSApp.keyWindow != nil) active=\(NSApp.isActive) responder=\(String(describing: w?.firstResponder.map { type(of: $0) })) sel=\(box.selectedId ?? -1) seln=\(box.selectedIds.count) targets=\(box.targetIds.count) open=\(box.expandedId ?? -1) threads=\(box.threads.count) compose=\(box.inlineCompose != nil) focus=\(box.expandedId.flatMap { box.details[$0] }.flatMap { box.focusedMessage(in: $0)?.id } ?? -1) vis=\(box.expandedId.flatMap { box.navigator?.visibleDetailRange($0) }.map { "\(Int($0.lowerBound))-\(Int($0.upperBound))" } ?? "-") frames=\(box.messageFrames.sorted { $0.value.minY < $1.value.minY }.map { "\($0.key):\(Int($0.value.minY))-\(Int($0.value.maxY))" }.joined(separator: ",")) toast=\(AppModel.shared.toasts.current?.text ?? "-") writes=\(AppModel.shared.writeAccess.allowed)")
         default:
             break
         }

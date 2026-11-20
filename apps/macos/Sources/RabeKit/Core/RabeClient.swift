@@ -87,6 +87,10 @@ public actor RabeClient {
         case .actionNotAllowed(let kind):
             // The kind is a fixed token from `ActionKind`, never user content.
             throw Self.refuse("\(command):\(kind)", reason: "action_not_allowed", code: "action_not_allowed")
+        case .pendingAudit:
+            // M2.1: the settings sections work in the sandbox; the real
+            // instance waits for the audit.
+            throw Self.refuse(command, reason: "pending_audit", code: "pending_audit")
         }
         let state = Self.signposter.beginInterval("invoke", "\(command, privacy: .public)")
         defer { Self.signposter.endInterval("invoke", state) }
@@ -142,14 +146,23 @@ public actor RabeClient {
         try await call("get_body", IPCArgs.GetBody(messageId: messageId))
     }
 
-    public func performAction(_ kind: ActionKind, threadIds: [Int64], wakeAt: Int64? = nil) async throws -> ActionResult {
-        let params = wakeAt.map { IPCArgs.ActionParams(wakeAt: $0) }
-        return try await call("perform_action", WithArgs(args: IPCArgs.PerformAction(kind: kind, threadIds: threadIds, params: params)))
+    public func performAction(_ kind: ActionKind, threadIds: [Int64], params: ActionParams? = nil) async throws -> ActionResult {
+        try await call("perform_action", WithArgs(args: IPCArgs.PerformAction(kind: kind, threadIds: threadIds, params: params)))
     }
 
     public func undoLast() async throws -> Bool {
         let result: UndoResult = try await call("undo_last")
         return result.undone
+    }
+
+    /// M2.5: "Verschieben" needs the IMAP folders of the account.
+    public func listFolders(accountId: Int64?) async throws -> [FolderInfo] {
+        try await call("list_folders", IPCArgs.ListFolders(accountId: accountId))
+    }
+
+    /// M2.5: "Jetzt synchronisieren". The core answers `null`.
+    public func syncNow(accountId: Int64?) async throws {
+        try await send("sync_now", IPCArgs.ListFolders(accountId: accountId))
     }
 
     public func accounts() async throws -> [Account] { try await call("list_accounts") }
@@ -177,8 +190,8 @@ public actor RabeClient {
         try await send("delete_draft", IPCArgs.DeleteDraft(draftId: id))
     }
 
-    public func queueSend(draftId: Int64) async throws -> QueueSendResult {
-        try await call("queue_send", WithArgs(args: IPCArgs.QueueSend(draftId: draftId)))
+    public func queueSend(draftId: Int64, sendAt: Int64? = nil) async throws -> QueueSendResult {
+        try await call("queue_send", WithArgs(args: IPCArgs.QueueSend(draftId: draftId, sendAt: sendAt)))
     }
 
     public func cancelSend(actionId: Int64) async throws -> Bool {
@@ -194,6 +207,24 @@ public actor RabeClient {
     public func saveAttachment(_ id: Int64, to path: String) async throws {
         // dispatch.rs deserializes with `rename_all = "camelCase"`: `attachmentId`.
         try await send("save_attachment", IPCArgs.SaveAttachment(attachmentId: id, dest: path))
+    }
+
+    // MARK: M2.4 — avatars, verification codes, unsubscribing
+
+    public func senderAvatar(_ email: String) async throws -> String? {
+        try await call("sender_avatar", IPCArgs.SenderAvatar(email: email))
+    }
+
+    public func latestVerificationCode(maxAgeMinutes: Int? = nil) async throws -> VerificationCode? {
+        try await call("latest_verification_code", IPCArgs.VerificationCode(maxAgeMinutes: maxAgeMinutes))
+    }
+
+    public func threadUnsubscribeMessage(threadId: Int64) async throws -> Int64? {
+        try await call("thread_unsubscribe_message", IPCArgs.ThreadID(threadId: threadId))
+    }
+
+    public func unsubscribeMessage(messageId: Int64) async throws -> UnsubscribeOutcome {
+        try await call("unsubscribe_message", IPCArgs.MessageID(messageId: messageId))
     }
 
     public func testConnection(_ args: AddPasswordAccountArgs) async throws -> ConnectionTestResult {
@@ -254,19 +285,29 @@ enum IPCArgs {
     }
     struct GetThread: Encodable, Sendable { let threadId: Int64 }
     struct GetBody: Encodable, Sendable { let messageId: Int64 }
-    /// `PerformActionArgs.params` (snooze: wakeAt, move: targetFolderId, add/remove_label: labelId).
-    struct ActionParams: Encodable, Sendable { var wakeAt: Int64? }
+    /// `PerformActionArgs` (`params`: snooze: wakeAt, move: targetFolderId,
+    /// add/remove_label: labelId).
     struct PerformAction: Encodable, Sendable {
         let kind: ActionKind
         let threadIds: [Int64]
         let params: ActionParams?
     }
+    /// `list_folders` and `sync_now` share the same single optional argument.
+    struct ListFolders: Encodable, Sendable { let accountId: Int64? }
     public struct UnreadCounts: Encodable, Sendable { let accountId: Int64? }
     struct Search: Encodable, Sendable { let query: String; let accountId: Int64?; let limit: Int }
     struct SuggestContacts: Encodable, Sendable { let query: String; let limit: Int }
     struct DeleteDraft: Encodable, Sendable { let draftId: Int64 }
-    struct QueueSend: Encodable, Sendable { let draftId: Int64 }
+    struct QueueSend: Encodable, Sendable { let draftId: Int64; let sendAt: Int64? }
     struct CancelSend: Encodable, Sendable { let actionId: Int64 }
     struct OpenAttachment: Encodable, Sendable { let attachmentId: Int64 }
     struct SaveAttachment: Encodable, Sendable { let attachmentId: Int64; let dest: String }
+
+    // M2.4
+    struct SenderAvatar: Encodable, Sendable { let email: String }
+    /// `maxAgeMinutes?: number` in `types.ts`; `Option<i64>` with a default in
+    /// the dispatcher, so it may be left out.
+    struct VerificationCode: Encodable, Sendable { let maxAgeMinutes: Int? }
+    struct ThreadID: Encodable, Sendable { let threadId: Int64 }
+    struct MessageID: Encodable, Sendable { let messageId: Int64 }
 }

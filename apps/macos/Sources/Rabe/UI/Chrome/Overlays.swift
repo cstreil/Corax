@@ -20,6 +20,12 @@ struct CommandPalette: View {
             .sorted { ($0.title.lowercased().hasPrefix(q) ? 0 : 1) < ($1.title.lowercased().hasPrefix(q) ? 0 : 1) }
     }
 
+    /// M2.3: free text goes to `ai_command` (`lib/aiCommand.ts`). The row is
+    /// offered below the matching commands, so a normal command still wins.
+    private var aiRowVisible: Bool { !query.trimmingCharacters(in: .whitespaces).isEmpty }
+
+    private var rowCount: Int { matches.count + (aiRowVisible ? 1 : 0) }
+
     var body: some View {
         ZStack(alignment: .top) {
             Color.black.opacity(0.18).ignoresSafeArea().onTapGesture { close() }
@@ -56,6 +62,25 @@ struct CommandPalette: View {
                                 .buttonStyle(.plain)
                                 .id(i)
                             }
+                            if aiRowVisible {
+                                Button { index = matches.count; run() } label: {
+                                    HStack(spacing: 8) {
+                                        Image(systemName: "sparkles").font(.system(size: 11))
+                                            .foregroundStyle(theme.accent.color)
+                                        Text("Mit KI ausführen: „\(query.trimmingCharacters(in: .whitespaces))“")
+                                            .lineLimit(1)
+                                        Spacer()
+                                        Text("↵").font(.system(size: 10, weight: .semibold))
+                                            .foregroundStyle(theme.ink3.color)
+                                    }
+                                    .padding(.horizontal, 10).frame(height: 30)
+                                    .background(RoundedRectangle(cornerRadius: 7).fill(index == matches.count ? theme.sel.color : .clear))
+                                    .contentShape(Rectangle())
+                                }
+                                .buttonStyle(.plain)
+                                .id(matches.count)
+                                .help("Den Text an die KI geben: Termin, Mail, Suche oder Ansicht")
+                            }
                         }
                         .padding(6)
                     }
@@ -74,6 +99,12 @@ struct CommandPalette: View {
     }
 
     private func run() {
+        let trimmed = query.trimmingCharacters(in: .whitespaces)
+        if aiRowVisible, index == matches.count, !trimmed.isEmpty {
+            close()
+            model.runAICommand(trimmed)
+            return
+        }
         guard matches.indices.contains(index) else { return }
         let action = matches[index]
         close()
@@ -307,37 +338,5 @@ struct AccountSheet: View {
             AppModel.shared.accountSheetOpen = false
             await AppModel.shared.mailbox.bootstrap()
         } catch { status = RabeClientError.from(error).errorDescription }
-    }
-}
-
-// MARK: - Settings window (⌘,), M1 items only
-
-struct SettingsView: View {
-    private var model: AppModel { AppModel.shared }
-    private let accents = ["violet", "blue", "teal", "green", "amber", "orange", "rose", "graphite"]
-    private let accentNames = ["violet": "Theme-Standard", "blue": "Blau", "teal": "Petrol", "green": "Grün", "amber": "Bernstein",
-                               "orange": "Orange", "rose": "Rosé", "graphite": "Graphit"]
-
-    var body: some View {
-        let s = model.settings
-        Form {
-            Picker("Darstellung", selection: Binding(get: { s.themeID }, set: { s.set("theme", $0.rawValue) })) {
-                ForEach(ThemeID.allCases) { Text($0.title).tag($0) }
-            }
-            Picker("Akzentfarbe", selection: Binding(get: { s.accentKey }, set: { s.set("accentColor", $0) })) {
-                ForEach(accents, id: \.self) { Text(accentNames[$0] ?? $0).tag($0) }
-            }
-            Picker("Senden rückgängig machen", selection: Binding(get: { s.undoSendSeconds }, set: { s.set("undoSendSeconds", $0) })) {
-                ForEach([5, 10, 20, 30], id: \.self) { Text("\($0) Sekunden").tag($0) }
-            }
-            Toggle("Bilder aus dem Internet automatisch laden", isOn: Binding(get: { s.loadRemoteImages }, set: { s.set("loadRemoteImages", $0) }))
-            Toggle("Mitteilungen bei neuer E-Mail", isOn: Binding(get: { s.notificationsEnabled }, set: { s.set("notificationsEnabled", $0) }))
-            if model.writeAccess.showsReadOnlyHint {
-                Text("Nur-Lesen-Modus: Einstellungen lassen sich nicht ändern.").font(.system(size: 11)).foregroundStyle(.secondary)
-            }
-        }
-        .formStyle(.grouped)
-        .frame(width: 440)
-        .disabled(!s.loaded)
     }
 }

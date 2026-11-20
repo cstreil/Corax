@@ -13,12 +13,22 @@ struct MainView: View {
         let theme = model.theme
         ZStack(alignment: .bottom) {
             VStack(spacing: 0) {
-                ToolbarRow()
-                listArea
-                HintBar()
+                if model.calendarOpen {
+                    CalendarScreenView()
+                } else {
+                    ToolbarRow()
+                    listArea
+                    HintBar()
+                }
             }
             ToastView().padding(.bottom, 50)
             if model.paletteOpen { CommandPalette().transition(.opacity) }
+            // M2.5: die Auswahl-Dialoge (Verschieben, Label, Split, Löschen).
+            if model.moveOpen { MovePickerView().transition(.opacity) }
+            if model.labelOpen { LabelPickerView().transition(.opacity) }
+            if model.splitOpen { SplitPickerView().transition(.opacity) }
+            if model.permanentDeleteOpen { PermanentDeleteDialogView().transition(.opacity) }
+            if model.askOpen { AskPanelView().transition(.opacity) }
             if model.shortcutsOpen { ShortcutSheet().transition(.opacity) }
             if model.perfOverlay { PerfOverlayView().frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing).padding(.top, 60).padding(.trailing, 14) }
         }
@@ -32,6 +42,7 @@ struct MainView: View {
             AccountSheet().environment(\.theme, theme)
         }
         .animation(Motion.animation, value: model.paletteOpen)
+        .animation(Motion.animation, value: model.askOpen)
         .animation(Motion.animation, value: model.shortcutsOpen)
         .animation(Motion.animation, value: theme)
         .onAppear {
@@ -46,8 +57,13 @@ struct MainView: View {
         } else if !box.loadedOnce {
             EmptyState(title: model.coreReady ? "Liste wird geladen …" : "Rabe startet …", detail: nil, spinner: true)
         } else if !box.hasThreads && !box.isLoading {
-            EmptyState(title: box.searchQuery != nil ? "Keine Treffer" : "Alles erledigt",
-                       detail: box.searchQuery != nil ? "Esc leert die Suche." : "Inbox Zero. Gönn dir einen Kaffee.")
+            if box.searchQuery != nil {
+                EmptyState(title: "Keine Treffer", detail: "Esc leert die Suche."
+                    // Tauri's InboxZero: the same hint row the list shows.
+                    + "\n\nMit / eine neue Suche beginnen.")
+            } else {
+                InboxZeroView(viewTitle: box.tabs.first(where: { $0.id == box.currentTabID })?.title ?? box.title)
+            }
         } else {
             MailListContainer()
         }
@@ -62,7 +78,8 @@ struct MailListContainer: View {
         let rows = box.rows
         let ms = (CACurrentMediaTime() - t0) * 1000
         if ms > 4 { PerfLog.shared.write("slow_rows ms=\(Int(ms)) rows=\(rows.count)") }
-        return MailListView(rows: rows, selectedId: box.selectedId, expandedId: box.expandedId,
+        return MailListView(rows: rows, selectedId: box.selectedId, selectedIds: box.selectedIds,
+                            expandedId: box.expandedId,
                      theme: AppModel.shared.theme, contentStamp: stamp, focusStamp: box.focusListRequest)
             .onAppear { PerfLog.shared.write("first_list_visible ms=\(PerfLog.shared.elapsedMilliseconds) rows=\(box.threads.count)") }
     }
@@ -111,6 +128,23 @@ struct ToolbarRow: View {
                     .onKeyPress(.escape) { box.endSearch(); searchFocused = false; box.focusList(); return .handled }
                     .accessibilityLabel("Suchen")
                 if !searchFocused && box.searchText.isEmpty { KeyCap("/") }
+                Button { model.runAISearchFilter() } label: {
+                    Image(systemName: "sparkles").font(.system(size: 11))
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(theme.ink3.color)
+                .help("KI-Filter für die Suche (⌘O)")
+                .accessibilityLabel("KI-Filter für die Suche")
+                .popover(isPresented: Binding(
+                    get: { model.aiFilterQuestion != nil },
+                    set: { if !$0 { model.aiFilterQuestion = nil } })) {
+                    if let question = model.aiFilterQuestion {
+                        AISearchFilterCard(question: question,
+                                           onAnswer: { answer in model.answerAIFilter(question, answer: answer) },
+                                           onCancel: { model.aiFilterQuestion = nil })
+                            .environment(\.theme, theme)
+                    }
+                }
             }
             .padding(.horizontal, 8)
             .frame(width: searchFocused || !box.searchText.isEmpty ? 260 : 180, height: 28)
@@ -127,6 +161,12 @@ struct ToolbarRow: View {
         .background(theme.bar.color)
         .overlay(alignment: .bottom) { Rectangle().fill(theme.line.color).frame(height: 0.5) }
         .onChange(of: model.searchFocusRequest) { _, _ in searchFocused = true }
+        .onChange(of: model.searchAIRequest) { _, _ in
+            // ⌘O from the menu or the palette: the search field's text is the
+            // request to the filter.
+            guard model.aiFilterQuestion == nil else { return }
+            model.runAISearchFilter()
+        }
     }
 
     /// Title = current view; the menu switches view and account (no sidebar).
@@ -231,8 +271,11 @@ struct HintBar: View {
                 if let sync = model.sync.summary {
                     HStack(spacing: 6) {
                         if sync != Strings.offline { ProgressView().controlSize(.mini) } else { Image(systemName: "wifi.slash") }
-                        Text(sync)
+                        Text(sync).lineLimit(1).truncationMode(.tail)
                     }
+                    // Capped so a long sync line never runs into the centred
+                    // key hints of the same bar (seen with "Konto muss neu verbunden werden").
+                    .frame(maxWidth: 230, alignment: .leading)
                     .accessibilityElement(children: .combine)
                 }
                 Spacer()

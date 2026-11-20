@@ -11,6 +11,28 @@ final class ComposeStoreTests: XCTestCase {
                      cc: [], subject: "s", body: "x", client: core, toasts: ToastCenter(), settings: SettingsStore())
     }
 
+    /// W1 aus dem Audit M2: Ein Zeilenumbruch im Betreff wird von
+    /// `mail-builder` roh geschrieben und wäre eine zweite Header-Zeile
+    /// (`Bcc: …`, `Reply-To: …`). Er darf den Entwurf nicht verlassen.
+    func testSubjectLosesHeaderLineBreaksBeforeSaving() async {
+        let core = FakeCore()
+        let draft = ComposeDraft(mode: .new, accountId: 1, inReplyTo: nil,
+                                 to: [Address(name: nil, email: "a@b.de")], cc: [],
+                                 subject: "Hallo\r\nBcc: opfer@example.org",
+                                 body: "x", client: core, toasts: ToastCenter(), settings: SettingsStore())
+        XCTAssertEqual(draft.subject, "Hallo Bcc: opfer@example.org")
+        _ = await draft.saveNow()
+        let saved = await core.savedDrafts.last
+        XCTAssertEqual(saved?.subject, "Hallo Bcc: opfer@example.org")
+        XCTAssertFalse(saved?.subject.contains("\r") ?? true)
+        XCTAssertFalse(saved?.subject.contains("\n") ?? true)
+        // Nothing else is lost: a subject without control characters stays as typed.
+        let plain = ComposeDraft(mode: .new, accountId: 1, inReplyTo: nil, to: [], cc: [],
+                                 subject: "Grüße  aus  Kiel", body: "", client: core,
+                                 toasts: ToastCenter(), settings: SettingsStore())
+        XCTAssertEqual(plain.subject, "Grüße  aus  Kiel")
+    }
+
     func testOneSaveKeepsTheDraftId() async {
         let core = FakeCore()
         let draft = makeDraft(core)

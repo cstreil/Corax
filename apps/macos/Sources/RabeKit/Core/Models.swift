@@ -32,7 +32,7 @@ public struct Account: Codable, Sendable, Identifiable, Hashable {
     public let id: Int64
     public let email: String
     public let displayName: String?
-    let provider: String
+    public let provider: String
     let authKind: String
     let syncState: String
 
@@ -99,6 +99,14 @@ public struct MessageDetail: Codable, Sendable, Identifiable, Hashable {
     public let attachments: [AttachmentMeta]
     public let sendState: String?
     let sendError: String?
+    /// Raw `List-Unsubscribe` header (M2.4); nil when the message has none.
+    public let listUnsubscribe: String?
+    /// `List-Unsubscribe=One-Click` marks the HTTPS URI as an RFC 8058 endpoint.
+    public let listUnsubscribePost: String?
+
+    /// The thread header offers "Abmelden" for such a message (Tauri's
+    /// `latestUnsubscribeMessage`).
+    public var canUnsubscribe: Bool { !(listUnsubscribe ?? "").isEmpty }
 
     public var dateValue: Date { Date(timeIntervalSince1970: Double(date) / 1000) }
 }
@@ -112,6 +120,10 @@ public struct Label: Codable, Sendable, Identifiable, Hashable {
     public let id: Int64
     public let name: String
     public let color: String
+    /// IMAP keyword atom this label maps to on the server.
+    public let keyword: String
+    public let position: Int64
+    /// System auto-category (Marketing/News/Social/Pitch); local-only.
     public let isAuto: Bool?
 }
 
@@ -119,8 +131,30 @@ public struct SplitRule: Codable, Sendable, Identifiable, Hashable {
     public let id: Int64
     public let name: String
     public let position: Int64
-    /// Route target; `nil` means the rule is its own tab.
+    /// Legacy flat query; evaluated only when `condition` is unset.
+    public var query: SplitRuleQuery
+    /// Typed condition tree; replaces `query` when present.
+    public var condition: RuleCondition?
+    /// Route target; `nil` means the rule is its own tab ("important", "other",
+    /// "label:<id>").
     public let target: String?
+    /// Optional AI check (decision model, else the chat model).
+    public var ai: AiCheck?
+    /// Badge every conversation in the tab, not only the unread ones.
+    public var countAll: Bool
+
+    public init(id: Int64, name: String, position: Int64, query: SplitRuleQuery = SplitRuleQuery(),
+                condition: RuleCondition? = nil, target: String? = nil, ai: AiCheck? = nil,
+                countAll: Bool = false) {
+        self.id = id
+        self.name = name
+        self.position = position
+        self.query = query
+        self.condition = condition
+        self.target = target
+        self.ai = ai
+        self.countAll = countAll
+    }
 }
 
 public struct UnreadCounts: Codable, Sendable {
@@ -139,20 +173,53 @@ public struct SyncBackground: Codable, Sendable, Hashable {
     public let failed: Int64
 }
 
-struct SyncStatus: Codable, Sendable, Hashable {
+public struct SyncStatus: Codable, Sendable, Hashable {
     public let accountId: Int64
     public let state: String
     let foregroundPhase: String
     public let background: SyncBackground?
 }
 
+/// `ActionKind` in `comail-core/src/models.rs`. The M2 audit released the
+/// M2.5 kinds too; `CommandPolicy.actionKinds` still keeps the door shut for
+/// kinds the UI never sends.
 public enum ActionKind: String, Codable, Sendable {
     case markRead = "mark_read"
     case markUnread = "mark_unread"
     case star, unstar, archive, unarchive, trash, snooze, unsnooze
+    // M2.5
+    case deletePermanently = "delete_permanently"
+    case spam
+    case notSpam = "not_spam"
+    case move
+    case addLabel = "add_label"
+    case removeLabel = "remove_label"
+}
+
+/// `PerformActionArgs.params` (`deny_unknown_fields` on the Rust side):
+/// `wakeAt` for snooze, `targetFolderId` for move, `labelId` for add/remove.
+public struct ActionParams: Codable, Sendable, Hashable {
+    public var wakeAt: Int64?
+    public var targetFolderId: Int64?
+    public var labelId: Int64?
+
+    public init(wakeAt: Int64? = nil, targetFolderId: Int64? = nil, labelId: Int64? = nil) {
+        self.wakeAt = wakeAt
+        self.targetFolderId = targetFolderId
+        self.labelId = labelId
+    }
 }
 
 public struct ActionResult: Codable, Sendable { public let actionIds: [Int64] }
+
+/// `FolderInfo` in the core: IMAP folder names for the move popover (M2.5).
+public struct FolderInfo: Codable, Sendable, Identifiable, Hashable {
+    public let id: Int64
+    public let accountId: Int64
+    public let imapName: String
+    public let delimiter: String?
+    public let role: String?
+}
 struct UndoResult: Codable, Sendable { let undone: Bool }
 
 public struct ContactSuggestion: Codable, Sendable, Hashable {
@@ -167,7 +234,15 @@ public struct SearchResults: Codable, Sendable { let threads: [ThreadSummary] }
 
 public enum ComposeMode: String, Codable, Sendable { case new, reply, replyAll = "reply_all", forward }
 
-public struct DraftAttachment: Codable, Sendable, Hashable { let filePath: String; let filename: String }
+public struct DraftAttachment: Codable, Sendable, Hashable {
+    public let filePath: String
+    public let filename: String
+
+    public init(filePath: String, filename: String) {
+        self.filePath = filePath
+        self.filename = filename
+    }
+}
 
 public struct SaveDraftArgs: Codable, Sendable {
     var draftId: Int64?
@@ -213,3 +288,39 @@ public struct ConnectionTestResult: Codable, Sendable { public let ok: Bool; pub
 
 /// Wrapper some commands expect: `{"args": {...}}` (`WithArgs<T>` in dispatch.rs).
 struct WithArgs<T: Encodable & Sendable>: Encodable, Sendable { let args: T }
+
+// MARK: - M2.4: verification code, unsubscribe, avatars
+
+/// `VerificationCode` in `types.ts`: the newest one-time code from the mail
+/// (`latest_verification_code`), used by the palette command.
+public struct VerificationCode: Codable, Sendable, Hashable {
+    public let code: String
+    public let messageId: Int64
+    public let threadId: Int64
+    public let sender: String
+    public let subject: String
+    public let receivedAt: Int64
+}
+
+/// `UnsubscribeOutcome` in `types.ts`, an enum-like union on the wire.
+/// "Unsubscribed" may only be claimed for `oneClick` and `mailtoSent`; a
+/// `needsBrowser` answer hands the URL to the user.
+public enum UnsubscribeOutcome: Decodable, Sendable, Equatable {
+    case oneClick
+    case mailtoSent
+    case needsBrowser(url: String)
+
+    private enum CodingKeys: String, CodingKey { case kind, url }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        switch try c.decode(String.self, forKey: .kind) {
+        case "oneClick": self = .oneClick
+        case "mailtoSent": self = .mailtoSent
+        case "needsBrowser": self = .needsBrowser(url: try c.decodeIfPresent(String.self, forKey: .url) ?? "")
+        case let other:
+            throw DecodingError.dataCorruptedError(forKey: .kind, in: c,
+                                                   debugDescription: "unbekanntes Ergebnis: \(other)")
+        }
+    }
+}

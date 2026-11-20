@@ -7,6 +7,15 @@ import os
 final class MailTableView: NSTableView {
     var onKey: ((NSEvent) -> Bool)?
     var onHover: ((Int) -> Void)?
+    /// M2.5: the right-click menu; the coordinator builds it for the row under
+    /// the pointer (and makes that row the target when it is not in the selection).
+    var onMenu: ((Int) -> NSMenu?)?
+
+    override func menu(for event: NSEvent) -> NSMenu? {
+        let row = self.row(at: convert(event.locationInWindow, from: nil))
+        guard row >= 0, row < numberOfRows else { return nil }
+        return onMenu?(row)
+    }
     private var tracking: NSTrackingArea?
 
     override var acceptsFirstResponder: Bool { true }
@@ -76,6 +85,8 @@ final class DetailCellView: NSView {
 struct MailListView: NSViewRepresentable {
     let rows: [ListRow]
     let selectedId: Int64?
+    /// M2.5: the multi-selection; the cursor row is always part of it.
+    let selectedIds: Set<Int64>
     let expandedId: Int64?
     let theme: Theme
     /// Changes when a visible thread's content changed (flags, snippet).
@@ -118,6 +129,7 @@ struct MailListView: NSViewRepresentable {
         table.dataSource = c
         table.onKey = { event in ActionDispatcher.handleListKey(event) }
         table.onHover = { [weak c] row in c?.setHover(row) }
+        table.onMenu = { [weak c] row in c?.contextMenu(row: row) }
         table.target = c
         table.action = #selector(Coordinator.clicked(_:))
         c.apply(self, animated: false)
@@ -138,6 +150,7 @@ struct MailListView: NSViewRepresentable {
         weak var scroll: NSScrollView?
         private var rows: [ListRow] = []
         private var selectedId: Int64?
+        private var selectedIds: Set<Int64> = []
         private var expandedId: Int64?
         private var theme: Theme = .paper
         private var stamp = -1
@@ -155,6 +168,9 @@ struct MailListView: NSViewRepresentable {
 
         func apply(_ view: MailListView, animated: Bool) {
             guard let table else { return }
+            // M2.4: a sender picture that arrived while the list is up repaints
+            // the visible rows (the avatar cache is not part of the view state).
+            AppModel.shared.avatars.onChange = { [weak self] in self?.refreshVisible() }
             if view.focusStamp != focusStamp {
                 focusStamp = view.focusStamp
                 DispatchQueue.main.async { table.window?.makeFirstResponder(table) }
@@ -162,7 +178,9 @@ struct MailListView: NSViewRepresentable {
             let themeChanged = view.theme != theme
             theme = view.theme
             let oldSelected = selectedId
+            let oldSelectedIds = selectedIds
             selectedId = view.selectedId
+            selectedIds = view.selectedIds
             let oldExpanded = expandedId
             expandedId = view.expandedId
 
@@ -177,7 +195,9 @@ struct MailListView: NSViewRepresentable {
                 table.insertRows(at: IndexSet(integersIn: range), withAnimation: [])
                 PerfLog.shared.write(String(format: "page_insert rows=%d added=%d ms=%.2f", rows.count, range.count,
                                             (CACurrentMediaTime() - t0) * 1000))
-                if oldSelected != selectedId { refreshRows(for: [oldSelected, selectedId].compactMap { $0 }) }
+                if oldSelected != selectedId || oldSelectedIds != selectedIds {
+                    refreshRows(for: Array(oldSelectedIds.union(selectedIds)) + [oldSelected, selectedId].compactMap { $0 })
+                }
                 return
             }
 
@@ -236,8 +256,10 @@ struct MailListView: NSViewRepresentable {
             if themeChanged || view.contentStamp != stamp {
                 stamp = view.contentStamp
                 refreshVisible()
-            } else if oldSelected != selectedId {
-                refreshRows(for: [oldSelected, selectedId].compactMap { $0 })
+            } else if oldSelected != selectedId || oldSelectedIds != selectedIds {
+                var touched = Array(oldSelectedIds.union(selectedIds))
+                touched.append(contentsOf: [oldSelected, selectedId].compactMap { $0 })
+                refreshRows(for: touched)
             }
             if oldSelected != selectedId, let id = selectedId, let row = rows.firstIndex(of: .thread(id)) {
                 if expandedId != id { table.scrollRowToVisible(row) }
@@ -522,7 +544,9 @@ struct MailListView: NSViewRepresentable {
             switch rows[row] {
             case .thread(let id):
                 view.cardPart = id == expandedId ? .top : .none
-                view.isSelectedThread = id == selectedId && id != expandedId
+                // M2.5: every selected row carries the highlight; the cursor row
+                // always does, so the action target is never invisible.
+                view.isSelectedThread = (selectedIds.contains(id) || id == selectedId) && id != expandedId
                 view.isHovered = row == hoverRow && id != expandedId
             case .detail:
                 view.cardPart = .bottom
@@ -581,7 +605,7 @@ struct MailListView: NSViewRepresentable {
                 } else {
                     v.labelInfo = nil
                 }
-                v.showActions = (row == hoverRow || id == selectedId) && id != expandedId
+                v.showActions = (row == hoverRow || selectedIds.contains(id) || id == selectedId) && id != expandedId
             case .detail(let id):
                 if let v = view as? DetailCellView {
                     v.hosting.rootView = AnyView(
@@ -599,14 +623,38 @@ struct MailListView: NSViewRepresentable {
             let row = table.clickedRow
             guard row >= 0, row < rows.count, case .thread(let id) = rows[row] else { return }
             table.window?.makeFirstResponder(table)
+            let flags = NSApp.currentEvent?.modifierFlags.intersection(.deviceIndependentFlagsMask) ?? []
+            let box = AppModel.shared.mailbox
+            // M2.5: ⇧ picks a range, ⌘ toggles one row, a plain click opens.
+            if flags.contains(.shift) {
+                box.selectRange(id, additive: true)
+                return
+            }
+            if flags.contains(.command) {
+                box.toggleSelect(id)
+                return
+            }
             if let cell = table.view(atColumn: 0, row: row, makeIfNecessary: false) as? ThreadCellView,
                let event = NSApp.currentEvent,
                let action = cell.action(at: cell.convert(event.locationInWindow, from: nil)) {
-                AppModel.shared.mailbox.select(id)
+                box.select(id)
                 ActionDispatcher.perform(action)
                 return
             }
-            AppModel.shared.mailbox.toggle(id)
+            box.toggle(id)
+        }
+
+        /// The right-click menu for `row`; a row outside the selection becomes
+        /// the target, a row inside it keeps the whole selection (Tauri).
+        func contextMenu(row: Int) -> NSMenu? {
+            guard let table, row >= 0, row < rows.count, case .thread(let id) = rows[row] else { return nil }
+            table.window?.makeFirstResponder(table)
+            let box = AppModel.shared.mailbox
+            if !box.selectedIds.contains(id) || box.selectedIds.count == 1 {
+                box.select(id)
+            }
+            PerfLog.shared.write("context_menu row=\(row) targets=\(box.targetIds.count)")
+            return ThreadContextMenu.build(forThreads: box.targetIds, view: box.view)
         }
     }
 }

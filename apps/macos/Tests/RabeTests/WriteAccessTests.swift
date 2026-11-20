@@ -85,9 +85,13 @@ final class WriteAccessTests: XCTestCase {
             XCTAssertEqual(CommandPolicy.decision(for: command, sandbox: false, writesAllowed: true),
                            .notAllowed, command)
         }
+        // M2.5's kinds and the scheduled send are released since the M2 audit.
         let move = #"{"args":{"kind":"move","threadIds":[1]}}"#
         XCTAssertEqual(CommandPolicy.decision(for: "perform_action", json: move, sandbox: false,
-                                             writesAllowed: gate.allowed), .actionNotAllowed("move"))
+                                             writesAllowed: gate.allowed), .allowed)
+        let later = #"{"args":{"draftId":1,"sendAt":1760000000000}}"#
+        XCTAssertEqual(CommandPolicy.decision(for: "queue_send", json: later, sandbox: false,
+                                             writesAllowed: gate.allowed), .allowed)
 
         // The switch survives a restart (same suite, new instance).
         let again = WriteAccess(identifier: identifier, mode: .real, defaults: store)

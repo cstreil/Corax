@@ -62,6 +62,25 @@ public enum Strings {
 
     public static let offline = "Du bist offline"                 // errors:offline
 
+    // MARK: M2.3 — KI
+
+    /// settings:ai.notConfigured — shown wherever a feature needs a key.
+    public static let aiNotConfigured = "KI ist nicht eingerichtet. Einrichten unter Einstellungen → Intelligenz."
+    public static let aiSummaryTitle = "Zusammenfassung"
+    public static let aiPending = "Denkt nach …"
+    public static let aiRetry = "Erneut versuchen"
+    public static let aiNeedsSetup = "Einrichten …"
+    public static let aiAskTitle = "Fragen an das Postfach"
+    public static let aiAskPlaceholder = "Frage zu deinen Mails …"
+    public static let aiSourcesTitle = "Quellen"
+    public static let aiDraftTitle = "Mit KI schreiben"
+    public static let aiDraftPlaceholder = "Stichworte oder Anweisung, z. B. „kurz zusagen, Termin Donnerstag 14 Uhr“"
+    public static let aiProofreadTitle = "Korrekturlesen"
+    public static let aiProofreadApply = "Übernehmen"
+    public static let aiProofreadDiscard = "Verwerfen"
+    public static let aiProofreadClean = "Keine Korrekturen nötig"
+    public static let aiUndoChange = "KI-Änderung rückgängig"
+
     /// `errorMessage` in `src/ipc/errors.ts` with the `errors:` catalog.
     public static func errorText(_ error: RabeClientError) -> String {
         switch error {
@@ -88,6 +107,8 @@ public enum Strings {
                 "read_only": "Nur-Lesen-Modus – Postfach → Änderungen erlauben",
                 "command_not_allowed": "Dieser Befehl ist in der echten Instanz nicht freigegeben",
                 "action_not_allowed": "Diese Aktion ist in der echten Instanz nicht freigegeben",
+                "pending_audit": "Noch nicht freigegeben – diese Einstellung kommt erst mit dem nächsten Audit",
+                "ai_not_configured": aiNotConfigured,
             ]
             if let text = table[code] { return text }
             let detail = message.trimmingCharacters(in: .whitespacesAndNewlines)

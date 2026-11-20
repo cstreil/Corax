@@ -133,6 +133,8 @@ Swift-Seite: `RabeClient` (actor) mit typisierten Wrappern (`listThreads(view:�
 
 **M3 (Ablösung):** Updater (macOS Sparkle o. ä., Linux Paket), PKGBUILD, Instanz-Lock auch in der Tauri-App, Umschalten auf `de.streil.rabe`. **Am Ende von M3:** OAuth-Konten (Gmail, Microsoft 365). Bis dahin liegt der Fokus auf iCloud/IMAP (Entscheidung Nutzer 2026-11-19).
 
+**Nach M3 (vorgemerkt, Entscheidung Nutzer 2026-11-20): JMAP** — erst wenn alles andere läuft und wir beginnen, Teile des Comail-Kerns durch eigenen Code zu ersetzen. Anlass: JMAP-only-Anbieter (Mailflare, Thundermail). Ist-Stand: Sync-Engine (`sync/`, ~5,7 k Zeilen) und `provider/MailboxBehavior` sind IMAP-gebunden, ohne Transport-Abstraktion; Kalender hat mit CalDAV und Graph schon zwei Backends. Vorgehen dann: zuerst Transport-Schicht aus der Sync-Engine lösen, dann JMAP-Mail (`Email/changes`, `EmailSubmission`, Push); JMAP-Kalender erst prüfen, sobald die Spezifikation stabil ist.
+
 ## 6. Leistungsbudget (Abnahme M1)
 
 Referenz: Dev-Datenbank mit ~11k Mails, Apple Silicon bzw. Scott.
@@ -206,3 +208,23 @@ Messung: `rabe-host` loggt Zeitstempel (`tracing`, Ziel `perf`), UIs loggen Erst
 4. **HTML ohne WebEngine unter Linux** sieht bei Newsletter-HTML schlechter aus → Knopf „Original anzeigen“ ist Pflicht in M1.
 5. **Doppelte UI-Arbeit** über zwei Plattformen; Mitigation: Store-Logik (Paging, optimistische Aktionen, Undo) in `rabe-host` halten, wo sie plattformneutral ist — aber erst, wenn beide UIs sie wirklich brauchen.
 6. **AGPL-3.0-only** gilt für die neuen Apps weiter (abgeleitetes Werk).
+
+## 8a. Ergebnis M2 (2026-11-20, `Work/Tasks/2026-11-19-rabe-native-m2/`)
+
+- M2.0–M2.6 liegen unter `apps/macos`: `RabeKit` (plattformneutral, `check-rabekit.sh` erlaubt nur Foundation/Observation/os/RabeBindings/UserNotifications) und `Rabe` (AppKit/SwiftUI/WebKit).
+- **Composer M2.6:** der Körper ist ein `NSTextView` (TextKit 2, `RichTextEditor.swift`) mit eigener Formatleiste. Die HTML-Teilmenge lebt in `RabeKit/Support/{RichText,RichHTML}.swift`: `p br b i u s a href ul ol li blockquote img[data:]` plus die beiden Marker, die Tauri selbst schreibt (`div.co-signature`, `span.co-mention`). Kein `NSAttributedString.DocumentType.html` (CSS-Ballast). Parser und Schreiber sind iterativ, prüfen Grenzen (`RichLimits`) und verwerfen `script`/`style`/`iframe` samt Inhalt, `on*`-Attribute und fremde Schemata.
+- **Brücke:** `Rabe/Support/RichTextBridge.swift` übersetzt `RichDocument` ↔ `NSAttributedString` (Absatzstile für Zitat/Liste/Signatur, Läufe für fett/kursiv/unterstrichen/durchgestrichen/Link/Chip/Bild).
+- **Entwurf:** `ComposeDraft.bodyHtml` ist die Wahrheit; `body` (Text) wird abgeleitet, `bodyRevision` sagt dem Editor, wann er neu laden muss. `save_draft` bekommt Text- und HTML-Teil; der Host baut `multipart/alternative` und wandelt `data:`-Bilder in CID-Teile.
+- **Kalender M2.6:** `DayListPopover` für „+n weitere“, `join-next-meeting` über `MeetingLink` (Regeln wie Tauri, nur `http`/`https`), `calendar-sidebar` als Befehl. `MiniMonth` und die Zeitwahl waren schon da.
+- Offene M2-Punkte siehe `BERICHT-M2.6.md` §6 (Navigation: `toggle-sidebar`, `ContactPane`, `BundleRow`; Verfügbarkeit ohne Host-Befehl).
+
+## 8b. Audit M2 — Nacharbeit (2026-11-20, `AUDIT-M2.md`, `NACHTRAG-M2.md`)
+
+- **Freigabe:** `CommandPolicy.pendingAudit` ist leer. `reading` 43, `writing` 33 (alles Schreibende dort, damit „Änderungen erlauben" greift), `blocked` = `add_account_password`, `test_connection`, `mcp_install_client`. Alle sechs M2.5-`ActionKind`s und `queue_send` mit `sendAt` sind frei; die „Noch nicht freigegeben"-Banner in den Einstellungen sind entfernt.
+- **B1:** `RichImage.parse` schneidet den `data:`-Header aus dem Originalstring und schreibt ihn erst danach klein (`lowercased()` kann die Länge ändern → Trap bei U+212A/ẞ/İ).
+- **W1:** `RabeKit/Support/HeaderSafety.swift` — Betreff ohne Steuerzeichen (Zeilenumbrüche → ein Leerzeichen) vor jedem `save_draft`; `mailto:`-Adressen mit Steuerzeichen, Leerraum, `<`, `>`, `,`, `;`, `"`, `\`, `(`, `)` werden verworfen (auch `%2C`). Die Härtung im Kern (`build_message`) steht beim Nutzer.
+- **W2/W3/W6:** Kein Rückgängig für `unarchive`/`not_spam`/`unsnooze`; Löschdialog und Verschiebe-/Label-Picker halten ihre Ziel-IDs beim Öffnen fest (auch `deletePermanently(ids:)`); das Label-Ticket läuft nach 30 s ab, damit `mark_read` nicht liegen bleibt.
+- **W4/W5:** Links in KI-Antworten öffnen nur `http`/`https` (`SafeLink`, `OpenURLAction`); die vier Log-Zeilen loggen nur Längen und Zähler.
+- **Auflagen:** `⌘U` fragt vor dem Abmelden (Toast „Abmelden"), Ziehen eines Termins mit Teilnehmenden mailt erst nach Klick, `relabel_auto` aus der Palette fragt (Kosten), MCP-Hinweis „Eintrag heißt comail und ersetzt den der Tauri-App".
+- **K1/K2:** `maxHTMLBytes` zählt jetzt Bytes; Tag-Namen sind unabhängig von der Schreibweise (`<B>`, `<SCRIPT>`); alte Vorschau-Ordner werden nur noch bei totem Prozess gelöscht.
+- **W7 gemessen (Sandbox, `rabe-cli`, ohne UI):** 110 Threads → 25 ms Streuung, Undo vollständig; 810 Threads → Aktionen über 158 ms, Undo holt 780 von 810 zurück (30 bleiben archiviert). Ursache: `perform_action` schreibt je Thread; `undo_last` nimmt nur Aktionen ±150 ms um die jüngste. Fix wäre eine Gesten-ID im Kern (Freigabe des Nutzers).

@@ -10,6 +10,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         PerfLog.shared.write("phase did_finish_launching ms=\(PerfLog.shared.elapsedMilliseconds)")
         UNUserNotificationCenter.current().delegate = self
         DebugAutomation.install()
+        // M2.5: staged previews of an earlier run (a crash leaves them behind).
+        AttachmentPreview.removeStalePreviews()
         WebViewPool.shared.warmUp(remoteAllowed: AppModel.shared.settings.loadRemoteImages)
         installKeyMonitor()
         AppModel.shared.requestNotificationPermission()
@@ -54,14 +56,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
 
     func applicationWillTerminate(_ notification: Notification) {
         AppModel.shared.shutdown()
+        // M2.5: Quick Look previews live in an app-owned temp directory.
+        AttachmentPreview.removeAll()
     }
 
-    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
+    /// M2.4: the menu bar icon keeps the app alive, as Tauri's tray does — a
+    /// closed window ends the window, not the process. "Rabe beenden" and ⌘Q
+    /// still quit.
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
 
-    // Clicking a notification opens its thread.
+    /// Dock icon click with no window: bring the main window back.
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        if !flag { NotificationCenter.default.post(name: .rabeShowMainWindow, object: nil) }
+        return true
+    }
+
+    // Clicking a notification opens its thread, or the calendar on the meeting.
     nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse) async {
-        let threadId = (response.notification.request.content.userInfo["threadId"] as? NSNumber)?.int64Value
-        guard let threadId else { return }
+        let info = response.notification.request.content.userInfo
+        if let eventId = (info["calendarEventId"] as? NSNumber)?.int64Value {
+            let start = (info["occurrenceStart"] as? NSNumber)?.int64Value ?? 0
+            await MainActor.run { AppModel.shared.openEventFromNotification(eventId: eventId, occurrenceStart: start) }
+            return
+        }
+        guard let threadId = (info["threadId"] as? NSNumber)?.int64Value else { return }
         await MainActor.run { AppModel.shared.openThreadFromNotification(threadId) }
     }
 

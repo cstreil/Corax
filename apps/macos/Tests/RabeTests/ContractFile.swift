@@ -31,7 +31,7 @@ enum ContractFile {
             if let dot = key.firstIndex(of: ".") {
                 let parent = String(key[..<dot])
                 let property = String(key[key.index(after: dot)...])
-                guard let shape = interfaces[parent], let type = shape.types[property] else {
+                guard let shape = commands[parent] ?? interfaces[parent], let type = shape.types[property] else {
                     throw ParseError.missing("\(parent).\(property)")
                 }
                 return ContractFile.shape(ofType: type, interfaces: interfaces)
@@ -114,7 +114,37 @@ enum ContractFile {
             return shape(ofBody: String(chars[1..<close]))
         }
         if type.hasPrefix("Record<") { return TypeShape() }
+        if let merged = shapeOfOmitIntersection(type, interfaces: interfaces) { return merged }
         return interfaces[type] ?? TypeShape()
+    }
+
+    /// `Omit<Name, "a" | "b"> & { ... }` — the shape of `Name` without the
+    /// omitted keys, merged with the inline object. The `save_*` commands use
+    /// it because their payload is the row minus server-side fields.
+    private static func shapeOfOmitIntersection(_ text: String, interfaces: [String: TypeShape]) -> TypeShape? {
+        let type = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard type.hasPrefix("Omit<") else { return nil }
+        let chars = Array(type)
+        guard let open = chars.firstIndex(of: "<"), let close = matchingAngle(chars, open: open) else { return nil }
+        let inner = String(chars[(open + 1)..<close])
+        guard let comma = inner.firstIndex(of: ",") else { return nil }
+        let baseName = String(inner[..<comma]).trimmingCharacters(in: .whitespaces)
+        let omitted = Set(String(inner[inner.index(after: comma)...])
+            .split(separator: "|")
+            .map { $0.trimmingCharacters(in: CharacterSet(charactersIn: " \"\n\t")) })
+        var merged = interfaces[baseName] ?? TypeShape()
+        merged.required.subtract(omitted)
+        merged.optional.subtract(omitted)
+        for key in omitted { merged.types[key] = nil }
+
+        let rest = Array(chars[(close + 1)...])
+        if let brace = rest.firstIndex(of: "{"), let end = matchingBrace(rest, open: brace) {
+            let inline = shape(ofBody: String(rest[(brace + 1)..<end]))
+            merged.required.formUnion(inline.required)
+            merged.optional.formUnion(inline.optional)
+            merged.types.merge(inline.types) { _, new in new }
+        }
+        return merged
     }
 
     private static func shape(ofBody body: String) -> TypeShape {
@@ -272,6 +302,30 @@ enum ContractFile {
         guard !name.isEmpty, name.allSatisfy({ $0.isLetter || $0.isNumber || $0 == "_" || $0 == "$" }) else { return nil }
         let type = text[text.index(after: colon)...].trimmingCharacters(in: .whitespaces)
         return Member(name: name, type: type, optional: optional)
+    }
+
+    /// Closing `>` of a generic argument list (`matchingBrace` counts braces).
+    private static func matchingAngle(_ chars: [Character], open: Int) -> Int? {
+        var depth = 0
+        var inString = false
+        var index = open
+        while index < chars.count {
+            let char = chars[index]
+            if inString {
+                if char == "\\" { index += 2; continue }
+                if char == "\"" { inString = false }
+                index += 1
+                continue
+            }
+            if char == "\"" { inString = true; index += 1; continue }
+            if char == "<" { depth += 1 }
+            if char == ">" {
+                depth -= 1
+                if depth == 0 { return index }
+            }
+            index += 1
+        }
+        return nil
     }
 
     private static func matchingBrace(_ chars: [Character], open: Int) -> Int? {

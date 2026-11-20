@@ -30,6 +30,10 @@ struct ThreadDetailView: View {
                 let focusedId = box.focusedMessage(in: detail)?.id
                 header(detail, count: shown.count)
                     .onAppear { box.noteDetailVisible(threadId, hasHTML: shown.last?.htmlBody?.isEmpty == false) }
+                // M2.3: the AI summary sits above the messages (⌘J).
+                AISummaryBlock(threadId: threadId,
+                               onUseReply: { AppModel.shared.useAIProposedReply($0, threadId: threadId) },
+                               onCreateEvent: { AppModel.shared.createEventFromSuggestion($0) })
                 ForEach(Array(shown.enumerated()), id: \.element.id) { index, message in
                     MessageView(message: message, threadId: threadId,
                                 folded: index < shown.count - 1 && message.id != focusedId && !box.unfoldedMessages.contains(message.id),
@@ -76,7 +80,17 @@ struct ThreadDetailView: View {
             }
             Spacer(minLength: 8)
             HStack(spacing: 4) {
+                PillButton(title: nil, symbol: "sparkles", key: "⌘J", label: "Zusammenfassen") {
+                    AppModel.shared.summarizeOpenThread()
+                }
                 PillButton(title: Strings.reply, symbol: "arrowshape.turn.up.left", key: "A") { ActionDispatcher.perform(.reply) }
+                // M2.4: Tauri's thread header button, only for a thread whose
+                // messages carry a List-Unsubscribe header.
+                if detail.messages.contains(where: \.canUnsubscribe) {
+                    PillButton(title: nil, symbol: "bell.slash", key: "⌘U", label: "Abmelden") {
+                        ActionDispatcher.perform(.unsubscribe)
+                    }
+                }
                 PillButton(title: nil, symbol: "archivebox", key: "E", label: "Archivieren") { ActionDispatcher.perform(.archive) }
                 PillButton(title: nil, symbol: "clock", key: "H", label: "Später") { ActionDispatcher.perform(.snoozeTomorrow) }
             }
@@ -165,11 +179,15 @@ struct MessageView: View {
             .contentShape(Rectangle())
             .onTapGesture { if folded { unfold() } }
             if !folded {
+                // M2.2: an invite carried by this message, above its body.
+                CalendarInviteCard(messageId: message.id)
+                    .padding(.top, 12)
+                    .padding(.leading, 40)
                 bodyView
                     .padding(.top, 12)
                     .padding(.leading, 40)
                 if !message.attachments.filter({ !$0.isInline }).isEmpty {
-                    AttachmentStrip(attachments: message.attachments.filter { !$0.isInline })
+                    AttachmentStrip(attachments: message.attachments.filter { !$0.isInline }, threadId: threadId)
                         .padding(.top, 14)
                         .padding(.leading, 40)
                 }
@@ -288,14 +306,18 @@ struct QuotedText: View {
     }
 }
 
+/// Attachments of one message. M2.5: a click opens the system Quick Look
+/// preview (one viewer instead of nine); "Öffnen mit App" and "Sichern unter"
+/// stay in the context menu.
 struct AttachmentStrip: View {
     let attachments: [AttachmentMeta]
+    let threadId: Int64
     @Environment(\.theme) private var theme
 
     var body: some View {
         FlowLayout(spacing: 8) {
-            ForEach(attachments) { a in
-                Button { AppModel.shared.mailbox.openAttachment(a) } label: {
+            ForEach(Array(attachments.enumerated()), id: \.element.id) { index, a in
+                Button { preview(index: index) } label: {
                     HStack(spacing: 10) {
                         Text(Format.fileBadge(a))
                             .font(.system(size: 9.5, weight: .bold))
@@ -314,13 +336,19 @@ struct AttachmentStrip: View {
                 }
                 .buttonStyle(.plain)
                 .contextMenu {
-                    Button("Öffnen") { AppModel.shared.mailbox.openAttachment(a) }
+                    Button("Vorschau") { preview(index: index) }
+                    Button("Öffnen mit App") { AppModel.shared.mailbox.openAttachment(a) }
                     Button("Sichern unter …") { AppModel.shared.mailbox.saveAttachment(a) }
                 }
                 .accessibilityLabel("Anhang \(a.filename ?? Strings.attachmentFallback), \(Format.size(a.size))")
                 .accessibilityAction(named: "Sichern unter") { AppModel.shared.mailbox.saveAttachment(a) }
             }
         }
+    }
+
+    private func preview(index: Int) {
+        AttachmentPreview.shared.show(attachments: attachments, startAt: index, threadId: threadId)
+        PerfLog.shared.write("attachment_click index=\(index) thread=\(threadId)")
     }
 
     private func badgeColor(_ a: AttachmentMeta) -> Color {
@@ -332,16 +360,32 @@ struct AttachmentStrip: View {
 
 // MARK: Small building blocks
 
+/// Round sender avatar: the sender's picture when "Absenderfotos" is on and the
+/// core has one (`sender_avatar`, M2.4), else the initials in the address colour.
 struct AvatarView: View {
     let address: Address
     var size: CGFloat = 26
+
+    private var photosOn: Bool { AppModel.shared.settings.showSenderPhotos }
+
     var body: some View {
-        Text(AvatarColor.initials(address))
-            .font(.system(size: size * 0.37, weight: .semibold))
-            .foregroundStyle(.white)
-            .frame(width: size, height: size)
-            .background(Circle().fill(Color(nsColor: AvatarColor.color(for: address.email))))
-            .accessibilityHidden(true)
+        let image = photosOn ? AvatarImages.image(for: address.email) : nil
+        ZStack {
+            if let image {
+                Image(nsImage: image).resizable().scaledToFill()
+            } else {
+                Circle().fill(Color(nsColor: AvatarColor.color(for: address.email)))
+                Text(AvatarColor.initials(address))
+                    .font(.system(size: size * 0.37, weight: .semibold))
+                    .foregroundStyle(.white)
+            }
+        }
+        .frame(width: size, height: size)
+        .clipShape(Circle())
+        .onAppear {
+            if photosOn { AppModel.shared.avatars.request(address.email) }
+        }
+        .accessibilityHidden(true)
     }
 }
 
@@ -374,9 +418,10 @@ struct PillButton: View {
         Button(action: action) {
             HStack(spacing: 7) {
                 Image(systemName: symbol).font(.system(size: 13))
-                if let title { Text(title).fontWeight(.medium) }
+                if let title { Text(title).fontWeight(.medium).lineLimit(1) }
                 KeyCap(key)
             }
+            .fixedSize(horizontal: true, vertical: false)
             .foregroundStyle(hover ? theme.ink.color : theme.ink2.color)
             .padding(.horizontal, 10)
             .frame(height: 28)

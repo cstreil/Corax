@@ -124,16 +124,19 @@ final class ThreadCellView: NSView {
         }
         x += 10 + 12
 
-        // Avatar
+        // Avatar (M2.4: the sender's picture when "Absenderfotos" is on and the
+        // core has one; the first draw asks for it, the initials stay until it
+        // arrives). Requesting and drawing are both cheap, so scrolling is not
+        // slower than before.
         let sender = primarySender(thread)
+        let photosOn = AppModel.shared.settings.showSenderPhotos
+        if photosOn {
+            AppModel.shared.avatars.request(sender.email)
+            // A decoded picture needs one more frame to become an NSImage.
+            AvatarImages.image(for: sender.email)
+        }
         let avatarRect = NSRect(x: x + 1, y: midY - 13, width: 26, height: 26)
-        AvatarColor.color(for: sender.email).setFill()
-        NSBezierPath(ovalIn: avatarRect).fill()
-        let initials = NSAttributedString(string: AvatarColor.initials(sender), attributes: [
-            .font: NSFont.systemFont(ofSize: 10.5, weight: .semibold), .foregroundColor: NSColor.white, .kern: 0.2,
-        ])
-        let isz = initials.size()
-        initials.draw(at: NSPoint(x: avatarRect.midX - isz.width / 2, y: avatarRect.midY - isz.height / 2))
+        AvatarImages.draw(sender, in: avatarRect, initialsFontSize: 10.5, enabled: photosOn, theme: theme)
         x += 28 + 12
 
         // Meta (right side) first, so the line knows its width.

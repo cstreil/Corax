@@ -139,6 +139,8 @@ final class WebViewPool {
     """
 
     private var free: [RabeWebView] = []
+    /// Views currently showing a mail (M2.5: their selection is the quote source).
+    private var live: [WeakWebView] = []
     private var blockList: WKContentRuleList?
     /// Views handed out before the rule list finished compiling (N1).
     private var awaitingBlockList: [WeakWebView] = []
@@ -172,7 +174,9 @@ final class WebViewPool {
 
     func take(remoteAllowed: Bool) -> RabeWebView {
         if let i = free.firstIndex(where: { $0.remoteAllowed == remoteAllowed }) {
-            return free.remove(at: i)
+            let web = free.remove(at: i)
+            live.append(WeakWebView(web: web))
+            return web
         }
         let config = WKWebViewConfiguration()
         config.websiteDataStore = .nonPersistent()
@@ -191,7 +195,32 @@ final class WebViewPool {
         web.setValue(false, forKey: "drawsBackground")
         web.allowsBackForwardNavigationGestures = false
         web.allowsMagnification = false
+        live.append(WeakWebView(web: web))
         return web
+    }
+
+    /// `⇧R` (`quote-selection`): the text the user marked in one of the visible
+    /// HTML mails. Runs in our own content world, so the page's JavaScript stays
+    /// off; every other web view answers with an empty string.
+    static let selectionScript = """
+    (function(){ try { var s = window.getSelection(); return s ? s.toString() : ""; } catch (e) { return ""; } })()
+    """
+
+    func selectedText() async -> String {
+        live.removeAll { $0.web == nil }
+        for entry in live {
+            guard let web = entry.web, !web.isLoading else { continue }
+            let value: String = await withCheckedContinuation { continuation in
+                web.evaluateJavaScript(Self.selectionScript, in: nil, in: Self.world) { result in
+                    switch result {
+                    case .success(let any): continuation.resume(returning: any as? String ?? "")
+                    case .failure: continuation.resume(returning: "")
+                    }
+                }
+            }
+            if !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return value }
+        }
+        return ""
     }
 
     /// Starts one web content process at launch, so the first HTML mail does
@@ -204,6 +233,7 @@ final class WebViewPool {
     }
 
     func give(_ web: RabeWebView) {
+        live.removeAll { $0.web === web || $0.web == nil }
         web.stopLoading()
         web.loadHTMLString("", baseURL: nil)
         if free.count < 4 { free.append(web) }

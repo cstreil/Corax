@@ -129,6 +129,26 @@ cat > "$app/Contents/Info.plist" <<'PLIST'
 	<true/>
 	<key>NSPrincipalClass</key>
 	<string>NSApplication</string>
+	<!-- M2.4: the bundle handles `mailto:` (RFC 6068), so macOS may hand the
+	     app such a URL (Ai: "Neue Mail" from another app). Registering the
+	     scheme does NOT make Rabe the default mail app — that is a choice in
+	     Mail's settings. LSHandlerRank Alternate keeps the app out of the way
+	     for anyone who did not pick it. -->
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>de.streil.rabe.native.mailto</string>
+			<key>CFBundleTypeRole</key>
+			<string>Viewer</string>
+			<key>LSHandlerRank</key>
+			<string>Alternate</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>mailto</string>
+			</array>
+		</dict>
+	</array>
 </dict>
 </plist>
 PLIST

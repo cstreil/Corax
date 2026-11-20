@@ -104,6 +104,12 @@ public enum Format {
         return weekday(date) + ", " + timeF.string(from: date)
     }
 
+    /// Calendar and formatters for `NaturalTime` (the time pickers).
+    static var calendarForPickers: Calendar { calendar }
+    static func pickerTime(_ date: Date) -> String { timeF.string(from: date) }
+    static func pickerWeekday(_ date: Date) -> String { weekday(date) }
+    static func pickerDate(_ date: Date) -> String { monthDayF.string(from: date) }
+
     public static func size(_ bytes: Int64?) -> String {
         guard let bytes else { return "" }
         let nf = NumberFormatter()

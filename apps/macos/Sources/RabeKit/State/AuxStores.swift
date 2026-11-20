@@ -79,6 +79,9 @@ public final class SettingsStore {
     public private(set) var loaded = false
     public var client: (any MailCore)?
     public weak var toasts: ToastCenter?
+    /// Called after a local change became visible (M2.4: the avatar store
+    /// follows "Absenderfotos" without polling the settings object).
+    public var onLocalChange: (@MainActor (String) -> Void)?
 
     public init() {}
 
@@ -95,6 +98,138 @@ public final class SettingsStore {
     }
     public var notificationsEnabled: Bool { raw["notificationsEnabled"] as? Bool ?? true }
     var inboxDefaultSplits: Bool { raw["inboxDefaultSplits"] as? Bool ?? false }
+
+    // MARK: M2.1 — general section
+
+    public var language: String { raw["language"] as? String ?? "system" }
+    public var soundEnabled: Bool { raw["soundEnabled"] as? Bool ?? true }
+    public var copyVerificationCodes: Bool { raw["copyVerificationCodes"] as? Bool ?? true }
+    public var selectAdvance: Bool { raw["selectAdvance"] as? Bool ?? true }
+    public var autoAdvance: Bool { raw["autoAdvance"] as? Bool ?? true }
+    public var dockBadgeEnabled: Bool { raw["dockBadgeEnabled"] as? Bool ?? true }
+    /// "classic" (dense rows) or "avatar" (tall rows with sender photos).
+    public var inboxUI: String { raw["inboxUi"] as? String ?? "classic" }
+    public var showSenderPhotos: Bool { raw["showSenderPhotos"] as? Bool ?? true }
+    public var showBundles: Bool { raw["showBundles"] as? Bool ?? true }
+    public var groupByDate: Bool { raw["groupByDate"] as? Bool ?? true }
+    public var contactSuggestAllAccounts: Bool { raw["contactSuggestAllAccounts"] as? Bool ?? false }
+    public var autoLabelsEnabled: Bool { raw["autoLabelsEnabled"] as? Bool ?? true }
+
+    // MARK: M2.2 — Kalender
+
+    /// Erster Tag in Woche und Monat (`"monday"` oder `"sunday"`).
+    public var calendarWeekStart: String { raw["calendarWeekStart"] as? String ?? "monday" }
+    /// Minuten vor einem Termin für die Desktop-Erinnerung; 0 schaltet sie ab.
+    public var meetingNotifyLeadMinutes: Int { (raw["meetingNotifyLeadMinutes"] as? NSNumber)?.intValue ?? 10 }
+
+    // MARK: M2.1 — MCP server settings
+
+    public var mcpEnabled: Bool { raw["mcpEnabled"] as? Bool ?? false }
+    public var mcpPort: Int { (raw["mcpPort"] as? NSNumber)?.intValue ?? 47823 }
+    public var mcpAllowDrafts: Bool { raw["mcpAllowDrafts"] as? Bool ?? true }
+    public var mcpAllowSend: Bool { raw["mcpAllowSend"] as? Bool ?? false }
+    public var mcpAllowActions: Bool { raw["mcpAllowActions"] as? Bool ?? false }
+    public var mcpAllowPermanentDelete: Bool { raw["mcpAllowPermanentDelete"] as? Bool ?? false }
+    public var mcpInstructions: String { raw["mcpInstructions"] as? String ?? "" }
+
+    // MARK: M2.3 — KI
+
+    public var aiBaseUrl: String { raw["aiBaseUrl"] as? String ?? "" }
+    public var aiModel: String { raw["aiModel"] as? String ?? "" }
+    public var aiQuickReplies: Bool { raw["aiQuickReplies"] as? Bool ?? false }
+    /// AI drafts follow the learned style profile.
+    public var voiceDrafting: Bool { raw["voiceDrafting"] as? Bool ?? false }
+    public var voiceProfile: String { raw["voiceProfile"] as? String ?? "" }
+    public var embeddingBackend: String { raw["embeddingBackend"] as? String ?? "local" }
+    /// "off" | "openrouter" | "openai" | "commandcode" | "custom".
+    public var decisionProvider: String { raw["decisionProvider"] as? String ?? "off" }
+    public var decisionModel: String { raw["decisionModel"] as? String ?? "" }
+    public var decisionChatFallback: Bool { raw["decisionChatFallback"] as? Bool ?? false }
+    public var decisionUseRules: Bool { raw["decisionUseRules"] as? Bool ?? false }
+
+    // MARK: M2.1 — signatures (part of the settings object)
+
+    public var signatures: [Signature] { decoded("signatureList", as: [Signature].self) ?? [] }
+    public var signatureDefaults: [String: SignatureDefaults] {
+        decoded("signatureDefaults", as: [String: SignatureDefaults].self) ?? [:]
+    }
+
+    public func signatures(for accountId: Int64) -> [Signature] {
+        signatures.filter { $0.accountId == accountId }
+    }
+
+    public func signatureDefaults(for accountId: Int64) -> SignatureDefaults {
+        signatureDefaults[String(accountId)] ?? SignatureDefaults()
+    }
+
+    /// Adds or replaces one signature (by id).
+    public func upsertSignature(_ signature: Signature) {
+        var list = signatures
+        if let index = list.firstIndex(where: { $0.id == signature.id }) {
+            list[index] = signature
+        } else {
+            list.append(signature)
+        }
+        setJSON("signatureList", list)
+    }
+
+    /// Removes a signature; a default that pointed at it becomes "none".
+    public func removeSignature(id: String) {
+        var list = signatures
+        guard let removed = list.first(where: { $0.id == id }) else { return }
+        list.removeAll { $0.id == id }
+        setJSON("signatureList", list)
+
+        var defaults = signatureDefaults
+        let key = String(removed.accountId)
+        if var entry = defaults[key] {
+            if entry.newId == id { entry.newId = nil }
+            if entry.replyId == id { entry.replyId = nil }
+            if entry.isEmpty { defaults[key] = nil } else { defaults[key] = entry }
+            setJSON("signatureDefaults", defaults)
+        }
+    }
+
+    public func setSignatureDefaults(accountId: Int64, newId: String?, replyId: String?) {
+        var defaults = signatureDefaults
+        let key = String(accountId)
+        let entry = SignatureDefaults(newId: newId, replyId: replyId)
+        if entry.isEmpty { defaults[key] = nil } else { defaults[key] = entry }
+        setJSON("signatureDefaults", defaults)
+    }
+
+    // MARK: M2.1 — categories (guidance for the auto-label classifier)
+
+    public var aiCategoryDescriptions: [String: String] {
+        (raw["aiCategoryDescriptions"] as? [String: Any])?.compactMapValues { $0 as? String } ?? [:]
+    }
+
+    public func categoryDescription(for keyword: String) -> String {
+        aiCategoryDescriptions[keyword] ?? ""
+    }
+
+    /// Sets (or clears) the model guidance of one category, keyed by the label's
+    /// IMAP keyword.
+    public func setCategoryDescription(_ keyword: String, _ text: String) {
+        var map = aiCategoryDescriptions
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty { map[keyword] = nil } else { map[keyword] = trimmed }
+        setJSON("aiCategoryDescriptions", map)
+    }
+
+    /// Decodes a settings value that is a nested JSON object/array.
+    private func decoded<T: Decodable>(_ key: String, as: T.Type) -> T? {
+        guard let value = raw[key], JSONSerialization.isValidJSONObject(value),
+              let data = try? JSONSerialization.data(withJSONObject: value) else { return nil }
+        return try? JSONDecoder().decode(T.self, from: data)
+    }
+
+    /// Writes a Codable value through the normal read-modify-write path (N4).
+    func setJSON<T: Encodable>(_ key: String, _ value: T) {
+        guard let data = try? JSONEncoder().encode(value),
+              let object = try? JSONSerialization.jsonObject(with: data) else { return }
+        set(key, object)
+    }
 
     public func load() async {
         guard let client else { return }
@@ -137,6 +272,7 @@ public final class SettingsStore {
         revision += 1
         pending[key] = Change(value: value, previous: raw[key], revision: revision)
         raw[key] = value
+        onLocalChange?(key)
         let previous = writeChain
         writeChain = Task { @MainActor [weak self] in
             _ = await previous?.value
@@ -146,7 +282,7 @@ public final class SettingsStore {
     }
 
     /// Tests: waits until every queued write has run.
-    func waitForPendingWrites() async { await writeChain?.value }
+    public func waitForPendingWrites() async { await writeChain?.value }
 
     private func write(_ client: any MailCore) async {
         let batch = pending
@@ -177,7 +313,7 @@ public final class SettingsStore {
 @MainActor
 @Observable
 public final class SyncStore {
-    private(set) var statuses: [SyncStatus] = []
+    public private(set) var statuses: [SyncStatus] = []
     public private(set) var online = true
     public var client: RabeClient?
     private var refreshTask: Task<Void, Never>?

@@ -53,6 +53,8 @@ public final class MailboxStore {
     private(set) var splits: [SplitRule] = []
     public private(set) var labels: [Int64: Label] = [:]
     public private(set) var unread: UnreadCounts?
+    /// Called whenever the counts were refreshed (M2.4: Dock badge).
+    public var onUnreadCounts: (@MainActor (UnreadCounts) -> Void)?
 
     // List
     public private(set) var threads: [ThreadSummary] = [] {
@@ -74,6 +76,14 @@ public final class MailboxStore {
     public private(set) var loadedOnce = false
     public private(set) var selectedId: Int64?
     public private(set) var expandedId: Int64?
+    /// M2.5: the multi-selection (Tauri's `selection`). `selectedId` stays the
+    /// cursor; every action runs on `targetIds` — the selection when it holds
+    /// more than the cursor row, else the cursor.
+    public private(set) var selectedIds: Set<Int64> = []
+    /// Anchor of a ⇧-range (Tauri's `selectAnchorId`).
+    public private(set) var selectAnchorId: Int64?
+    /// IMAP folders of the account, for "Verschieben" (`V`).
+    public private(set) var folders: [FolderInfo] = []
 
     // Search
     public private(set) var searchQuery: String?
@@ -120,6 +130,17 @@ public final class MailboxStore {
         self.settings = settings
         self.writeAccess = writeAccess
         self.platform = platform
+    }
+
+    /// The selected row closest to `index` (by list position), or nil.
+    private func closestSelection(to index: Int?, in fresh: [ThreadSummary]) -> Int64? {
+        guard let index, !selectedIds.isEmpty else { return nil }
+        var best: (id: Int64, distance: Int)?
+        for (i, thread) in fresh.enumerated() where selectedIds.contains(thread.id) {
+            let distance = abs(i - index)
+            if best == nil || distance < best!.distance { best = (thread.id, distance) }
+        }
+        return best?.id
     }
 
     // MARK: Derived
@@ -225,9 +246,40 @@ public final class MailboxStore {
         refreshUnread()
     }
 
-    func refreshAccounts() async {
+    public func refreshAccounts() async {
         guard let client else { return }
         if let list = try? await client.accounts() { accounts = list }
+    }
+
+    /// Settings → Konten: changes the display name (the address stays).
+    @discardableResult
+    public func renameAccount(_ id: Int64, to name: String) async -> Bool {
+        guard let client else { return false }
+        do {
+            let updated = try await client.setAccountDisplayName(accountId: id, name: name)
+            if let index = accounts.firstIndex(where: { $0.id == id }) { accounts[index] = updated }
+            return true
+        } catch {
+            toasts.error(error)
+            return false
+        }
+    }
+
+    /// Settings → Konten: removes the account from Rabe — credentials, account
+    /// row, local mail cache and attachments. The server mailbox is untouched.
+    @discardableResult
+    public func removeAccount(_ id: Int64) async -> Bool {
+        guard let client else { return false }
+        do {
+            try await client.removeAccount(id)
+            accounts.removeAll { $0.id == id }
+            if accountId == id { setAccount(nil) }
+            PerfLog.shared.write("account_removed id=\(id)")
+            return true
+        } catch {
+            toasts.error(error)
+            return false
+        }
     }
 
     public func setView(_ newView: MailView) {
@@ -311,14 +363,36 @@ public final class MailboxStore {
         nextCursor = cursor
         if selectedId == nil {
             selectedId = fresh.first?.id          // first page: row one
-        } else if !stillThere {
-            // W3: the thread vanished (e.g. archived on another device). Move to
-            // the neighbour at the old position instead of jumping to row one.
-            let neighbour = oldIndex.flatMap { i in fresh.indices.contains(i) ? fresh[i].id : fresh.last?.id }
-            selectedId = neighbour
-            // Only a change nobody asked for arms the "ignore the next action"
-            // guard; after a view switch the user knows where the selection is.
-            if neighbour != nil, !userNavigation { autoSelectedAt = CFAbsoluteTimeGetCurrent() }
+            selectedIds = selectedId.map { [$0] } ?? []
+            selectAnchorId = selectedId
+        } else {
+            // M2.5: rows that left the list leave the selection too.
+            let visible = Set(fresh.map(\.id))
+            let oldCursor = selectedId
+            selectedIds.formIntersection(visible)
+            if let cursor = selectedId, !visible.contains(cursor) {
+                // W3: the thread vanished (e.g. archived on another device). Keep
+                // the selection the user chose: the closest surviving selected
+                // row, else the neighbour at the old position.
+                let survivor = closestSelection(to: oldIndex, in: fresh)
+                let neighbour = survivor ?? oldIndex.flatMap { i in
+                    fresh.indices.contains(i) ? fresh[i].id : fresh.last?.id
+                }
+                selectedId = neighbour
+                if let neighbour { selectedIds.insert(neighbour) }
+                selectAnchorId = neighbour
+                // Only a change nobody asked for arms the "ignore the next
+                // action" guard; after a view switch the user knows where it is.
+                if neighbour != nil, !userNavigation, survivor == nil {
+                    autoSelectedAt = CFAbsoluteTimeGetCurrent()
+                }
+            }
+            // The cursor row stays selected, so every action key has a visible target.
+            if let cursor = selectedId, selectedIds.isEmpty { selectedIds = [cursor] }
+            if let anchor = selectAnchorId, !visible.contains(anchor) {
+                selectAnchorId = selectedId
+            }
+            _ = oldCursor
         }
         userNavigation = false
         if openGone {
@@ -352,7 +426,12 @@ public final class MailboxStore {
 
     func refreshUnread() {
         guard let client else { return }
-        Task { if let counts = try? await client.unreadCounts() { self.unread = counts } }
+        Task {
+            if let counts = try? await client.unreadCounts() {
+                self.unread = counts
+                self.onUnreadCounts?(counts)
+            }
+        }
     }
 
     /// `mail:updated` / `mail:new`: refresh the affected rows; unknown ids (new
@@ -381,6 +460,14 @@ public final class MailboxStore {
         }
     }
 
+    /// Reloads the current page and the counts (after `relabel_auto`, M2.5).
+    public func refresh() {
+        Task {
+            await reloadKeepingPosition()
+            refreshUnread()
+        }
+    }
+
     private func reloadKeepingPosition() async {
         guard let client, searchQuery == nil else { return }
         guard let page = try? await client.listThreads(view: view, splitId: currentSplitId, accountId: accountId, cursor: nil, limit: max(pageSize, threads.count)) else { return }
@@ -389,7 +476,118 @@ public final class MailboxStore {
 
     // MARK: Selection and expansion
 
-    public func select(_ id: Int64?) { selectedId = id; autoSelectedAt = nil }
+    /// A plain click or a jump: the cursor row is the whole selection again.
+    public func select(_ id: Int64?) {
+        selectedId = id
+        selectedIds = id.map { [$0] } ?? []
+        selectAnchorId = id
+        autoSelectedAt = nil
+    }
+
+    /// The rows an action runs on, in list order: the multi-selection, else the
+    /// cursor row. Tauri's `currentTargets`.
+    public var targetIds: [Int64] {
+        guard !selectedIds.isEmpty else { return selectedId.map { [$0] } ?? [] }
+        var out: [Int64] = []
+        out.reserveCapacity(selectedIds.count)
+        for thread in threads where selectedIds.contains(thread.id) { out.append(thread.id) }
+        if out.isEmpty, let id = selectedId { return [id] }
+        return out
+    }
+
+    public var targetCount: Int { targetIds.count }
+
+    /// A row is highlighted when it is selected or holds the cursor. The cursor
+    /// is always visible, so no action key can hit a row the user does not see.
+    public func isSelected(_ id: Int64) -> Bool { selectedIds.contains(id) || id == selectedId }
+
+    /// `⌘A`: every loaded row, and back to the cursor row when everything is
+    /// already selected (Tauri's toggle).
+    public func selectAllVisible() {
+        guard !threads.isEmpty else { return }
+        autoSelectedAt = nil
+        if selectedIds.count >= threads.count, selectedIds.isSuperset(of: threads.map(\.id)) {
+            selectedIds = selectedId.map { [$0] } ?? []
+            selectAnchorId = selectedId
+            PerfLog.shared.write("select_all off sel=\(selectedIds.count)")
+            return
+        }
+        selectedIds = Set(threads.map(\.id))
+        selectAnchorId = selectedId ?? threads.first?.id
+        PerfLog.shared.write("select_all on sel=\(selectedIds.count)")
+    }
+
+    /// `⌘`-click: adds or removes one row and makes it the anchor.
+    public func toggleSelect(_ id: Int64) {
+        autoSelectedAt = nil
+        selectAnchorId = id
+        if selectedIds.contains(id) {
+            // The cursor never leaves the selection: it moves to the closest
+            // remaining selected row, and the last selected row stays.
+            if selectedId == id, let next = neighbourInSelection(of: id) { selectedId = next }
+            selectedIds.remove(id)
+            if selectedIds.isEmpty { selectedIds = [id] }
+            if selectedId == id, let first = selectedIds.first, selectedId != first { selectedId = first }
+        } else {
+            selectedIds.insert(id)
+            selectedId = id
+        }
+        PerfLog.shared.write("select_toggle id=\(id) sel=\(selectedIds.count)")
+    }
+
+    /// The selected row closest to `id` in the list (else nil).
+    private func neighbourInSelection(of id: Int64) -> Int64? {
+        guard let i = index(of: id) else { return nil }
+        for offset in 1..<max(threads.count, 2) {
+            if i - offset >= 0, selectedIds.contains(threads[i - offset].id), threads[i - offset].id != id {
+                return threads[i - offset].id
+            }
+            if i + offset < threads.count, selectedIds.contains(threads[i + offset].id), threads[i + offset].id != id {
+                return threads[i + offset].id
+            }
+            if i - offset < 0, i + offset >= threads.count { break }
+        }
+        return nil
+    }
+
+    /// `⇧`-click: the range from the anchor to `target`.
+    public func selectRange(_ target: Int64, additive: Bool = true) {
+        guard let ti = index(of: target) else {
+            toggleSelect(target)
+            return
+        }
+        autoSelectedAt = nil
+        let anchorIndex = selectAnchorId.flatMap { index(of: $0) } ?? selectedId.flatMap { index(of: $0) } ?? ti
+        let anchorId = threads[anchorIndex].id
+        let range = min(anchorIndex, ti)...max(anchorIndex, ti)
+        let ids = Set(range.map { threads[$0].id })
+        selectedIds = additive ? selectedIds.union(ids) : ids
+        selectedId = target
+        selectAnchorId = anchorId
+        PerfLog.shared.write("select_range anchor=\(anchorId) target=\(target) sel=\(selectedIds.count)")
+    }
+
+    /// `⇧↓`/`⇧↑`: moves the cursor and selects the range from the anchor.
+    public func extendSelection(_ delta: Int) {
+        guard !threads.isEmpty else { return }
+        autoSelectedAt = nil
+        let cursorIndex = selectedId.flatMap { index(of: $0) } ?? -1
+        let base = cursorIndex < 0 ? 0 : cursorIndex
+        let anchorIndex = selectAnchorId.flatMap { index(of: $0) } ?? base
+        let next = max(0, min(threads.count - 1, base + delta))
+        let range = min(anchorIndex, next)...max(anchorIndex, next)
+        selectedIds = Set(range.map { threads[$0].id })
+        selectedId = threads[next].id
+        selectAnchorId = threads[anchorIndex].id
+        if next >= threads.count - 60 { loadMoreIfNeeded() }
+        PerfLog.shared.write("select_extend anchor=\(anchorIndex) next=\(next) sel=\(selectedIds.count)")
+    }
+
+    /// Back to a single selected row (after an action, after a jump).
+    public func collapseSelection() {
+        selectedIds = selectedId.map { [$0] } ?? []
+        selectAnchorId = selectedId
+    }
 
     public func step(_ delta: Int) {
         guard !threads.isEmpty else { return }
@@ -397,11 +595,11 @@ public final class MailboxStore {
         let current = selectedId.flatMap { index(of: $0) } ?? -1
         let next = max(0, min(threads.count - 1, current + delta))
         let id = threads[next].id
+        selectedId = id
+        selectedIds = [id]
+        selectAnchorId = id
         if expandedId != nil, expandedId != id {
-            selectedId = id
             expand(id)
-        } else {
-            selectedId = id
         }
         if next >= threads.count - 60 { loadMoreIfNeeded() }
     }
@@ -410,15 +608,18 @@ public final class MailboxStore {
     public func pageList(_ direction: Int) {
         guard let id = navigator?.pageList(direction, selected: selectedId) else { return }
         autoSelectedAt = nil
-        selectedId = id
+        select(id)
         if let i = index(of: id), i >= threads.count - 60 { loadMoreIfNeeded() }
     }
 
     /// `Pos1`/`Ende` in state A; `Ende` loads every remaining page first.
     public func selectEdge(first: Bool) {
         autoSelectedAt = nil
-        if first { selectedId = threads.first?.id; return }
-        guard nextCursor != nil, searchQuery == nil, let client else { selectedId = threads.last?.id; return }
+        if first { select(threads.first?.id); return }
+        guard nextCursor != nil, searchQuery == nil, let client else {
+            select(threads.last?.id)
+            return
+        }
         let generation = listGeneration
         Task {
             while generation == listGeneration, let cursor = nextCursor {
@@ -431,14 +632,14 @@ public final class MailboxStore {
                 appendingThreads -= 1
                 nextCursor = page.nextCursor
             }
-            selectedId = threads.last?.id
+            select(threads.last?.id)
         }
     }
 
     public func toggle(_ id: Int64? = nil) {
         guard let id = id ?? selectedId else { return }
         autoSelectedAt = nil
-        selectedId = id
+        select(id)
         if expandedId == id { collapse() } else { expand(id) }
     }
 
@@ -517,9 +718,10 @@ public final class MailboxStore {
         }
     }
 
-    // MARK: Actions (optimistic, `E # H S U Z`)
+    // MARK: Actions (optimistic, `E # H S U Z`, M2.5 groups)
 
-    private struct Removed { let thread: ThreadSummary; let index: Int; let wasExpanded: Bool }
+    /// A row a removing action took out, with the place it had.
+    private struct RemovedRow { let thread: ThreadSummary; let index: Int }
     /// The thread the last removing action took out, to select it again after undo.
     private var lastRemovedId: Int64?
 
@@ -530,13 +732,21 @@ public final class MailboxStore {
     /// when the toast goes away: `undo_last` undoes the *newest* core action
     /// (`db/repo/actions.rs: last_undoable`), so an early `mark_read` would
     /// swallow the undo.
+    ///
+    /// M2.5: one ticket covers the whole selection. The core undoes a *gesture*
+    /// — same kind, created within 150 ms — and a group action sends its ids in
+    /// one `perform_action`, so `undo_last` brings back exactly that group.
     private struct UndoEntry {
-        enum Kind { case removed, star, readState }
+        enum Kind { case removed, star, readState, label }
+        /// Tells two tickets apart, for the label window that has no toast to
+        /// close it (W6).
+        let token = UUID()
         let kind: Kind
-        let threadId: Int64
-        /// The row as it was before the action, to restore and to verify.
-        let previous: ThreadSummary
-        /// Only for `.removed`: the thread was open, undo opens it again.
+        /// Every row the action touched, in list order.
+        let threadIds: [Int64]
+        /// The rows as they were before the action, to restore and to verify.
+        let previous: [ThreadSummary]
+        /// Only for `.removed`: the open thread was among them, undo opens it again.
         var wasExpanded = false
     }
     private var undoTicket: UndoEntry?
@@ -545,6 +755,8 @@ public final class MailboxStore {
     private var coreActionsAfterTicket = 0
     /// Auto `mark_read` held back while an undo toast stands.
     private var pendingMarkRead: [Int64: ThreadSummary] = [:]
+    /// Ends the label undo window after 30 s (W6).
+    private var labelExpiryTask: Task<Void, Never>?
     /// Serializes every write to the core, so a deferred `mark_read` can never
     /// land after the action it was meant to precede.
     private var writeChain: Task<Void, Never>?
@@ -615,85 +827,291 @@ public final class MailboxStore {
         return recent
     }
 
-    public func archive(_ id: Int64? = nil) { remove(id, kind: .archive, label: Strings.archived) }
-    public func trash(_ id: Int64? = nil) { remove(id, kind: .trash, label: Strings.trashed) }
-    public func snooze(_ id: Int64? = nil, until date: Date = Format.tomorrowMorning(), label: String = Strings.snoozedUntilTomorrow) {
-        remove(id, kind: .snooze, label: label, wakeAt: Int64(date.timeIntervalSince1970 * 1000))
+    // MARK: Targets of a group action
+
+    /// The rows an explicitly targeted action hits (a toast action, a send-done),
+    /// or the selection when no id is given.
+    private func rows(for id: Int64?) -> [ThreadSummary] {
+        if let id { return thread(id).map { [$0] } ?? [] }
+        let ids = Set(targetIds)
+        return threads.filter { ids.contains($0.id) }
     }
 
-    private func remove(_ id: Int64?, kind: ActionKind, label: String, wakeAt: Int64? = nil) {
-        guard let id = id ?? selectedId, let client, let index = index(of: id) else { return }
-        let removed = Removed(thread: threads[index], index: index, wasExpanded: expandedId == id)
-        beginUserAction()
-        undoTicket = UndoEntry(kind: .removed, threadId: id, previous: removed.thread, wasExpanded: removed.wasExpanded)
-        lastRemovedId = id
-        // Same frame: the row goes, the selection moves on.
-        threads.remove(at: index)
-        if expandedId == id { expandedId = nil; inlineCompose = nil }
-        if selectedId == id {
-            let next = threads.indices.contains(index) ? threads[index].id : threads.last?.id
-            selectedId = next
-            if removed.wasExpanded, let next { expand(next) }
-        }
-        toasts.show(label, actionTitle: Strings.undo, action: { [weak self] in self?.undo() },
+    /// The rows of a target list that was fixed earlier (W3: a dialog or a
+    /// popover keeps the selection it was opened on). Rows that left the list
+    /// meanwhile are simply not there, so nothing happens for them.
+    private func rows(forIds ids: [Int64]) -> [ThreadSummary] {
+        let wanted = Set(ids)
+        return threads.filter { wanted.contains($0.id) }
+    }
+
+    /// "Archiviert" / "Archiviert (3)" — Tauri labels a group with its count.
+    private func groupLabel(_ label: String, count: Int) -> String {
+        count > 1 ? "\(label) (\(count))" : label
+    }
+
+    /// One toast with one undo for the whole group (`undo_last` reverts the
+    /// gesture, see `UndoEntry`).
+    private func showUndoToast(_ text: String) {
+        toasts.show(text, actionTitle: Strings.undo,
+                    action: { [weak self] in self?.undo() },
                     onClose: { [weak self] in self?.endUndoWindow() })
+    }
+
+    // MARK: Removing actions (archive, trash, snooze, spam, unarchive, move)
+
+    public func archive(_ id: Int64? = nil) { removeGroup(.archive, label: Strings.archived, ids: id) }
+    public func trash(_ id: Int64? = nil) { removeGroup(.trash, label: Strings.trashed, ids: id) }
+    public func unarchive(_ id: Int64? = nil) {
+        removeGroup(.unarchive, label: "Zurück in den Posteingang", ids: id)
+    }
+    /// `not_spam`: takes the selection out of the junk folder (spam view).
+    public func notSpam(_ id: Int64? = nil) { removeGroup(.notSpam, label: "Kein Spam", ids: id) }
+
+    /// In the spam view the same key takes a thread back out of it.
+    public func spam(_ id: Int64? = nil) {
+        if view == .spam { removeGroup(.notSpam, label: "Kein Spam", ids: id) }
+        else { removeGroup(.spam, label: "Als Spam markiert", ids: id) }
+    }
+    public func snooze(_ id: Int64? = nil, until date: Date = Format.tomorrowMorning(),
+                       label: String = Strings.snoozedUntilTomorrow) {
+        removeGroup(.snooze, label: label, ids: id,
+                    params: ActionParams(wakeAt: Int64(date.timeIntervalSince1970 * 1000)))
+    }
+    /// `V`: moves every target into `folder`; undo brings the group back.
+    public func moveToFolder(_ folder: FolderInfo, ids: Int64? = nil, targets: [Int64]? = nil) {
+        removeGroup(.move, label: "Verschoben nach \(folderName(folder))", ids: ids,
+                    targets: targets, params: ActionParams(targetFolderId: folder.id))
+    }
+
+    /// The name Tauri shows: the IMAP name without the Gmail prefix.
+    public func folderName(_ folder: FolderInfo) -> String { Pickers.folderName(folder) }
+
+    /// `undo_last` knows archive, trash, snooze, spam and move — those get the
+    /// undo toast. It does **not** know `unarchive` and `not_spam`; a toast with
+    /// an undo button there would take back whatever action is the newest
+    /// instead (W2 aus dem Audit M2). Those get a plain toast.
+    private static func coreCanUndo(_ kind: ActionKind) -> Bool {
+        switch kind {
+        case .unarchive, .notSpam, .unsnooze: return false
+        default: return true
+        }
+    }
+
+    private func removeGroup(_ kind: ActionKind, label: String, ids: Int64? = nil,
+                             targets: [Int64]? = nil, params: ActionParams? = nil) {
+        guard let client else { return }
+        let hits = targets.map { rows(forIds: $0) } ?? rows(for: ids)
+        guard !hits.isEmpty else { return }
+        let removedIds = hits.map(\.id)
+        let removedSet = Set(removedIds)
+        let places = hits.compactMap { thread in index(of: thread.id).map { RemovedRow(thread: thread, index: $0) } }
+        let firstIndex = places.map(\.index).min() ?? 0
+        let wasExpanded = expandedId.map { removedSet.contains($0) } ?? false
+        beginUserAction()
+        if Self.coreCanUndo(kind) {
+            undoTicket = UndoEntry(kind: .removed, threadIds: removedIds, previous: hits, wasExpanded: wasExpanded)
+        }
+        lastRemovedId = removedIds.first
+        // Same frame: the rows go, the cursor moves to the row that slid up.
+        threads.removeAll { removedSet.contains($0.id) }
+        if wasExpanded { expandedId = nil; inlineCompose = nil }
+        let next = threads.indices.contains(firstIndex) ? threads[firstIndex].id : threads.last?.id
+        selectedId = next
+        selectedIds = next.map { [$0] } ?? []
+        selectAnchorId = next
+        if wasExpanded, let next { expand(next) }
+        if Self.coreCanUndo(kind) {
+            showUndoToast(groupLabel(label, count: removedIds.count))
+        } else {
+            toasts.show(groupLabel(label, count: removedIds.count))
+        }
+        PerfLog.shared.write("group_action kind=\(kind.rawValue) n=\(removedIds.count) ids=\(removedIds.map(String.init).joined(separator: ","))")
         enqueueWrite(countsAsOtherAction: false) { [weak self] in
             guard let self else { return }
             do {
-                _ = try await client.performAction(kind, threadIds: [id], wakeAt: wakeAt)
+                _ = try await client.performAction(kind, threadIds: removedIds, params: params)
                 self.refreshUnread()
             } catch {
-                self.restore(removed)
+                self.restore(places)
                 self.toasts.error(error)
             }
         }
     }
 
-    private func restore(_ removed: Removed) {
-        guard index(of: removed.thread.id) == nil else { return }
-        threads.insert(removed.thread, at: min(removed.index, threads.count))
+    /// Puts rows the core refused back where they were (same order as before:
+    /// the page is sorted by date, so the old index is right).
+    private func restore(_ places: [RemovedRow]) {
+        guard !places.isEmpty else { return }
+        for place in places.sorted(by: { $0.index < $1.index }) where index(of: place.thread.id) == nil {
+            threads.insert(place.thread, at: min(place.index, threads.count))
+        }
         // Same rule as the undo path (N-P2a): an open thread keeps the selection.
-        selectedId = expandedId ?? removed.thread.id
+        selectedId = expandedId ?? places.first?.thread.id
+        if let id = selectedId, !selectedIds.isEmpty { selectedIds = [id] }
+        selectAnchorId = selectedId
     }
 
+    // MARK: Star and read state
+
     public func toggleStar(_ id: Int64? = nil) {
-        guard let id = id ?? selectedId, let i = index(of: id), let client else { return }
-        let before = threads[i]
+        guard let client else { return }
+        let hits = rows(for: id)
+        guard !hits.isEmpty else { return }
+        let makeStarred = !hits[0].isStarred
+        let kind: ActionKind = makeStarred ? .star : .unstar
+        let ids = Set(hits.map(\.id))
         beginUserAction()
-        threads[i].isStarred.toggle()
-        let kind: ActionKind = threads[i].isStarred ? .star : .unstar
-        undoTicket = UndoEntry(kind: .star, threadId: id, previous: before)
-        toasts.show(threads[i].isStarred ? Strings.starred : Strings.unstarred, actionTitle: Strings.undo,
-                    action: { [weak self] in self?.undo() },
-                    onClose: { [weak self] in self?.endUndoWindow() })
+        for i in threads.indices where ids.contains(threads[i].id) { threads[i].isStarred = makeStarred }
+        undoTicket = UndoEntry(kind: .star, threadIds: hits.map(\.id), previous: hits)
+        showUndoToast(groupLabel(makeStarred ? Strings.starred : Strings.unstarred, count: hits.count))
+        PerfLog.shared.write("group_action kind=\(kind.rawValue) n=\(hits.count)")
         enqueueWrite(countsAsOtherAction: false) { [weak self] in
             guard let self else { return }
-            do { _ = try await client.performAction(kind, threadIds: [id]); self.refreshUnread() } catch {
-                if let j = self.index(of: id) { self.threads[j] = before }
+            do { _ = try await client.performAction(kind, threadIds: hits.map(\.id)); self.refreshUnread() } catch {
+                for row in hits { if let j = self.index(of: row.id) { self.threads[j].isStarred = row.isStarred } }
                 self.toasts.error(error)
             }
         }
     }
 
     public func toggleUnread(_ id: Int64? = nil) {
-        guard let id = id ?? selectedId, let i = index(of: id), let client else { return }
-        let before = threads[i]
-        let makeUnread = !before.isUnread
+        guard let client else { return }
+        let hits = rows(for: id)
+        guard !hits.isEmpty else { return }
+        // The first target decides the direction (Tauri's `toggleRead`).
+        let makeUnread = !hits[0].isUnread
+        let kind: ActionKind = makeUnread ? .markUnread : .markRead
+        let ids = Set(hits.map(\.id))
         beginUserAction()
-        threads[i].unreadCount = makeUnread ? max(1, before.messageCount > 0 ? 1 : 1) : 0
-        if makeUnread, expandedId == id { collapse() }
-        undoTicket = UndoEntry(kind: .readState, threadId: id, previous: before)
-        toasts.show(makeUnread ? Strings.markedUnread : Strings.markedRead, actionTitle: Strings.undo,
-                    action: { [weak self] in self?.undo() },
-                    onClose: { [weak self] in self?.endUndoWindow() })
+        for i in threads.indices where ids.contains(threads[i].id) {
+            threads[i].unreadCount = makeUnread ? max(1, threads[i].messageCount > 0 ? 1 : 1) : 0
+        }
+        if makeUnread, let open = expandedId, ids.contains(open) { collapse() }
+        undoTicket = UndoEntry(kind: .readState, threadIds: hits.map(\.id), previous: hits)
+        showUndoToast(groupLabel(makeUnread ? Strings.markedUnread : Strings.markedRead, count: hits.count))
+        PerfLog.shared.write("group_action kind=\(kind.rawValue) n=\(hits.count)")
         enqueueWrite(countsAsOtherAction: false) { [weak self] in
             guard let self else { return }
-            do { _ = try await client.performAction(makeUnread ? .markUnread : .markRead, threadIds: [id]); self.refreshUnread() } catch {
-                if let j = self.index(of: id) { self.threads[j] = before }
+            do { _ = try await client.performAction(kind, threadIds: hits.map(\.id)); self.refreshUnread() } catch {
+                for row in hits { if let j = self.index(of: row.id) { self.threads[j].unreadCount = row.unreadCount } }
                 self.toasts.error(error)
             }
         }
     }
+
+    // MARK: Labels (`L`)
+
+    /// `add_label`/`remove_label` for every target. No toast: the row's label
+    /// chip is the feedback (as in Tauri); `Z` still takes the group back while
+    /// it is the newest core action.
+    public func setLabel(_ labelId: Int64, applied: Bool, targets: [Int64]? = nil) {
+        guard let client else { return }
+        let hits = targets.map { rows(forIds: $0) } ?? rows(for: nil)
+        guard !hits.isEmpty else { return }
+        let kind: ActionKind = applied ? .addLabel : .removeLabel
+        let ids = Set(hits.map(\.id))
+        beginUserAction()
+        for i in threads.indices where ids.contains(threads[i].id) {
+            if applied, !threads[i].labels.contains(labelId) { threads[i].labels.append(labelId) }
+            if !applied { threads[i].labels.removeAll { $0 == labelId } }
+        }
+        let ticket = UndoEntry(kind: .label, threadIds: hits.map(\.id), previous: hits)
+        undoTicket = ticket
+        scheduleLabelTicketExpiry(ticketToken: ticket.token)
+        PerfLog.shared.write("group_action kind=\(kind.rawValue) label=\(labelId) n=\(hits.count)")
+        enqueueWrite(countsAsOtherAction: false) { [weak self] in
+            guard let self else { return }
+            do {
+                _ = try await client.performAction(kind, threadIds: hits.map(\.id),
+                                                   params: ActionParams(labelId: labelId))
+            } catch {
+                for row in hits { if let j = self.index(of: row.id) { self.threads[j].labels = row.labels } }
+                self.toasts.error(error)
+            }
+        }
+    }
+
+    /// True when every target carries the label (the popover's checkmark).
+    public func allTargetsHaveLabel(_ labelId: Int64, targets: [Int64]? = nil) -> Bool {
+        let hits = targets.map { rows(forIds: $0) } ?? rows(for: nil)
+        return !hits.isEmpty && hits.allSatisfy { $0.labels.contains(labelId) }
+    }
+
+    // MARK: Permanent delete (Papierkorb, no undo)
+
+    /// `#` in the Papierkorb view: the confirmation dialog runs this with the
+    /// target list it was opened on (W3 aus dem Audit M2). It never reads the
+    /// live selection: a row that vanished while the dialog stood (sync, another
+    /// device) would hand the neighbour into an irreversible delete.
+    public func deletePermanently(ids: [Int64]) {
+        guard let client else { return }
+        let hits = rows(forIds: ids)
+        guard !hits.isEmpty else { return }
+        let removedIds = hits.map(\.id)
+        let removedSet = Set(removedIds)
+        let places = hits.compactMap { thread in index(of: thread.id).map { RemovedRow(thread: thread, index: $0) } }
+        let firstIndex = places.map(\.index).min() ?? 0
+        beginUserAction()
+        undoTicket = nil
+        threads.removeAll { removedSet.contains($0.id) }
+        if let open = expandedId, removedSet.contains(open) { expandedId = nil; inlineCompose = nil }
+        let next = threads.indices.contains(firstIndex) ? threads[firstIndex].id : threads.last?.id
+        selectedId = next
+        selectedIds = next.map { [$0] } ?? []
+        selectAnchorId = next
+        toasts.show(groupLabel("Endgültig gelöscht", count: removedIds.count))
+        PerfLog.shared.write("permanent_delete n=\(removedIds.count) ids=\(removedIds.map(String.init).joined(separator: ","))")
+        enqueueWrite(countsAsOtherAction: false) { [weak self] in
+            guard let self else { return }
+            do {
+                _ = try await client.performAction(.deletePermanently, threadIds: removedIds)
+                self.refreshUnread()
+            } catch {
+                self.restore(places)
+                self.toasts.error(error)
+            }
+        }
+    }
+
+    // MARK: Folders and sync (M2.5)
+
+    private func accountOfTargets() -> Int64? {
+        if let accountId { return accountId }
+        let ids = Set(targetIds)
+        return threads.first { ids.contains($0.id) }?.accountId
+    }
+
+    /// Loads the IMAP folders of the accounts the current selection belongs to
+    /// (for the move popover). Called when the popover opens.
+    public func loadFolders() async {
+        guard let client else { return }
+        var accounts = Set<Int64>()
+        if let account = accountOfTargets() { accounts.insert(account) }
+        if accounts.isEmpty { accounts.formUnion(self.accounts.map(\.id)) }
+        var loaded: [FolderInfo] = []
+        for account in accounts.sorted() {
+            if let list = try? await client.listFolders(accountId: account) { loaded += list }
+        }
+        folders = loaded.sorted { folderName($0).localizedCaseInsensitiveCompare(folderName($1)) == .orderedAscending }
+        PerfLog.shared.write("folders_loaded n=\(folders.count) accounts=\(accounts.count)")
+    }
+
+    /// "Jetzt synchronisieren" (`sync_now`).
+    public func syncNow() {
+        guard let client else { return }
+        let account = accountOfTargets()
+        toasts.show("Synchronisiere …")
+        Task {
+            do {
+                try await client.syncNow(accountId: account)
+                self.refreshUnread()
+                PerfLog.shared.write("sync_now account=\(account ?? -1)")
+            } catch { self.toasts.error(error) }
+        }
+    }
+
+    // MARK: Auto mark-read
 
     /// Opening an unread thread marks it read (no toast, no undo entry). While an
     /// undo toast stands it is only shown locally and sent when the toast closes.
@@ -719,6 +1137,24 @@ public final class MailboxStore {
         undoTicket = nil
         coreActionsAfterTicket = 0
         flushPendingMarkRead()
+    }
+
+    /// How long a label action stays undoable without a toast (the core's
+    /// `undo_last` window). Tests shorten it.
+    static var labelUndoWindow: TimeInterval = 30
+
+    /// W6 aus dem Audit M2: a label action shows no toast, so nothing closes its
+    /// undo window — and `mark_read` stays local for as long as a ticket stands.
+    /// The window is the core's 30 s; then the deferred reads go out.
+    private func scheduleLabelTicketExpiry(ticketToken: UUID) {
+        labelExpiryTask?.cancel()
+        let seconds = Self.labelUndoWindow
+        labelExpiryTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64(max(0, seconds) * 1_000_000_000))
+            guard !Task.isCancelled, let self, self.undoTicket?.token == ticketToken else { return }
+            self.endUndoWindow()
+            PerfLog.shared.write("label_undo_window expired")
+        }
     }
 
     /// `Z` / toast button: `undo_last`, but only while the toast's action is
@@ -749,6 +1185,7 @@ public final class MailboxStore {
                 if confirmed {
                     self.restoreLocally(ticket)
                     self.toasts.show(Strings.undone)
+                    PerfLog.shared.write("undo_group n=\(ticket.threadIds.count) ok=1")
                 } else if undone {
                     // `undo_last` took back a foreign action (MCP, a send); the
                     // ticket's action is still there (R-W1).
@@ -771,14 +1208,20 @@ public final class MailboxStore {
     private func confirmUndone(_ ticket: UndoEntry) -> Bool {
         switch ticket.kind {
         case .removed:
-            // Back in the list the user is looking at.
-            return index(of: ticket.threadId) != nil
+            // Every row of the group is back in the list the user is looking at.
+            return ticket.threadIds.allSatisfy { index(of: $0) != nil }
         case .star:
-            guard let row = thread(ticket.threadId) else { return false }
-            return row.isStarred == ticket.previous.isStarred
+            return ticket.previous.allSatisfy { row in
+                thread(row.id).map { $0.isStarred == row.isStarred } ?? false
+            }
         case .readState:
-            guard let row = thread(ticket.threadId) else { return false }
-            return row.unreadCount == ticket.previous.unreadCount
+            return ticket.previous.allSatisfy { row in
+                thread(row.id).map { $0.unreadCount == row.unreadCount } ?? false
+            }
+        case .label:
+            return ticket.previous.allSatisfy { row in
+                thread(row.id).map { Set($0.labels) == Set(row.labels) } ?? false
+            }
         }
     }
 
@@ -789,23 +1232,25 @@ public final class MailboxStore {
             // N-P2a: selection and the open thread must not point at different
             // rows. While a thread is open — typically the neighbour that
             // opened when the archived thread was open — it keeps the
-            // selection, and the restored thread only reappears in the list.
-            // With nothing open the restored thread is selected (and opened
-            // again if it was open before the action).
+            // selection, and the restored rows only reappear in the list.
+            // With nothing open the first restored thread is selected.
+            let restored = ticket.threadIds.first { index(of: $0) != nil }
             if let open = expandedId {
                 selectedId = open
             } else {
-                selectedId = ticket.threadId
-                if ticket.wasExpanded { expand(ticket.threadId) }
+                selectedId = restored
+                if ticket.wasExpanded, let restored { expand(restored) }
             }
+            selectedIds = selectedId.map { [$0] } ?? []
+            selectAnchorId = selectedId
             lastRemovedId = nil
-            PerfLog.shared.write("undo_restored sel=\(selectedId ?? -1) open=\(expandedId ?? -1)")
+            PerfLog.shared.write("undo_restored sel=\(selectedId ?? -1) open=\(expandedId ?? -1) n=\(ticket.threadIds.count)")
         case .star:
-            guard let i = index(of: ticket.threadId) else { return }
-            threads[i].isStarred = ticket.previous.isStarred
+            for row in ticket.previous { if let i = index(of: row.id) { threads[i].isStarred = row.isStarred } }
         case .readState:
-            guard let i = index(of: ticket.threadId) else { return }
-            threads[i].unreadCount = ticket.previous.unreadCount
+            for row in ticket.previous { if let i = index(of: row.id) { threads[i].unreadCount = row.unreadCount } }
+        case .label:
+            for row in ticket.previous { if let i = index(of: row.id) { threads[i].labels = row.labels } }
         }
     }
 
@@ -842,6 +1287,26 @@ public final class MailboxStore {
     public func openAttachment(_ attachment: AttachmentMeta) {
         guard let client else { return }
         Task { do { try await client.openAttachment(attachment.id) } catch { toasts.error(error) } }
+    }
+
+    /// M2.5: Quick Look needs a file on disk. The core extracts the attachment
+    /// into `directory/<id>/<name>` through `save_attachment` (the audited read
+    /// path); the folder is removed when the app quits.
+    public func stageAttachment(_ attachment: AttachmentMeta, into directory: URL) async -> URL? {
+        guard let client else { return nil }
+        let name = (attachment.filename?.isEmpty == false ? attachment.filename! : "Anhang")
+            .replacingOccurrences(of: "/", with: "_")
+            .replacingOccurrences(of: ":", with: "_")
+        let folder = directory.appendingPathComponent(String(attachment.id), isDirectory: true)
+        do {
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            let target = folder.appendingPathComponent(name, isDirectory: false)
+            try await client.saveAttachment(attachment.id, to: target.path)
+            return FileManager.default.fileExists(atPath: target.path) ? target : nil
+        } catch {
+            PerfLog.shared.write("attachment_stage_failed id=\(attachment.id)")
+            return nil
+        }
     }
 
     public func saveAttachment(_ attachment: AttachmentMeta) {
