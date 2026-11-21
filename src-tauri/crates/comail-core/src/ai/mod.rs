@@ -1104,6 +1104,24 @@ pub fn clean_untrusted(text: &str) -> String {
         .collect()
 }
 
+/// The text the model gets for one message.
+///
+/// Plain part first; mails that only ship HTML (newsletters, receipts, booking
+/// confirmations — 11 % of a typical mailbox) contribute the text derived from
+/// their HTML, not the one-line list preview. Only when neither part has text
+/// does the snippet stand in. Invisible characters are stripped here so every
+/// prompt path shares the same cleaning.
+pub fn message_text(m: &crate::models::MessageDetail) -> String {
+    let raw = match m.text_body.as_deref().map(str::trim) {
+        Some(text) if !text.is_empty() => text.to_string(),
+        _ => match m.html_body.as_deref().map(str::trim) {
+            Some(html) if !html.is_empty() => mail_parser::decoders::html::html_to_text(html),
+            _ => m.snippet.clone(),
+        },
+    };
+    clean_untrusted(&raw)
+}
+
 /// Render a thread as plain text context for prompting.
 ///
 /// The model has to reconstruct the conversation from this, so it encodes the
@@ -1119,8 +1137,7 @@ pub fn thread_context(messages: &[crate::models::MessageDetail], budget_chars: u
     let total = msgs.len();
 
     let render = |(i, m): (usize, &&crate::models::MessageDetail)| -> String {
-        let body = m.text_body.as_deref().unwrap_or(m.snippet.as_str());
-        let body: String = clean_untrusted(body).chars().take(4000).collect();
+        let body: String = message_text(m).chars().take(8000).collect();
         let who = if m.is_outgoing { " (YOU)" } else { "" };
         format!(
             "--- Message {}/{} · From: {} <{}>{} · {}\n{}\n\n",
@@ -1193,8 +1210,7 @@ pub fn reply_target_line(
 /// 1-based number the model cites as `[index]`; callers keep it stable across an
 /// agentic session so citations always map to the same source.
 pub fn format_excerpt(index: usize, m: &crate::models::MessageDetail) -> String {
-    let body = m.text_body.as_deref().unwrap_or(m.snippet.as_str());
-    let body: String = clean_untrusted(body).chars().take(3000).collect();
+    let body: String = message_text(m).chars().take(3000).collect();
     format!(
         "[{}] Subject: {}\nFrom: {} <{}>  Date: {}\n{}\n\n",
         index,
@@ -1285,8 +1301,7 @@ pub const AGENTIC_ASK_SYSTEM: &str = "You help the user answer questions about t
 pub fn rag_context(messages: &[crate::models::MessageDetail], budget_chars: usize) -> String {
     let mut out = String::new();
     for (i, m) in messages.iter().enumerate() {
-        let body = m.text_body.as_deref().unwrap_or(m.snippet.as_str());
-        let body: String = clean_untrusted(body).chars().take(3000).collect();
+        let body: String = message_text(m).chars().take(3000).collect();
         out.push_str(&format!(
             "[{}] Subject: {}\nFrom: {} <{}>  Date: {}\n{}\n\n",
             i + 1,
@@ -2127,6 +2142,90 @@ mod tests {
         assert!(ex.starts_with("[3] Subject: S"));
         assert!(ex.contains("<alice@x.com>"));
         assert!(ex.contains("the body text"));
+    }
+
+    /// A mail that only ships HTML: the model must read the HTML's text, not
+    /// the one-line list preview.
+    #[test]
+    fn an_html_only_mail_contributes_its_text() {
+        let mut m = msg(1, 1_000, "shop@x.com", false, false, "die vorschauzeile");
+        m.text_body = None;
+        m.html_body = Some(
+            "<html><head><title>T</title></head><body><p>Bestellnummer 4711</p></body></html>"
+                .into(),
+        );
+
+        let excerpt = format_excerpt(1, &m);
+        assert!(excerpt.contains("Bestellnummer 4711"), "{excerpt}");
+        assert!(
+            !excerpt.contains("die vorschauzeile"),
+            "der Snippet darf nicht mehr stehen"
+        );
+
+        let thread = thread_context(std::slice::from_ref(&m), 16_000);
+        assert!(thread.contains("Bestellnummer 4711"), "{thread}");
+    }
+
+    /// A real plain-text part always wins over the HTML alternative.
+    #[test]
+    fn the_plain_part_wins_over_the_html_part() {
+        let mut m = msg(1, 1_000, "a@x.com", false, false, "der textteil");
+        m.html_body = Some("<p>der htmlteil</p>".into());
+        let excerpt = format_excerpt(1, &m);
+        assert!(excerpt.contains("der textteil"));
+        assert!(!excerpt.contains("der htmlteil"));
+    }
+
+    /// Neither part has text: the snippet is the last resort (unchanged).
+    #[test]
+    fn without_any_body_text_the_snippet_stands_in() {
+        let mut m = msg(1, 1_000, "a@x.com", false, false, "nur die vorschau");
+        m.text_body = None;
+        m.html_body = Some("   ".into());
+        assert!(format_excerpt(1, &m).contains("nur die vorschau"));
+        assert!(thread_context(std::slice::from_ref(&m), 16_000).contains("nur die vorschau"));
+    }
+
+    /// Script and style never reach the model, also not through the HTML text.
+    #[test]
+    fn script_and_style_stay_out_of_the_text() {
+        let mut m = msg(1, 1_000, "a@x.com", false, false, "vorschau");
+        m.text_body = None;
+        m.html_body = Some(
+            "<html><head><style>.geheim{color:red}</style></head>\
+             <body><script>steuergeheimnis()</script><p>sichtbare antwort</p></body></html>"
+                .into(),
+        );
+        let excerpt = format_excerpt(1, &m);
+        assert!(excerpt.contains("sichtbare antwort"), "{excerpt}");
+        assert!(!excerpt.contains("steuergeheimnis"), "{excerpt}");
+        assert!(!excerpt.contains(".geheim"), "{excerpt}");
+    }
+
+    /// `read_email` reads 8 000 characters per mail; the thread budget still
+    /// wins when it is smaller.
+    #[test]
+    fn a_thread_message_is_read_up_to_eight_thousand_characters() {
+        let mut body = "x".repeat(7_900);
+        body.push_str("TIEFMARKE");
+        body.push_str(&"y".repeat(200));
+        body.push_str("ZUSPAET");
+        let m = msg(1, 1_000, "a@x.com", false, false, &body);
+
+        let thread = thread_context(std::slice::from_ref(&m), 16_000);
+        assert!(thread.contains("TIEFMARKE"), "Zeichen 7 900 muss drin sein");
+        assert!(!thread.contains("ZUSPAET"), "über 8 000 wird gekappt");
+
+        // The thread budget still decides how many messages come along: the
+        // newest one is always read, the older one no longer fits.
+        let older = msg(2, 500, "b@x.com", false, false, "ALTMARKE");
+        let tight = thread_context(&[older, m], 8_000);
+        assert!(tight.contains("TIEFMARKE"), "{tight}");
+        assert!(
+            !tight.contains("ALTMARKE"),
+            "das Thread-Budget greift weiter"
+        );
+        assert!(tight.contains("1 earlier message(s) omitted"), "{tight}");
     }
 
     #[test]
