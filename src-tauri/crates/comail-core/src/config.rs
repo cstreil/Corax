@@ -3,6 +3,11 @@ use std::path::PathBuf;
 #[derive(Debug, Clone)]
 pub struct Paths {
     pub data_dir: PathBuf,
+    /// Name des lokalen MCP-Servers: steht im `initialize`-Handshake und ist
+    /// der Schlüssel, den die „Bei App eintragen“-Helfer in die Konfiguration
+    /// schreiben. Standard bleibt `comail` (Tauri-App und Upstream unverändert);
+    /// die native Instanz setzt `corax` (siehe `rabe-host`).
+    pub mcp_name: String,
 }
 
 impl Paths {
@@ -18,12 +23,22 @@ impl Paths {
                     .unwrap_or_else(|| PathBuf::from("."))
                     .join("comail")
             });
-        Paths { data_dir }
+        Paths {
+            data_dir,
+            mcp_name: crate::mcp::DEFAULT_MCP_NAME.to_string(),
+        }
+    }
+
+    /// Setzt den Namen des lokalen MCP-Servers (die native Instanz: `corax`).
+    pub fn with_mcp_name(mut self, name: impl Into<String>) -> Self {
+        self.mcp_name = name.into();
+        self
     }
 
     pub fn for_tests(root: &std::path::Path) -> Self {
         Paths {
             data_dir: root.to_path_buf(),
+            mcp_name: crate::mcp::DEFAULT_MCP_NAME.to_string(),
         }
     }
 

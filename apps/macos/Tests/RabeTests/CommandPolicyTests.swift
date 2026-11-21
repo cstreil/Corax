@@ -7,8 +7,8 @@ import XCTest
 /// switch on (P2g, `WriteAccessTests`).
 ///
 /// Since the M2 audit every command and every `ActionKind` the app implements
-/// is released. One command stays shut: `mcp_install_client` would overwrite
-/// the working MCP entry of the Tauri app.
+/// is released. M4 released `mcp_install_client` too: the core writes the
+/// instance's own key (`corax`), so the Tauri app's `comail` entry survives.
 final class CommandPolicyTests: XCTestCase {
     func testEveryReadingCommandIsAllowed() {
         for command in CommandPolicy.reading {
@@ -80,8 +80,10 @@ final class CommandPolicyTests: XCTestCase {
         for command in refused {
             XCTAssertEqual(CommandPolicy.decision(for: command, writesAllowed: true), .notAllowed, command)
         }
-        // The MCP entry of the Tauri app must not be overwritten by this instance.
-        XCTAssertEqual(CommandPolicy.decision(for: "mcp_install_client", writesAllowed: true), .notAllowed)
+        // M4: „Bei App eintragen“ schreibt nur den eigenen Schlüssel und
+        // braucht wie jede andere Änderung den Schalter.
+        XCTAssertEqual(CommandPolicy.decision(for: "mcp_install_client"), .writesDisabled)
+        XCTAssertEqual(CommandPolicy.decision(for: "mcp_install_client", writesAllowed: true), .allowed)
     }
 
     func testOnlyTheUsedActionKindsPass() {
@@ -120,8 +122,7 @@ final class CommandPolicyTests: XCTestCase {
     /// The M2 audit released everything the app implements.
     func testTheAuditLeftNothingPending() {
         XCTAssertTrue(CommandPolicy.pendingAudit.isEmpty)
-        XCTAssertEqual(CommandPolicy.blocked,
-                       ["add_account_password", "test_connection", "mcp_install_client"])
+        XCTAssertEqual(CommandPolicy.blocked, ["add_account_password", "test_connection"])
         // M2.12: `connect_calendar` is released under `writing` (the settings
         // window has "Konto verbinden"); the other two calendar commands the
         // UI does not use stay refused.

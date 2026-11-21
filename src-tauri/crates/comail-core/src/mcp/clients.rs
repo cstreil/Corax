@@ -16,7 +16,9 @@ use serde_json::{Value, json};
 use crate::Core;
 use crate::error::{CoreError, Result};
 
-const KEY: &str = "comail";
+/// Der Konfigurationsschlüssel kommt vom Aufrufer (`Conn::name`): `comail`
+/// für die Tauri-App und Upstream, `corax` für die native Instanz. Ein
+/// vorhandener `comail`-Eintrag bleibt beim Schreiben unberührt.
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -55,6 +57,8 @@ pub struct InstallResult {
 pub struct Conn {
     pub url: String,
     pub token: String,
+    /// Server name in the handshake and the key in client configs.
+    pub name: String,
 }
 
 impl Conn {
@@ -370,8 +374,8 @@ fn json_entry(id: &str, conn: &Conn) -> Option<(&'static [&'static str], Value)>
     })
 }
 
-fn wrap(path: &[&str], entry: Value) -> Value {
-    let mut v = json!({ KEY: entry });
+fn wrap(path: &[&str], key: &str, entry: Value) -> Value {
+    let mut v = json!({ key: entry });
     for key in path.iter().rev() {
         v = json!({ *key: v });
     }
@@ -386,7 +390,7 @@ fn claude_code_args(conn: &Conn) -> Vec<String> {
         "http".into(),
         "--scope".into(),
         "user".into(),
-        KEY.into(),
+        conn.name.clone(),
         conn.url.clone(),
         "--header".into(),
         format!("Authorization: {}", conn.auth()),
@@ -395,7 +399,8 @@ fn claude_code_args(conn: &Conn) -> Vec<String> {
 
 fn codex_toml(conn: &Conn) -> String {
     format!(
-        "[mcp_servers.{KEY}]\nurl = \"{}\"\nhttp_headers = {{ \"Authorization\" = \"{}\" }}\n",
+        "[mcp_servers.{}]\nurl = \"{}\"\nhttp_headers = {{ \"Authorization\" = \"{}\" }}\n",
+        conn.name,
         conn.url,
         conn.auth()
     )
@@ -422,22 +427,24 @@ pub fn snippet(id: &str, conn: &Conn) -> Result<String> {
         }
         "codex" => codex_toml(conn),
         "continue" => format!(
-            "# ~/.continue/config.yaml\nmcpServers:\n  - name: {KEY}\n    type: streamable-http\n    url: {}\n    requestOptions:\n      headers:\n        Authorization: {}\n",
+            "# ~/.continue/config.yaml\nmcpServers:\n  - name: {}\n    type: streamable-http\n    url: {}\n    requestOptions:\n      headers:\n        Authorization: {}\n",
+            conn.name,
             conn.url,
             conn.auth()
         ),
         "goose" => format!(
-            "# ~/.config/goose/config.yaml\nextensions:\n  {KEY}:\n    name: {KEY}\n    type: streamable_http\n    uri: {}\n    headers:\n      Authorization: {}\n    enabled: true\n    timeout: 300\n",
+            "# ~/.config/goose/config.yaml\nextensions:\n  {name}:\n    name: {name}\n    type: streamable_http\n    uri: {}\n    headers:\n      Authorization: {}\n    enabled: true\n    timeout: 300\n",
             conn.url,
-            conn.auth()
+            conn.auth(),
+            name = conn.name
         ),
         "chatgpt" => {
             let path_url = format!("{}/{}", conn.url, conn.token);
             format!(
                 "ChatGPT connects to MCP servers from OpenAI's cloud, so it cannot reach \
-                 comail on this computer directly.\n\n\
-                 To use comail from ChatGPT:\n\
-                 1. Expose comail through a tunnel, e.g.\n   \
+                 {name} on this computer directly.\n\n\
+                 To use {name} from ChatGPT:\n\
+                 1. Expose {name} through a tunnel, e.g.\n   \
                  cloudflared tunnel --url http://127.0.0.1:{port}\n\
                  2. In ChatGPT: Settings > Apps & Connectors > Advanced > turn on Developer mode, \
                  then Create a connector.\n\
@@ -445,8 +452,9 @@ pub fn snippet(id: &str, conn: &Conn) -> Result<String> {
                  https://<your-tunnel>{path}\n   \
                  and choose \"No authentication\" (the token in the URL is the password).\n\n\
                  Warning: anyone with that URL can read your mail while the tunnel runs. \
-                 Stop the tunnel when you're done and regenerate the token in comail \
+                 Stop the tunnel when you're done and regenerate the token in {name} \
                  if the URL was shared.\n\nLocal URL with token: {path_url}\n",
+                name = conn.name,
                 port = conn
                     .url
                     .rsplit(':')
@@ -460,19 +468,19 @@ pub fn snippet(id: &str, conn: &Conn) -> Result<String> {
             let (_, entry) = json_entry(id, conn).expect("vscode entry");
             format!(
                 "// VS Code: Command Palette > MCP: Open User Configuration\n{}",
-                pretty(&wrap(&["servers"], entry))
+                pretty(&wrap(&["servers"], &conn.name, entry))
             )
         }
         "zed" => {
             let (_, entry) = json_entry(id, conn).expect("zed entry");
             format!(
                 "// Zed settings.json\n{}",
-                pretty(&wrap(&["context_servers"], entry))
+                pretty(&wrap(&["context_servers"], &conn.name, entry))
             )
         }
         _ => {
             let (path, entry) = json_entry(id, conn).expect("json client");
-            pretty(&wrap(path, entry))
+            pretty(&wrap(path, &conn.name, entry))
         }
     })
 }
@@ -484,7 +492,8 @@ fn deeplink(id: &str, conn: &Conn) -> Option<String> {
     let b64 = base64::engine::general_purpose::STANDARD.encode(config.as_bytes());
     Some(match id {
         "cursor" => format!(
-            "cursor://anysphere.cursor-deeplink/mcp/install?name={KEY}&config={}",
+            "cursor://anysphere.cursor-deeplink/mcp/install?name={}&config={}",
+            enc(&conn.name),
             enc(&b64)
         ),
         "vscode" | "vscode-insiders" => {
@@ -493,17 +502,21 @@ fn deeplink(id: &str, conn: &Conn) -> Option<String> {
             } else {
                 "vscode-insiders"
             };
-            let cfg =
-                json!({ "name": KEY, "type": "http", "url": conn.url, "headers": conn.headers() });
+            let cfg = json!({ "name": conn.name, "type": "http", "url": conn.url,
+                              "headers": conn.headers() });
             format!("{scheme}:mcp/install?{}", enc(&cfg.to_string()))
         }
-        "lmstudio" => format!("lmstudio://add_mcp?name={KEY}&config={}", enc(&b64)),
+        "lmstudio" => format!(
+            "lmstudio://add_mcp?name={}&config={}",
+            enc(&conn.name),
+            enc(&b64)
+        ),
         _ => return None,
     })
 }
 
-/// Merge `entry` at `path.KEY` into a JSON config, keeping everything else.
-pub(crate) fn merge_json_config(file: &Path, path: &[&str], entry: Value) -> Result<()> {
+/// Merge `entry` at `path.<key>` into a JSON config, keeping everything else.
+pub(crate) fn merge_json_config(file: &Path, path: &[&str], key: &str, entry: Value) -> Result<()> {
     let mut root: Value = match std::fs::read_to_string(file) {
         Ok(s) if !s.trim().is_empty() => serde_json::from_str(&s).map_err(|_| {
             CoreError::Other(format!(
@@ -524,7 +537,7 @@ pub(crate) fn merge_json_config(file: &Path, path: &[&str], entry: Value) -> Res
     }
     node.as_object_mut()
         .ok_or_else(|| CoreError::Other(format!("unexpected shape in {}", file.display())))?
-        .insert(KEY.into(), entry);
+        .insert(key.to_string(), entry);
     write_with_backup(file, &(serde_json::to_string_pretty(&root)? + "\n"))
 }
 
@@ -551,7 +564,7 @@ pub(crate) fn merge_codex_config(file: &Path, conn: &Conn) -> Result<()> {
     let mut headers = toml_edit::InlineTable::new();
     headers.insert("Authorization", conn.auth().into());
     entry["http_headers"] = toml_edit::value(headers);
-    servers.insert(KEY, toml_edit::Item::Table(entry));
+    servers.insert(conn.name.as_str(), toml_edit::Item::Table(entry));
     write_with_backup(file, &doc.to_string())
 }
 
@@ -605,7 +618,11 @@ fn install(id: &str, conn: &Conn) -> Result<InstallResult> {
             })?;
             // Re-adding replaces an entry with a stale token.
             let _ = std::process::Command::new(&claude)
-                .args(["mcp", "remove", "--scope", "user", KEY])
+                .arg("mcp")
+                .arg("remove")
+                .arg("--scope")
+                .arg("user")
+                .arg(&conn.name)
                 .output();
             let out = std::process::Command::new(&claude)
                 .args(claude_code_args(conn))
@@ -634,7 +651,7 @@ fn install(id: &str, conn: &Conn) -> Result<InstallResult> {
                 merge_codex_config(&file, conn)?;
             } else {
                 let (path, entry) = json_entry(id, conn).expect("json client");
-                merge_json_config(&file, path, entry)?;
+                merge_json_config(&file, path, &conn.name, entry)?;
             }
             let message = match id {
                 "claude-desktop" if find_executable("npx").is_none() => {
@@ -653,6 +670,7 @@ impl Core {
         Ok(Conn {
             url: self.mcp_status().await?.url,
             token: self.mcp_token().await?,
+            name: self.mcp_name().to_string(),
         })
     }
 
@@ -685,6 +703,15 @@ mod tests {
         Conn {
             url: "http://127.0.0.1:47823/mcp".into(),
             token: "tok".into(),
+            name: crate::mcp::DEFAULT_MCP_NAME.into(),
+        }
+    }
+
+    /// Dieselbe Verbindung unter einem anderen Namen (die native Instanz).
+    fn named_conn(name: &str) -> Conn {
+        Conn {
+            name: name.into(),
+            ..conn()
         }
     }
 
@@ -698,7 +725,7 @@ mod tests {
         )
         .unwrap();
         let (path, entry) = json_entry("cursor", &conn()).unwrap();
-        merge_json_config(&file, path, entry).unwrap();
+        merge_json_config(&file, path, "comail", entry).unwrap();
         let v: Value = serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
         assert_eq!(v["theme"], "dark");
         assert_eq!(v["mcpServers"]["other"]["url"], "x");
@@ -716,7 +743,7 @@ mod tests {
         let original = "{\n  // comment\n  \"a\": 1\n}";
         std::fs::write(&file, original).unwrap();
         let (path, entry) = json_entry("gemini", &conn()).unwrap();
-        assert!(merge_json_config(&file, path, entry).is_err());
+        assert!(merge_json_config(&file, path, "comail", entry).is_err());
         assert_eq!(std::fs::read_to_string(&file).unwrap(), original);
     }
 
@@ -725,7 +752,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let file = dir.path().join("nested").join("settings.json");
         let (path, entry) = json_entry("gemini", &conn()).unwrap();
-        merge_json_config(&file, path, entry).unwrap();
+        merge_json_config(&file, path, "comail", entry).unwrap();
         let v: Value = serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
         assert_eq!(
             v["mcpServers"]["comail"]["httpUrl"],
@@ -752,6 +779,76 @@ mod tests {
         merge_codex_config(&file, &conn()).unwrap();
         let s2 = std::fs::read_to_string(&file).unwrap();
         assert_eq!(s2.matches("[mcp_servers.comail]").count(), 1);
+    }
+
+    /// M4: der konfigurierte Name steht in jeder Ausgabeform — Kommando,
+    /// TOML, YAML, JSON und Deeplink.
+    #[test]
+    fn the_configured_name_reaches_every_snippet() {
+        let c = named_conn("corax");
+        let command = snippet("claude-code", &c).unwrap();
+        assert!(command.contains("corax"), "{command}");
+        assert!(!command.contains("comail"), "{command}");
+        assert!(
+            snippet("codex", &c)
+                .unwrap()
+                .contains("[mcp_servers.corax]")
+        );
+        assert!(snippet("goose", &c).unwrap().contains("corax:"));
+        assert!(snippet("continue", &c).unwrap().contains("name: corax"));
+        assert!(snippet("generic", &c).unwrap().contains("\"corax\""));
+        assert!(
+            deeplink("cursor", &c)
+                .unwrap()
+                .contains("name=corax&config=")
+        );
+        assert!(
+            deeplink("lmstudio", &c)
+                .unwrap()
+                .contains("name=corax&config=")
+        );
+        assert!(
+            deeplink("vscode", &c)
+                .unwrap()
+                .contains("%22name%22%3A%22corax%22")
+        );
+    }
+
+    /// Ein vorhandener `comail`-Eintrag der Tauri-App bleibt beim Schreiben
+    /// unter `corax` unberührt, die `.bak`-Sicherung bleibt.
+    #[test]
+    fn a_foreign_entry_survives_the_write() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("mcp.json");
+        std::fs::write(
+            &file,
+            r#"{"mcpServers":{"comail":{"url":"http://127.0.0.1:47823/mcp"}}}"#,
+        )
+        .unwrap();
+        let (path, entry) = json_entry("cursor", &named_conn("corax")).unwrap();
+        merge_json_config(&file, path, "corax", entry).unwrap();
+        let v: Value = serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
+        assert_eq!(
+            v["mcpServers"]["comail"]["url"],
+            "http://127.0.0.1:47823/mcp"
+        );
+        assert_eq!(
+            v["mcpServers"]["corax"]["headers"]["Authorization"],
+            "Bearer tok"
+        );
+        assert!(dir.path().join("mcp.json.bak").exists());
+    }
+
+    #[test]
+    fn codex_keeps_the_comail_entry() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("config.toml");
+        std::fs::write(&file, "[mcp_servers.comail]\nurl = \"http://old/mcp\"\n").unwrap();
+        merge_codex_config(&file, &named_conn("corax")).unwrap();
+        let s = std::fs::read_to_string(&file).unwrap();
+        assert!(s.contains("[mcp_servers.comail]"), "{s}");
+        assert!(s.contains("http://old/mcp"));
+        assert!(s.contains("[mcp_servers.corax]"), "{s}");
     }
 
     #[test]

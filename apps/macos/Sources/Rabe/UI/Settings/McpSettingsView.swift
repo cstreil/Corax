@@ -10,11 +10,21 @@ struct McpSettingsView: View {
     private var model: AppModel { AppModel.shared }
     private var s: SettingsStore { model.settings }
     private var store: McpStore { model.mcp }
+    private var writeAccess: WriteAccess { model.writeAccess }
+    /// Name des Eintrags, wie ihn der Host meldet (`corax`, im Standard `comail`).
+    private var mcpName: String { store.status?.name ?? "comail" }
 
     @State private var portText = ""
     @State private var instructions = ""
-    @State private var snippetClient: McpClientInfo?
-    @State private var snippetText = ""
+    /// Der gezeigte Konfig-Ausschnitt. Der Text steckt mit im Item: ein
+    /// separates `@State` neben `.sheet(item:)` wird beim ersten Präsentieren
+    /// aus dem alten Zustand gelesen und das Blatt bliebe leer (M4-Befund).
+    private struct ShownSnippet: Identifiable {
+        let client: McpClientInfo
+        let text: String
+        var id: String { client.id }
+    }
+    @State private var shownSnippet: ShownSnippet?
     @State private var confirmRegenerate = false
 
     var body: some View {
@@ -142,8 +152,7 @@ struct McpSettingsView: View {
                         Button("Anzeigen") {
                             Task {
                                 if let text = await store.snippet(for: client.id) {
-                                    snippetText = text
-                                    snippetClient = client
+                                    shownSnippet = ShownSnippet(client: client, text: text)
                                 }
                             }
                         }
@@ -155,16 +164,17 @@ struct McpSettingsView: View {
                                     }
                                 }
                             }
-                            .disabled(store.busy || !Instance.isSandbox)
-                            .help(Instance.isSandbox
-                                  ? ""
-                                  : "Gesperrt: der Eintrag „comail“ würde die Anbindung der Tauri-App ersetzen")
+                            .disabled(store.busy || !writeAccess.allowed)
+                            .help(writeAccess.allowed
+                                  ? "Trägt „\(mcpName)“ in die Konfiguration ein und sichert die Datei vorher als .bak."
+                                  : "Nur mit „Änderungen erlauben“ (Postfach-Menü).")
                         }
                     }
                 }
-                // M2-Audit: the key is fixed in the core (`mcp/clients.rs`), so
-                // an entry always replaces the one the Tauri app installed.
-                Text("Der Eintrag heißt in jeder Konfiguration „comail“. Wer ihn ersetzt, nimmt der Tauri-App ihre Anbindung — dort steht danach Port und Token dieser Instanz.")
+                // M4: Der Name kommt vom Host (`McpStatus.name`); die native
+                // Instanz schreibt `corax` und lässt den `comail`-Eintrag der
+                // Tauri-App stehen.
+                Text("Der Eintrag heißt „\(mcpName)“. Der comail-Eintrag der Tauri-App bleibt erhalten — beide können nebeneinander stehen.")
                     .font(.system(size: 10))
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -195,13 +205,13 @@ struct McpSettingsView: View {
             instructions = s.mcpInstructions
         }
         .onChange(of: s.mcpPort) { _, newValue in portText = String(newValue) }
-        .sheet(item: $snippetClient) { client in
+        .sheet(item: $shownSnippet) { shown in
             VStack(alignment: .leading, spacing: 10) {
-                Text("Snippet für \(client.name)").font(.headline)
+                Text("Snippet für \(shown.client.name)").font(.headline)
                 Text("Enthält das Zugriffstoken. Nur in die Konfiguration dieses Clients einfügen.")
                     .font(.system(size: 11)).foregroundStyle(.secondary)
                 ScrollView {
-                    Text(snippetText)
+                    Text(shown.text)
                         .font(.system(size: 11, design: .monospaced))
                         .textSelection(.enabled)
                         .frame(maxWidth: .infinity, alignment: .leading)
@@ -213,10 +223,10 @@ struct McpSettingsView: View {
                     Spacer()
                     Button("Kopieren") {
                         Task {
-                            if await store.copySnippet(for: client.id) { model.toasts.show("Snippet kopiert") }
+                            if await store.copySnippet(for: shown.client.id) { model.toasts.show("Snippet kopiert") }
                         }
                     }
-                    Button("Fertig") { snippetClient = nil }.keyboardShortcut(.defaultAction)
+                    Button("Fertig") { shownSnippet = nil }.keyboardShortcut(.defaultAction)
                 }
             }
             .padding(16)

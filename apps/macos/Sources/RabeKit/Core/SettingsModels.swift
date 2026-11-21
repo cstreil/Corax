@@ -277,6 +277,9 @@ public struct ConditionPreview: Codable, Sendable {
 
 public struct McpStatus: Codable, Sendable, Hashable {
     public let running: Bool
+    /// Name im MCP-Handshake und als Schlüssel in Client-Konfigurationen
+    /// (`corax`, im Standard noch `comail`). Kommt vom Host.
+    public let name: String
     public let port: Int64
     public let url: String
     public let error: String?

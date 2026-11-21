@@ -142,6 +142,11 @@ enum CommandPolicy {
         "ai_learn_voice",
         // M2.4 — a real unsubscribe on the sender's side.
         "unsubscribe_message",
+        // M4 — „Bei App eintragen“. Schreibt den Eintrag `corax` in die
+        // Konfiguration einer KI-App (mit `.bak`-Sicherung) oder ruft deren
+        // eigene CLI; ein vorhandener `comail`-Eintrag der Tauri-App bleibt
+        // unberührt. Also nur mit „Änderungen erlauben“.
+        "mcp_install_client",
         // M3.4 — Google-Anmeldung. Der Kern öffnet den Browser, hält den
         // Loopback-Rücksprung offen, legt danach die Kontenzeile an und schreibt
         // die Token in den Schlüsselbund; `reauth_account` erneuert sie,
@@ -165,17 +170,16 @@ enum CommandPolicy {
 
     /// Deliberately refused, for the report and for readers of this file.
     ///
-    /// `mcp_install_client` writes the fixed key `comail` into the config of
-    /// Cursor, Claude or Codex (`mcp/clients.rs:19`) and would overwrite the
-    /// working entry of the Tauri app with this instance's port and token. That
-    /// needs one key per instance in the core first — a core change and the
-    /// user's call (M2 audit).
-    ///
     /// `add_account_password` and `test_connection` are not part of the daily
     /// use yet. M3.4 ändert das nicht: Die Google-Anmeldung läuft über
     /// `start_oauth`, das Konto-mit-Passwort-Blatt bleibt im Client gesperrt.
+    ///
+    /// `mcp_install_client` steht seit M4 nicht mehr hier: Der Kern schreibt
+    /// nur noch den instanz-eigenen Schlüssel (`corax`), der `comail`-Eintrag
+    /// der Tauri-App bleibt erhalten (`mcp/clients.rs`). Die Freigabe läuft
+    /// deshalb über `writing` wie bei jeder anderen Änderung.
     public static let blocked: Set<String> = [
-        "add_account_password", "test_connection", "mcp_install_client",
+        "add_account_password", "test_connection",
     ]
 
     /// **Empty since the M2 audit.** Every command the settings window, the

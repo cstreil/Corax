@@ -37,7 +37,9 @@ use crate::events::CoreEvent;
 use crate::models::now_ms;
 
 pub const DEFAULT_PORT: u16 = 47823;
-const SERVER_NAME: &str = "comail";
+/// Standardname des lokalen MCP-Servers (die Tauri-App und Upstream).
+/// Die native Instanz setzt über `Paths::with_mcp_name` `corax`.
+pub const DEFAULT_MCP_NAME: &str = "comail";
 /// Newest first; we echo the client's version when we know it.
 const PROTOCOL_VERSIONS: &[&str] = &["2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"];
 const ACTIVITY_CAP: usize = 200;
@@ -57,6 +59,8 @@ pub struct McpCall {
 #[serde(rename_all = "camelCase")]
 pub struct McpStatus {
     pub running: bool,
+    /// Name im MCP-Handshake und als Schlüssel in Client-Konfigurationen.
+    pub name: String,
     pub port: u16,
     pub url: String,
     pub error: Option<String>,
@@ -91,6 +95,12 @@ fn new_token() -> String {
 }
 
 impl Core {
+    /// Name des lokalen MCP-Servers: `comail` im Standard, `corax` in der
+    /// nativen Instanz. Steht im Handshake und ist der Konfigurationsschlüssel.
+    pub fn mcp_name(&self) -> &str {
+        &self.paths.mcp_name
+    }
+
     /// Start, stop or restart the server to match the saved settings. Called at
     /// startup and after every settings save; a no-op when nothing changed.
     pub async fn mcp_apply_settings(&self) -> Result<()> {
@@ -169,6 +179,7 @@ impl Core {
         };
         Ok(McpStatus {
             running: running.is_some(),
+            name: self.mcp_name().to_string(),
             port,
             url: url_for(port),
             error: self.mcp.error.lock().unwrap().clone(),
@@ -425,8 +436,8 @@ async fn dispatch(
                     "prompts": { "listChanged": false },
                 },
                 "serverInfo": {
-                    "name": SERVER_NAME,
-                    "title": "comail",
+                    "name": ctx.core.mcp_name(),
+                    "title": ctx.core.mcp_name(),
                     "version": env!("CARGO_PKG_VERSION"),
                 },
                 "instructions": instructions,

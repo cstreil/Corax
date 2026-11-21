@@ -258,7 +258,8 @@ actor FakeCore: MailCore {
     }
 
     func mcpStatus() async throws -> McpStatus {
-        McpStatus(running: true, port: 47823, url: "http://127.0.0.1:47823/mcp", error: nil, clientCount: 1)
+        McpStatus(running: true, name: "corax-sandbox", port: 47823,
+                  url: "http://127.0.0.1:47823/mcp", error: nil, clientCount: 1)
     }
     func mcpActivity() async throws -> [McpCall] {
         [McpCall(at: 1_700_000_000_000, client: "test", tool: "list_threads", ok: true, error: nil)]

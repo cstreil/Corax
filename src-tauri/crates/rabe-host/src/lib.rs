@@ -48,6 +48,22 @@ pub const RELEASE_IDENTIFIER: &str = "de.streil.rabe";
 /// app's MCP port.
 pub const NATIVE_MCP_PORT: u16 = 47833;
 
+/// Name the local MCP server uses: in the `initialize` handshake and as the
+/// key the "add to app" helpers write (M4). The core default stays `comail`
+/// for the Tauri app; `corax` keeps both entries apart.
+pub const MCP_NAME: &str = "corax";
+/// Sandbox twin, so a test instance never overwrites the native entry.
+pub const MCP_SANDBOX_NAME: &str = "corax-sandbox";
+
+/// MCP name for one of the two identifiers this host runs with.
+pub fn mcp_name_for(identifier: &str) -> &'static str {
+    if identifier == SANDBOX_IDENTIFIER {
+        MCP_SANDBOX_NAME
+    } else {
+        MCP_NAME
+    }
+}
+
 /// True for the only two identifiers this host runs with.
 ///
 /// Byte-exact on purpose: no case folding, no trailing slash, no path
@@ -570,7 +586,7 @@ impl Host {
                 tracing::warn!(%error, "mcp: cannot move the native instance off the release port");
             }
 
-            let paths = Paths::default_dirs();
+            let paths = Paths::default_dirs().with_mcp_name(mcp_name_for(config.identifier()));
             let core = match Core::start(paths).await {
                 Ok(core) => core,
                 Err(error) => {
