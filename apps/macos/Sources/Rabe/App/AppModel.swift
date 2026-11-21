@@ -49,6 +49,13 @@ final class AppModel {
     // UI state shared by window, menus and the palette
     var systemDark = NSApp?.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
     var paletteOpen = false
+    /// M2.18m: „Gehe zu Ordner/Label …“ (`G` `O`).
+    var goToOpen = false
+    /// M2.18n: die `G`-Folge wartet auf ihre zweite Taste — die Statuszeile
+    /// zeigt so lange, was zur Wahl steht.
+    private(set) var goSequenceActive = false
+    /// Zählt die Folgen; eine ältere Frist darf keine neuere beenden.
+    @ObservationIgnored private var goSequenceGeneration = 0
     /// The calendar screen replaces the mail list while it is open (M2.2).
     var calendarOpen = false
     /// The "Fragen an das Postfach" surface (`ai_ask`).
@@ -563,6 +570,31 @@ final class AppModel {
                 aiFilterQuestion = next
             }
         }
+    }
+
+    // MARK: M2.18n — die `G`-Folge
+
+    /// Start der `g`-Folge: die Statuszeile zeigt den Hinweis, und nach
+    /// `GoSequence.window` ist die Folge vorbei, wenn keine zweite Taste kam.
+    func beginGoSequence() {
+        goSequenceActive = true
+        goSequenceGeneration &+= 1
+        let generation = goSequenceGeneration
+        PerfLog.shared.write("key_go start window=\(Int(GoSequence.window))")
+        DispatchQueue.main.asyncAfter(deadline: .now() + GoSequence.window) { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self, self.goSequenceActive, self.goSequenceGeneration == generation else { return }
+                self.endGoSequence(reason: "timeout")
+            }
+        }
+    }
+
+    /// Ende der Folge: durch die zweite Taste, `Esc` oder die Frist.
+    func endGoSequence(reason: String? = nil) {
+        guard goSequenceActive else { return }
+        goSequenceActive = false
+        goSequenceGeneration &+= 1
+        if let reason { PerfLog.shared.write("key_go end reason=\(reason)") }
     }
 
     // MARK: M2.5 — Verschieben, Label, Spam, endgültig löschen, Ansichten

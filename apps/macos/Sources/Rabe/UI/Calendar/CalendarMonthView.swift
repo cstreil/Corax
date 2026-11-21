@@ -14,6 +14,8 @@ struct CalendarMonthView: View {
     @State private var dayList: Int64?
     /// Single vs. double click on a bar or chip (M2.8b).
     @State private var clicks = CalendarClickRouter()
+    /// Gemessene Höhe der Karte im Band (M2.18i).
+    @State private var bandCardHeight: CGFloat = 0
 
     var body: some View {
         GeometryReader { proxy in
@@ -24,6 +26,7 @@ struct CalendarMonthView: View {
             let weeks = (0..<6).map { Array(cells[($0 * 7)..<($0 * 7 + 7)]) }
             // M2.9 §7.2: das Band unter der Woche des Termins schiebt die
             // übrigen Wochen zusammen, statt die Ansicht scrollen zu lassen.
+            // M2.18i: die Höhe ist die **gemessene** Karte, keine feste Reserve.
             let bandHeight = bandHeight(in: proxy.size.height)
             let rowHeight = max(48, (proxy.size.height - bandHeight) / 6)
             let cap = max(1, Int((rowHeight - CalendarGrid.monthHeadPx - 2) / CalendarGrid.monthLinePx))
@@ -47,11 +50,11 @@ struct CalendarMonthView: View {
         }
     }
 
-    /// Höhe des Bands: 226 pt, aber nie mehr als die Ansicht hergibt (§7.2).
+    /// Höhe des Bands: die gemessene Kartenhöhe plus 8 pt Rand, höchstens so
+    /// viel, dass die sechs Wochen noch 48 pt behalten (M2.18i).
     private func bandHeight(in total: CGFloat) -> CGFloat {
         guard store.cardIsOpen else { return 0 }
-        let room = total - 6 * 56
-        return max(120, min(226, room))
+        return MonthBand.height(card: bandCardHeight, total: total)
     }
 
     /// Die Woche, unter der das Band steht: die des Termins (bzw. des neuen
@@ -65,6 +68,9 @@ struct CalendarMonthView: View {
     }
 
     /// Das Band: die Karte in zwei Spalten, unten bündig in der Woche (§7.2).
+    /// M2.18o: gemessen wird die **sichtbare** Karte selbst (wie in Tag und
+    /// Woche), nicht eine zweite unsichtbare Kopie — die enthielt im
+    /// Bearbeiten-Modus einen zweiten Editor und sicherte bei `⌘↵` doppelt.
     private func band(height: CGFloat) -> some View {
         HStack(spacing: 0) {
             CalendarEventCard(store: store, layout: .band,
@@ -73,17 +79,31 @@ struct CalendarMonthView: View {
                               store.closeCard()
                           },
                               onDelete: onDelete)
-                .frame(height: height - 8, alignment: .top)
+                .fixedSize(horizontal: false, vertical: true)
+                .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { card in
+                    if abs(card - bandCardHeight) > 0.5 { bandCardHeight = card }
+                }
+                .frame(height: max(0, height - 8), alignment: .top)
                 .clipped()
             Spacer(minLength: 0)
         }
         .padding(.horizontal, 8)
-        .padding(.bottom, 6)
+        .padding(.vertical, 4)
         .background(theme.bar.color.opacity(0.55))
         .overlay(alignment: .top) {
             Rectangle().fill(theme.line.color).frame(height: 0.5)
         }
         .transition(.opacity)
+        // Belegzeilen (M2.18i): reservierte Bandhöhe und die gemessene Karte.
+        .onAppear {
+            PerfLog.shared.write("calendar_band height=\(Int(height)) card=\(Int(bandCardHeight))")
+        }
+        .onChange(of: bandCardHeight) { _, card in
+            PerfLog.shared.write("calendar_band_measured card=\(Int(card))")
+        }
+        .onChange(of: height) { _, reserved in
+            PerfLog.shared.write("calendar_band height=\(Int(reserved)) card=\(Int(bandCardHeight))")
+        }
     }
 
     private func weekdayHeader(_ cells: [Int64]) -> some View {
@@ -336,5 +356,20 @@ struct CalendarMonthView: View {
     private func isWeekend(_ day: Int64) -> Bool {
         let weekday = store.math.weekdayIndex(day)
         return weekday == 1 || weekday == 7
+    }
+}
+
+/// Bandhöhe im Monat (M2.18i): genau die gemessene Karte plus Rand — nie eine
+/// feste Reserve. Eine reine Rechnung, damit der Test sie ohne UI prüfen kann.
+enum MonthBand {
+    /// 4 pt oben + 4 pt unten am Band.
+    static let inset: CGFloat = 8
+    /// So viel muss jede der sechs Wochen mindestens behalten.
+    static let minRowHeight: CGFloat = 48
+
+    static func height(card: CGFloat, total: CGFloat) -> CGFloat {
+        let room = max(0, total - 6 * minRowHeight)
+        guard card > 0 else { return min(120, room) }
+        return min(card + inset, room)
     }
 }

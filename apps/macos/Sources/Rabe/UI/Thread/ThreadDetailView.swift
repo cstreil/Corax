@@ -74,6 +74,15 @@ struct ThreadDetailView: View {
                     .font(.system(size: 21, weight: .semibold))
                     .tracking(-0.3)
                     .textSelection(.enabled)
+                // M2.18m: alle Labels des Threads als Chips unter dem Betreff.
+                // Ohne Label bleibt die Zeile weg.
+                let chips = threadLabels(detail)
+                if !chips.isEmpty {
+                    HStack(spacing: 6) {
+                        ForEach(chips) { label in labelChip(label) }
+                    }
+                    .padding(.top, 1)
+                }
                 Text("\(count) Nachricht\(count == 1 ? "" : "en") · \(senderEmail(detail))")
                     .font(.system(size: 12))
                     .foregroundStyle(theme.ink3.color)
@@ -98,6 +107,46 @@ struct ThreadDetailView: View {
         .padding(.top, 10)
         .padding(.bottom, 14)
         .overlay(alignment: .bottom) { Rectangle().fill(theme.line.color).frame(height: 0.5) }
+    }
+
+    /// M2.18n: alle Labels des Threads — eigene zuerst, automatische danach mit
+    /// Funkeln. Die Regel steht in `MailLabelDisplay`, damit Liste und Mail
+    /// nicht auseinanderlaufen.
+    private func threadLabels(_ detail: ThreadDetail) -> [RabeKit.Label] {
+        MailLabelDisplay.ordered(ids: detail.thread.labels, labels: box.labels)
+    }
+
+    private func labelChip(_ label: RabeKit.Label) -> some View {
+        Button { box.selectLabel(label.id) } label: {
+            HStack(spacing: 5) {
+                Circle()
+                    .fill(CalendarChrome.hex(label.color) ?? theme.accent.color)
+                    .frame(width: 7, height: 7)
+                Text(label.name)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(theme.ink2.color)
+                    .lineLimit(1)
+                // M2.18n: das Funkeln unterscheidet die automatischen
+                // Kategorien von den eigenen Labels.
+                if label.isAuto == true {
+                    Image(systemName: "sparkles")
+                        .font(.system(size: 9.5, weight: .medium))
+                        .foregroundStyle(theme.ink3.color)
+                        .accessibilityHidden(true)
+                }
+            }
+            .padding(.horizontal, 8)
+            .frame(height: 20)
+            .background(Capsule().fill(theme.hover.color))
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .help(label.isAuto == true
+              ? "Automatische Kategorie „\(label.name)“ — Liste filtern"
+              : "Nach „\(label.name)“ filtern")
+        .accessibilityLabel(label.isAuto == true
+                            ? "Automatische Kategorie \(label.name), Liste filtern"
+                            : "Label \(label.name), Liste filtern")
     }
 
     @ViewBuilder private func replyArea(_ detail: ThreadDetail) -> some View {

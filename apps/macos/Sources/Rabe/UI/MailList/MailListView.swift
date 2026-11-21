@@ -639,10 +639,9 @@ struct MailListView: NSViewRepresentable {
                 v.theme = theme
                 v.isOpen = id == expandedId
                 v.thread = box.thread(id)
-                if let labelId = box.thread(id)?.labels.first(where: { box.labels[$0]?.isAuto != true }), let label = box.labels[labelId] {
-                    v.labelInfo = (label.name, NSColor(hex: label.color) ?? theme.ink3.ns)
-                } else {
-                    v.labelInfo = nil
+                // M2.18l: das erste eigene Label plus „+n" für die übrigen.
+                v.labelInfo = box.thread(id).flatMap {
+                    RowLabelInfo.make(ids: $0.labels, labels: box.labels, color: theme.ink3.ns)
                 }
                 v.showActions = (row == hoverRow || selectedIds.contains(id) || id == selectedId) && id != expandedId
             case .detail(let id):

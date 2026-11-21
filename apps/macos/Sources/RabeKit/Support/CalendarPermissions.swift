@@ -38,11 +38,43 @@ public enum CalendarPermissions {
         Set(emails.compactMap(address))
     }
 
-    /// Ist der Termin von einer fremden Adresse organisiert? Ein leerer
-    /// Organisator ist **nicht** fremd: so sehen eigene Termine im Kalender aus.
-    public static func hasForeignOrganizer(_ event: CalendarEvent, ownEmails: Set<String>) -> Bool {
+    /// Ist der Termin von einem fremden Organisator? Ein leerer Organisator ist
+    /// **nicht** fremd: so sehen eigene Termine im Kalender aus.
+    ///
+    /// M2.18c: iCloud trägt bei eigenen Terminen oft nur die Kontokennung ein
+    /// (`/aODc…/principal/`). Eine Kennung ist nur fremd, wenn sie nicht die
+    /// eigene des Zugangs ist; unbekannt zählt als fremd (gesperrt). Dieselbe
+    /// Regel wie im Kern (`calendar::edit_blocked_reason`).
+    public static func hasForeignOrganizer(_ event: CalendarEvent, ownEmails: Set<String>,
+                                           calendars: [CalendarCollection] = []) -> Bool {
         guard let organizer = address(event.organizer) else { return false }
-        return !ownEmails.contains(organizer)
+        if organizer.contains("@") { return !ownEmails.contains(organizer) }
+        guard let own = ownPrincipal(for: event, calendars: calendars),
+              let path = principalPath(event.organizer) else { return true }
+        return path != own
+    }
+
+    /// Die eigene Kontokennung des Kontos, zu dem der Termin gehört.
+    public static func ownPrincipal(for event: CalendarEvent,
+                                    calendars: [CalendarCollection]) -> String? {
+        calendars
+            .filter { $0.accountId == event.accountId }
+            .compactMap { principalPath($0.principalUrl) }
+            .first
+    }
+
+    /// Nur der Pfad einer Kennung — ohne Schema und Host, ohne Schluss-`/`,
+    /// klein. `https://p01.example/abc/principal/` und `/abc/PRINCIPAL` ergeben
+    /// beide `abc/principal`. Dieselbe Normalisierung wie im Kern.
+    public static func principalPath(_ raw: String?) -> String? {
+        guard var text = raw?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !text.isEmpty else { return nil }
+        if let scheme = text.range(of: "://") {
+            let rest = text[scheme.upperBound...]
+            text = rest.firstIndex(of: "/").map { String(rest[$0...]) } ?? "/"
+        }
+        text = text.trimmingCharacters(in: CharacterSet(charactersIn: "/")).lowercased()
+        return text.isEmpty ? nil : text
     }
 
     public static func isOrganizer(_ event: CalendarEvent, ownEmails: Set<String>) -> Bool {
@@ -61,11 +93,33 @@ public enum CalendarPermissions {
     /// jemand anderem organisiert, nicht abgesagt.
     public static func canEdit(_ event: CalendarEvent, calendars: [CalendarCollection],
                                ownEmails: Set<String>) -> Bool {
-        guard !CalendarEventRules.isCancelled(event) else { return false }
-        guard !hasForeignOrganizer(event, ownEmails: ownEmails) else { return false }
-        guard let calendarId = event.calendarId else { return event.isLocal }
-        guard let calendar = calendars.first(where: { $0.id == calendarId }) else { return false }
-        return !calendar.readOnly
+        blockReason(event, calendars: calendars, ownEmails: ownEmails) == nil
+    }
+
+    /// M2.18 §2: derselbe Grund wie im Kern (`calendar::edit_blocked_reason`) —
+    /// gleiche Reihenfolge, gleiche Worte. Der Kern prüft beim Sichern noch
+    /// einmal; die App muss dieselbe Entscheidung treffen, sonst öffnet sie
+    /// einen Stift, den der Kern hinterher ablehnt (oder versteckt ihn).
+    public static func blockReason(_ event: CalendarEvent, calendars: [CalendarCollection],
+                                   ownEmails: Set<String>) -> String? {
+        if CalendarEventRules.isCancelled(event) { return "event is cancelled" }
+        // M2.18e: Ein in Rabe angelegter Termin ist unser Termin — auch wenn
+        // iCloud beim Hochladen eine Kennung als Organisator einträgt.
+        if !event.isLocal,
+           hasForeignOrganizer(event, ownEmails: ownEmails, calendars: calendars) {
+            return "only the organizer can edit this event"
+        }
+        guard let calendarId = event.calendarId else {
+            // Ohne Kalender kennt auch der Kern kein Schreibrecht: dort zählt
+            // `is_local`.
+            return event.isLocal ? nil : "event has no writable calendar"
+        }
+        guard let calendar = calendars.first(where: { $0.id == calendarId }) else {
+            // Kalender nicht geladen: kein Schreibrecht bekannt. Lokale Termine
+            // bleiben bearbeitbar (wie im Kern), sonst gilt „kein Kalender".
+            return event.isLocal ? nil : "event has no writable calendar"
+        }
+        return calendar.readOnly ? "calendar is read-only" : nil
     }
 
     /// Zu-/absagen darf nur, wer als Teilnehmer eingetragen und nicht selbst
@@ -74,5 +128,16 @@ public enum CalendarPermissions {
         guard !CalendarEventRules.isCancelled(event) else { return false }
         guard !isOrganizer(event, ownEmails: ownEmails) else { return false }
         return isAttendee(event, ownEmails: ownEmails)
+    }
+
+    /// M2.17 §3: „Antwort offen" — eine Einladung, bei der der Nutzer
+    /// Teilnehmer ist und noch nicht geantwortet hat. Leerer Status und
+    /// `NEEDS-ACTION` zählen beide als offen; eigene und abgesagte Termine nie.
+    public static func needsResponse(_ event: CalendarEvent, ownEmails: Set<String>) -> Bool {
+        guard !CalendarEventRules.isCancelled(event) else { return false }
+        guard isAttendee(event, ownEmails: ownEmails) else { return false }
+        guard !isOrganizer(event, ownEmails: ownEmails) else { return false }
+        let status = (event.rsvpStatus ?? "").trimmingCharacters(in: .whitespaces).uppercased()
+        return status.isEmpty || status == "NEEDS-ACTION"
     }
 }

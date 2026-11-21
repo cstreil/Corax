@@ -421,6 +421,28 @@ pub fn normalize_address(raw: &str) -> Option<String> {
     if text.is_empty() { None } else { Some(text) }
 }
 
+/// M2.18c: Nur der Pfad einer Kontokennung — ohne Schema und Host, ohne
+/// Schluss-`/`, klein. `https://p01.example/abc/principal/` und
+/// `/abc/PRINCIPAL` ergeben beide `abc/principal`.
+pub fn normalize_principal(raw: &str) -> Option<String> {
+    let text = raw.trim();
+    if text.is_empty() {
+        return None;
+    }
+    let path = match text.find("://") {
+        Some(idx) => {
+            let rest = &text[idx + 3..];
+            match rest.find('/') {
+                Some(slash) => &rest[slash..],
+                None => "/",
+            }
+        }
+        None => text,
+    };
+    let path = path.trim().trim_matches('/').to_lowercase();
+    if path.is_empty() { None } else { Some(path) }
+}
+
 /// M2.16: Darf dieser Termin bearbeitet werden? Dieselbe Regel wie in der App:
 /// nicht abgesagt, Organisator leer oder die eigene Adresse, und der Kalender
 /// ist beschreibbar (ein lokaler Termin ohne Kalender ist es immer).
@@ -429,21 +451,48 @@ pub fn normalize_address(raw: &str) -> Option<String> {
 /// (`!is_local`), auch den eigenen ohne Organisator — der Nutzer konnte ihn
 /// ansehen, aber nicht sichern.
 ///
+/// M2.18c: iCloud trägt bei eigenen Terminen als Organisator oft nur die
+/// Kontokennung ein (`/aODc…/principal/`), keine Mailadresse. Eine solche
+/// Kennung ist **kein** fremder Organisator — sie zählt aber nur, wenn sie die
+/// eigene Kennung des Zugangs ist (`caldav_config.principal_url`); verglichen
+/// wird nur der Pfad. Fehlt die Kennung oder ist sie fremd, bleibt der Termin
+/// gesperrt (so ist ein freigegebener Kalender eines anderen sicher).
+///
 /// `calendar_read_only`: `None` = der Termin hängt in keinem Kalender.
 pub fn edit_blocked_reason(
     organizer: Option<&str>,
     status: Option<&str>,
     calendar_read_only: Option<bool>,
     own_email: &str,
+    own_principal: Option<&str>,
     is_local: bool,
 ) -> Option<&'static str> {
     if status.is_some_and(|s| s.eq_ignore_ascii_case("CANCELLED")) {
         return Some("event is cancelled");
     }
-    if let Some(organizer) = organizer.and_then(normalize_address) {
-        let own = normalize_address(own_email);
-        if own.as_deref() != Some(organizer.as_str()) {
-            return Some("only the organizer can edit this event");
+    // M2.18e: Ein in Rabe angelegter Termin ist immer unser Termin. iCloud
+    // trägt beim Hochladen trotzdem gern eine Kontokennung (oder eine Adresse
+    // aus dem Konto) als Organisator ein; das sagt nichts über das
+    // Bearbeitungsrecht aus. Nur gezogene Termine (Einladungen, fremde
+    // Kalender) werden am Organisator gemessen.
+    if !is_local {
+        if let Some(raw) = organizer {
+            if let Some(normalized) = normalize_address(raw) {
+                let allowed = if normalized.contains('@') {
+                    normalize_address(own_email).as_deref() == Some(normalized.as_str())
+                } else {
+                    match (
+                        normalize_principal(raw),
+                        own_principal.and_then(normalize_principal),
+                    ) {
+                        (Some(foreign), Some(own)) => foreign == own,
+                        _ => false,
+                    }
+                };
+                if !allowed {
+                    return Some("only the organizer can edit this event");
+                }
+            }
         }
     }
     match calendar_read_only {
@@ -1072,7 +1121,7 @@ mod tests {
         let me = "cs@example.test";
         // Gezogen, ohne Organisator, beschreibbarer Kalender: bearbeitbar.
         assert_eq!(
-            edit_blocked_reason(None, None, Some(false), me, false),
+            edit_blocked_reason(None, None, Some(false), me, None, false),
             None
         );
         // Eigener Organisator (Apple-typisch als MAILTO): bearbeitbar.
@@ -1082,31 +1131,135 @@ mod tests {
                 Some("CONFIRMED"),
                 Some(false),
                 me,
+                None,
                 false
             ),
             None
         );
         // Fremder Organisator: nur ansehen (zu-/absagen läuft über RSVP).
         assert_eq!(
-            edit_blocked_reason(Some("boss@example.test"), None, Some(false), me, false),
+            edit_blocked_reason(
+                Some("boss@example.test"),
+                None,
+                Some(false),
+                me,
+                None,
+                false
+            ),
             Some("only the organizer can edit this event")
         );
         // Schreibgeschützter Kalender.
         assert_eq!(
-            edit_blocked_reason(None, None, Some(true), me, false),
+            edit_blocked_reason(None, None, Some(true), me, None, false),
             Some("calendar is read-only")
         );
         // Ohne Kalender nur lokale Termine.
-        assert_eq!(edit_blocked_reason(None, None, None, me, true), None);
+        assert_eq!(edit_blocked_reason(None, None, None, me, None, true), None);
         assert_eq!(
-            edit_blocked_reason(None, None, None, me, false),
+            edit_blocked_reason(None, None, None, me, None, false),
             Some("event has no writable calendar")
         );
         // Abgesagt ist abgesagt.
         assert_eq!(
-            edit_blocked_reason(None, Some("CANCELLED"), Some(false), me, false),
+            edit_blocked_reason(None, Some("CANCELLED"), Some(false), me, None, false),
             Some("event is cancelled")
         );
+        // M2.18e: In Rabe angelegt — auch ein fremd wirkender Organisator
+        // (iCloud trägt beim Hochladen gern eine Kennung ein) sperrt nicht.
+        assert_eq!(
+            edit_blocked_reason(Some("boss@example.test"), None, Some(false), me, None, true),
+            None
+        );
+        assert_eq!(
+            edit_blocked_reason(
+                Some("/654321/principal/"),
+                None,
+                Some(false),
+                me,
+                None,
+                true
+            ),
+            None
+        );
+    }
+
+    /// M2.18c: iCloud trägt bei eigenen Terminen die Kontokennung als
+    /// Organisator ein. Nur die eigene Kennung zählt, verglichen über den Pfad.
+    #[test]
+    fn organizer_principal_counts_only_when_it_is_ours() {
+        let me = "cs@example.test";
+        let own = "https://p01-caldav.example/123456/principal/";
+        // Die eigene Kennung: bearbeitbar.
+        assert_eq!(
+            edit_blocked_reason(
+                Some("/123456/principal/"),
+                Some("CONFIRMED"),
+                Some(false),
+                me,
+                Some(own),
+                false
+            ),
+            None
+        );
+        // Anderer Host, Schluss-`/`, Groß-/Kleinschreibung: derselbe Pfad.
+        assert_eq!(
+            edit_blocked_reason(
+                Some("http://other-host.example/123456/PRINCIPAL"),
+                Some("CONFIRMED"),
+                Some(false),
+                me,
+                Some(own),
+                false
+            ),
+            None
+        );
+        // Fremde Kennung (anderer Nutzer): gesperrt.
+        assert_eq!(
+            edit_blocked_reason(
+                Some("/654321/principal/"),
+                None,
+                Some(false),
+                me,
+                Some(own),
+                false
+            ),
+            Some("only the organizer can edit this event")
+        );
+        // Kennung des Zugangs unbekannt (kein CalDAV-Zugang gespeichert):
+        // gesperrt, nicht geraten.
+        assert_eq!(
+            edit_blocked_reason(
+                Some("/123456/principal/"),
+                None,
+                Some(false),
+                me,
+                None,
+                false
+            ),
+            Some("only the organizer can edit this event")
+        );
+        // Eine fremde Mailadresse bleibt fremd, auch mit bekannter Kennung.
+        assert_eq!(
+            edit_blocked_reason(
+                Some("boss@example.test"),
+                None,
+                Some(false),
+                me,
+                Some(own),
+                false
+            ),
+            Some("only the organizer can edit this event")
+        );
+        // Die Normalisierung selbst.
+        assert_eq!(
+            normalize_principal("https://p01.example/123456/principal/").as_deref(),
+            Some("123456/principal")
+        );
+        assert_eq!(
+            normalize_principal("/123456/Principal").as_deref(),
+            Some("123456/principal")
+        );
+        assert_eq!(normalize_principal("   "), None);
     }
 
     #[test]

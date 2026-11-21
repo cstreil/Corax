@@ -32,6 +32,12 @@ fn config_row(row: &Row) -> rusqlite::Result<CaldavConfig> {
     })
 }
 
+/// Sammlungen samt der eigenen Kontokennung ihres Zugangs (M2.18c). Die
+/// Kennung steht in `caldav_config`, nicht in `calendars`; die App braucht sie,
+/// um einen Organisator zu erkennen, den iCloud als `/…/principal/` einträgt.
+const CALENDAR_SELECT: &str = "SELECT c.*, (SELECT principal_url FROM caldav_config \
+     WHERE account_id = c.account_id) AS principal_url FROM calendars c";
+
 fn calendar_row(row: &Row) -> rusqlite::Result<Calendar> {
     Ok(Calendar {
         id: row.get("id")?,
@@ -43,6 +49,7 @@ fn calendar_row(row: &Row) -> rusqlite::Result<Calendar> {
         enabled: row.get::<_, i64>("enabled")? != 0,
         is_default: row.get::<_, i64>("is_default")? != 0,
         last_synced_at: row.get("last_synced_at")?,
+        principal_url: row.get("principal_url")?,
     })
 }
 
@@ -149,14 +156,16 @@ pub fn list_calendars(conn: &Connection, account_id: Option<i64>) -> Result<Vec<
     let mut out = Vec::new();
     match account_id {
         Some(id) => {
-            let mut stmt =
-                conn.prepare("SELECT * FROM calendars WHERE account_id = ?1 ORDER BY id")?;
+            let mut stmt = conn.prepare(&format!(
+                "{CALENDAR_SELECT} WHERE c.account_id = ?1 ORDER BY c.id"
+            ))?;
             for row in stmt.query_map(params![id], calendar_row)? {
                 out.push(row?);
             }
         }
         None => {
-            let mut stmt = conn.prepare("SELECT * FROM calendars ORDER BY account_id, id")?;
+            let mut stmt =
+                conn.prepare(&format!("{CALENDAR_SELECT} ORDER BY c.account_id, c.id"))?;
             for row in stmt.query_map([], calendar_row)? {
                 out.push(row?);
             }
@@ -167,7 +176,7 @@ pub fn list_calendars(conn: &Connection, account_id: Option<i64>) -> Result<Vec<
 
 pub fn get_calendar(conn: &Connection, calendar_id: i64) -> Result<Option<Calendar>> {
     conn.query_row(
-        "SELECT * FROM calendars WHERE id = ?1",
+        &format!("{CALENDAR_SELECT} WHERE c.id = ?1"),
         params![calendar_id],
         calendar_row,
     )
@@ -207,8 +216,10 @@ pub fn set_default_calendar(conn: &Connection, account_id: i64, calendar_id: i64
 /// dann die Standardmarke.
 pub fn default_calendar(conn: &Connection, account_id: i64) -> Result<Option<Calendar>> {
     conn.query_row(
-        "SELECT * FROM calendars WHERE account_id = ?1 AND enabled = 1
-         ORDER BY read_only ASC, is_default DESC, id ASC LIMIT 1",
+        &format!(
+            "{CALENDAR_SELECT} WHERE c.account_id = ?1 AND c.enabled = 1
+             ORDER BY c.read_only ASC, c.is_default DESC, c.id ASC LIMIT 1"
+        ),
         params![account_id],
         calendar_row,
     )

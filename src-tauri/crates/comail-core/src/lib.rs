@@ -2324,11 +2324,21 @@ impl Core {
             ),
             None => None,
         };
+        // M2.18c: Als Organisator eigener Termine trägt iCloud oft nur die
+        // Kontokennung ein (`/aODc…/principal/`), keine Mailadresse. Die eigene
+        // Kennung stammt aus der Discovery und steht in `caldav_config`.
+        let own_principal = self
+            .db
+            .read(move |conn| {
+                Ok(repo::caldav::get_config(conn, account_id)?.and_then(|cfg| cfg.principal_url))
+            })
+            .await?;
         if let Some(reason) = calendar::edit_blocked_reason(
             existing.organizer.as_deref(),
             existing.status.as_deref(),
             read_only,
             &account.email,
+            own_principal.as_deref(),
             existing.is_local,
         ) {
             return Err(CoreError::Other(reason.into()));

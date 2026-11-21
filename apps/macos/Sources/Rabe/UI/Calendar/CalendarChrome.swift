@@ -26,7 +26,13 @@ enum CalendarChrome {
     /// One event's colour: its calendar's hex, else the theme accent.
     static func color(for event: CalendarEvent, calendars: [CalendarCollection],
                       theme: Theme) -> Color {
-        guard let id = event.calendarId,
+        color(calendarId: event.calendarId, calendars: calendars, theme: theme)
+    }
+
+    /// M2.17 §4: eine Kalenderfarbe; `nil` steht für „Einladungen & lokale".
+    static func color(calendarId: Int64?, calendars: [CalendarCollection],
+                      theme: Theme) -> Color {
+        guard let id = calendarId,
               let calendar = calendars.first(where: { $0.id == id }),
               let color = hex(calendar.color) else { return theme.accent.color }
         return color
@@ -130,7 +136,7 @@ enum CalendarKeyboard {
     /// `M213Tests` gleicht sie mit `ShortcutMap` (Kontext Kalender) ab, damit
     /// Tabelle und Auswertung nicht auseinanderlaufen.
     static let handledCharacters: Set<String> = [
-        "d", "w", "m", "y", "l", "t", "-", "=", "+", "b", "o", "1", "\\"
+        "d", "w", "m", "y", "l", "t", "-", "=", "+", "b", "o", "\\", "/"
     ]
     /// Nur über die Taste erreichbar, nicht über das Zeichen.
     static let keyOnlyTokens: Set<String> = ["Tab", "⇧Tab", "Esc", "↵", "⌫", "↑", "↓"]
@@ -139,19 +145,12 @@ enum CalendarKeyboard {
                        openNew: () -> Void,
                        openCard: (CalendarEvent) -> Void = { _ in },
                        editCard: () -> Void = {},
+                       editEvent: (CalendarEvent) -> Void = { _ in },
+                       closeCard: () -> Void = {},
                        saveCard: () -> Void = {},
                        deleteSelected: (CalendarEvent) -> Void = { _ in },
                        joinMeeting: (CalendarEvent) -> Void = { _ in },
                        close: () -> Void) -> Bool {
-        /// Ein Klick/eine Bestätigung öffnet die Karte; im Band der Terminliste
-        /// und bei offener Anzeige führt sie in die Bearbeitung.
-        func openOrEdit(_ event: CalendarEvent) {
-            if store.openEventId == event.id, store.cardMode == .view {
-                editCard()
-            } else {
-                openCard(event)
-            }
-        }
         let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
         if flags.contains(.control) || flags.contains(.option) { return false }
         if flags.contains(.command) {
@@ -184,9 +183,14 @@ enum CalendarKeyboard {
             case 124: store.page(1); return true               // ⌘→
             case 45: openNew(); return true                    // ⌘N
             case 14:                                            // ⌘E
-                if store.cardIsOpen, store.cardMode == .view { editCard(); return true }
-                guard let selected = store.openEvent ?? store.selectedEvent else { return true }
-                openOrEdit(selected)
+                // M2.18c: Bearbeiten ist der eigene Weg (⌘E, Stift,
+                // Doppelklick), `↵` klappt nur auf und zu.
+                if store.cardIsOpen {
+                    if store.cardMode == .view { editCard() }
+                    return true
+                }
+                guard let selected = store.selectedEvent else { return true }
+                editEvent(selected)
                 return true
             case 31:                                            // ⌘O
                 guard let meeting = store.openEvent ?? store.selectedEvent else { return true }
@@ -198,9 +202,16 @@ enum CalendarKeyboard {
         }
         switch event.keyCode {
         case 53:                                                // Esc
-            // Eine offene Karte schließt der Monitor; hier geht es ohne sie
-            // zurück zur Liste (wie in Tauri, wo die Schublade zugeht).
-            close()
+            // M2.18 §4: `Esc` führt nie zurück zur Mail. Er arbeitet sich
+            // schrittweise heraus: Suche leeren → Auswahl aufheben. Karte und
+            // Bearbeiten schließt der Monitor des Bildschirms (dort hält ein
+            // Feld die Tastatur).
+            if store.searchOpen {
+                store.closeSearch()
+                return true
+            }
+            if store.cardIsOpen { return false }
+            store.clearSelection()
             return true
         case 123, 124:                                          // ← / →
             // M2.13 §8.3: in der Jahresansicht wandert der gewählte Tag; in
@@ -229,12 +240,23 @@ enum CalendarKeyboard {
                 store.setMode(.day)
                 return true
             }
-            if store.cardIsOpen, store.cardMode == .view {
-                editCard()
+            // M2.18c: wie in der Mailliste — das erste `↵` klappt den Termin
+            // auf, das zweite klappt ihn wieder zu. Ein offenes Formular
+            // gehört seinen Feldern; `⌘E` führt hinein.
+            guard !store.cardIsOpen else {
+                if store.cardMode == .view { closeCard() }
                 return true
             }
-            guard let selected = store.openEvent ?? store.selectedEvent else { return true }
-            openOrEdit(selected)
+            guard let selected = store.selectedEvent else { return true }
+            openCard(selected)
+            return true
+        case 119:                                               // Ende/End
+            guard store.mode == .list else { return false }
+            store.requestListEdge(.later)
+            return true
+        case 115:                                               // Pos1/Home
+            guard store.mode == .list else { return false }
+            store.requestListEdge(.earlier)
             return true
         case 51, 117:                                           // ⌫
             guard let selected = store.openEvent ?? store.selectedEvent else { return true }
@@ -242,11 +264,14 @@ enum CalendarKeyboard {
             return true
         default: break
         }
+        // M2.17 §9: „Einzeltasten-Kürzel" aus heißt: keine Zeichentasten im
+        // Kalender. Pfeile, Tab, Esc, ⌫, ↵, Ende/Pos1 und die ⌘-Kombis bleiben
+        // bedienbar (wie in der Mailliste).
+        if store.settings?.singleKeyShortcuts == false { return false }
         guard let typed = event.charactersIgnoringModifiers?.lowercased(), !typed.isEmpty else {
             return false
         }
         switch typed {
-        case "1": close()
         case "d": store.setMode(.day)
         case "w": store.setMode(.week)
         case "m":
@@ -254,6 +279,11 @@ enum CalendarKeyboard {
             store.setMode(.month)
         case "y": store.setMode(.year)
         case "l": store.setMode(.list)
+        case "/":
+            // M2.17 §1: Suche in der Terminliste. Aus dem Raster heraus wechselt
+            // sie in die Liste, weil dort die Treffer stehen.
+            if store.mode != .list { store.setMode(.list) }
+            store.openSearch()
         case "t": store.jumpToToday()
         case "-": store.page(-1)
         case "=", "+": store.page(1)

@@ -243,7 +243,10 @@ struct RabeCommands: Commands {
         }
         CommandMenu("Kalender") {
             // M2.14 §6: ⌥⌘2 öffnet den Kalender, ⌥⌘1 geht zurück zur Post.
-            Button("Kalender öffnen\t ⌥⌘2") { ActionDispatcher.perform(.calendarToggle) }
+            // M2.17: fester Titel. SwiftUI baut Commands beim Start aus und
+            // wertet den Zustand danach nicht neu aus — „Kalender öffnen" stand
+            // auch im Kalender da, obwohl der Punkt ihn schließt.
+            Button("Kalender ein/aus\t ⌥⌘2") { ActionDispatcher.perform(.calendarToggle) }
                 .keyboardShortcut("2", modifiers: [.option, .command])
             Button("Zurück zum Postfach\t ⌥⌘1") { ActionDispatcher.perform(.calendarClose) }
                 .keyboardShortcut("1", modifiers: [.option, .command])
@@ -256,15 +259,16 @@ struct RabeCommands: Commands {
             Divider()
             Button("Neuer Termin\t B") { ActionDispatcher.perform(.calendarNewEvent) }
             Divider()
-            Button(model.calendar.sidebarVisible ? "Seitenleiste ausblenden\t \\" : "Seitenleiste einblenden\t \\") {
+            Button("Seitenleiste ein/aus\t \\") {
                 ActionDispatcher.perform(.calendarSidebar)
             }
             Button("Nächstem Meeting beitreten\t O") { ActionDispatcher.perform(.joinNextMeeting) }
                 .keyboardShortcut("o", modifiers: .command)
         }
         CommandMenu("KI") {
-            Button(model.mailbox.inlineCompose != nil || !model.composeDrafts.isEmpty
-                   ? "Mit KI schreiben\t ⌥⌘I" : "Zusammenfassen\t ⌥⌘I") {
+            // M2.17: fester Titel; ob geschrieben oder zusammengefasst wird,
+            // entscheidet der Aufruf anhand des offenen Entwurfs.
+            Button("Mit KI schreiben / zusammenfassen\t ⌥⌘I") {
                 ActionDispatcher.perform(.aiWrite)
             }
             .keyboardShortcut("i", modifiers: [.option, .command])
@@ -279,6 +283,9 @@ struct RabeCommands: Commands {
             Button("Intelligenz …") { ActionDispatcher.perform(.aiSettings) }
         }
         CommandMenu("Gehe zu") {
+            // M2.18m: Ordner und Labels über ein Suchfeld anspringen.
+            Button("Ordner oder Label …\t ⇧⌘O") { ActionDispatcher.perform(.goToPicker) }
+                .keyboardShortcut("o", modifiers: [.command, .shift])
             Button("Thread auf- / zuklappen\t ↵") { ActionDispatcher.perform(.toggle) }
             Button("Weiter\t ↓") { ActionDispatcher.perform(.next) }
             Button("Zurück\t ↑") { ActionDispatcher.perform(.previous) }
@@ -288,7 +295,7 @@ struct RabeCommands: Commands {
             Button("Ende\t Ende") { ActionDispatcher.perform(.last) }
         }
         CommandGroup(after: .sidebar) {
-            Button(model.sidebar.isVisible ? "Seitenleiste ausblenden\t ⌃⌘S" : "Seitenleiste einblenden\t ⌃⌘S") {
+            Button("Seitenleiste ein/aus\t ⌃⌘S") {
                 ActionDispatcher.perform(.toggleSidebar)
             }
             .keyboardShortcut("s", modifiers: [.control, .command])

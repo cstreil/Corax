@@ -16,6 +16,9 @@ enum AppAction: Hashable {
     case calendarToggle, calendarClose, calendarToday, calendarMode(CalendarStore.Mode), calendarNewEvent
     case calendarSidebar, joinNextMeeting
     case toggleSidebar
+    /// M2.18m: „Gehe zu Ordner/Label …“ — der Picker und seine Ziele. Die
+    /// Ziele stehen auch in der Palette (`⌘K`), deshalb sind sie Aktionen.
+    case goToPicker, goToFolder(Int64), goToLabel(Int64)
     case aiWrite, aiAsk, aiProofread, aiSearchFilter, aiSettings
     case unsubscribe, copyVerificationCode
     // M2.5
@@ -72,6 +75,15 @@ enum AppAction: Hashable {
             ? "Seitenleiste ausblenden" : "Seitenleiste einblenden"
         case .toggleSidebar: AppModel.shared.sidebar.isVisible
             ? "Seitenleiste ausblenden" : "Seitenleiste einblenden"
+        case .goToPicker: "Gehe zu Ordner/Label …"
+        case .goToFolder(let id):
+            ActionDispatcher.goToEntries
+                .first { $0.kind == .folder && $0.targetId == id }
+                .map { "Gehe zu Ordner: " + ($0.detail ?? $0.title) } ?? "Gehe zu Ordner"
+        case .goToLabel(let id):
+            ActionDispatcher.goToEntries
+                .first { $0.kind == .label && $0.targetId == id }
+                .map { "Gehe zu Label: " + $0.title } ?? "Gehe zu Label"
         case .joinNextMeeting: "Nächstem Meeting beitreten"
         case .aiWrite:
             AppModel.shared.mailbox.inlineCompose != nil || !AppModel.shared.composeDrafts.isEmpty
@@ -141,6 +153,9 @@ enum AppAction: Hashable {
         case .calendarNewEvent: "B"
         case .calendarSidebar: "\\"
         case .toggleSidebar: "\\"
+        case .goToPicker: "G O"
+        case .goToFolder: "G O"
+        case .goToLabel: "G O"
         case .joinNextMeeting: "meeting"
         case .aiWrite: "I"
         case .aiAsk: "⇧I"
@@ -238,6 +253,21 @@ enum ActionDispatcher {
         case .discardDraft: model.discardOpenDraft()
         case .search: model.searchFocusRequest += 1
         case .palette: model.paletteOpen = true
+        case .goToPicker: model.goToOpen = true
+        case .goToFolder(let id):
+            // Nur ein echter Ordner aus der Liste: ein Zwischenknoten des Baums
+            // hat eine negative Kennung und steht hier nie drin.
+            model.goToOpen = false
+            guard let folder = box.folders.first(where: { $0.id == id }) else { return }
+            box.selectFolder(folder)
+            box.focusList()
+            PerfLog.shared.write("go_to kind=folder id=\(id)")
+        case .goToLabel(let id):
+            model.goToOpen = false
+            guard let label = box.labels[id] else { return }
+            box.selectLabel(id)
+            box.focusList()
+            PerfLog.shared.write("go_to kind=label id=\(id) name=\(label.name)")
         case .shortcuts: model.shortcutsOpen.toggle()
         case .nextTab: box.cycleTab(1)
         case .previousTab: box.cycleTab(-1)
@@ -346,15 +376,38 @@ enum ActionDispatcher {
             return true
         }
         if flags.contains(.command) || flags.contains(.control) || flags.contains(.option) { return false }
+        // M2.14/M2.17: „Einzeltasten-Kürzel" in den Einstellungen schaltet nur
+        // die Buchstaben- und Zeichenkürzel ab. Pfeile, Tab, Esc, ⌫ und ↵
+        // bleiben Bedienung. Vorher las diesen Schalter niemand — er war
+        // wirkungslos (im Prüflauf archivierte `E` trotz „aus").
+        let singles = AppModel.shared.settings.singleKeyShortcuts
         let shift = flags.contains(.shift)
         let open = AppModel.shared.mailbox.expandedId != nil
-        // `g` sequences (M2.5, Tauri's "g i" …): the second key picks the view.
-        if let pending = pendingGo {
-            pendingGo = nil
-            if let view = Self.goViews[event.charactersIgnoringModifiers?.lowercased() ?? ""] {
-                perform(.view(view))
+        // M2.18n: `G` meldet sich mit einem Hinweis in der Statuszeile; die
+        // zweite Taste kommt aus derselben Tabelle wie der Hinweis
+        // (`GoSequence.targets`), damit beide nicht auseinanderlaufen.
+        if AppModel.shared.goSequenceActive {
+            // `Esc` schließt nur den Hinweis, nicht zusätzlich den offenen
+            // Thread (der Hinweis ist der letzte sichtbare Zustand).
+            if event.keyCode == 53 {
+                AppModel.shared.endGoSequence(reason: "escape")
                 return true
             }
+            let second = event.charactersIgnoringModifiers?.lowercased() ?? ""
+            if singles, let target = GoSequence.target(for: second) {
+                AppModel.shared.endGoSequence()
+                PerfLog.shared.write("key_go second=\(second) target=\(target.key)")
+                perform(target.view.map { .view($0) } ?? .goToPicker)
+                return true
+            }
+            // Keine passende zweite Taste: die Folge endet, die Taste geht
+            // ihren normalen Weg (Tauri verhält sich genauso).
+            AppModel.shared.endGoSequence(reason: "other second=\(second)")
+        }
+        if !singles, event.charactersIgnoringModifiers?.lowercased() == "g" {
+            // Ein Beleg für die echte Instanz: `G` kommt an, die Einzeltasten
+            // sind aber aus (Einstellungen → Allgemein).
+            PerfLog.shared.write("key_go blocked singles=0")
         }
         switch event.keyCode {
         case 125:
@@ -371,12 +424,17 @@ enum ActionDispatcher {
             // klappt sie den Thread auf (wie bisher).
             if open { perform(.pageDown) } else { perform(.toggle) }
             return true
-        case 53: perform(.close); return true             // Esc
+        case 53:
+            AppModel.shared.endGoSequence(reason: "escape")
+            perform(.close)
+            return true                                       // Esc
         case 48: perform(shift ? .previousTab : .nextTab); return true // Tab
         case 51, 117: perform(.trash); return true        // ⌫ / Entf
         default: break
         }
-        guard let chars = event.charactersIgnoringModifiers?.lowercased(), let c = chars.first else { return false }
+        guard singles,
+              let chars = event.charactersIgnoringModifiers?.lowercased(),
+              let c = chars.first else { return false }
         let typed = event.characters ?? ""
         // M2.14 §3: verglichen wird das erzeugte Zeichen, nicht der keyCode.
         // Damit wirken # ! ? / \ auch auf der deutschen Tastatur.
@@ -412,11 +470,9 @@ enum ActionDispatcher {
         case "i": perform(shift ? .aiAsk : .aiWrite)
         case "y": perform(.previewAttachments)
         case "g":
-            // Start of a "g i"/"g e" sequence; the next key picks the view.
-            pendingGo = CFAbsoluteTimeGetCurrent()
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
-                if let at = pendingGo, CFAbsoluteTimeGetCurrent() - at >= 1.1 { pendingGo = nil }
-            }
+            // M2.18n: Start der Folge; der Hinweis in der Statuszeile zeigt
+            // jetzt sofort, was zur Wahl steht.
+            AppModel.shared.beginGoSequence()
         default: return false
         }
         return true
@@ -433,13 +489,14 @@ enum ActionDispatcher {
         return nil
     }
 
-    /// Start of a `g` sequence; cleared by the next key or after 1.2 s.
-    private static var pendingGo: CFAbsoluteTime?
-    /// Tauri's "go to" keys (`src/keyboard/commands.tsx`).
-    private static let goViews: [String: MailView] = [
-        "i": .inbox, "s": .starred, "d": .drafts, "t": .sent, "e": .done,
-        "h": .snoozed, "#": .trash, "!": .spam, "a": .all,
-    ]
+    /// M2.18m: Ordner und Labels als Ziele — einmal für Titel, Palette und Picker.
+    @MainActor static var goToEntries: [GoToEntry] {
+        let box = AppModel.shared.mailbox
+        return GoToEntries.make(folders: box.folders,
+                                labels: Array(box.labels.values),
+                                accounts: Dictionary(uniqueKeysWithValues: box.accounts.map { ($0.id, $0.label) }),
+                                showsAccount: box.accounts.count > 1)
+    }
 
     /// Everything the palette offers.
     static var paletteActions: [AppAction] {
@@ -449,6 +506,11 @@ enum ActionDispatcher {
         list += [.toggle, .first, .last]
         list += Format.snoozePresets().map { .snooze(presetID: $0.id) }
         list += [.star, .unread, .undo, .search, .nextTab, .previousTab, .shortcuts]
+        // M2.18m: dieselben Ziele wie `G` `O` — Ordner und Labels.
+        list.append(.goToPicker)
+        list += goToEntries.map {
+            $0.kind == .folder ? .goToFolder($0.targetId) : .goToLabel($0.targetId)
+        }
         list += MailView.allCases.map { .view($0) }
         let accounts = AppModel.shared.mailbox.accounts
         if accounts.count > 1 { list.append(.account(nil)); list += accounts.map { .account($0.id) } }

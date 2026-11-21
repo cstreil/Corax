@@ -83,6 +83,10 @@ public enum ShortcutMap {
         Shortcut(.global, "Jetzt synchronisieren", combos: ["⇧⌘N"]),
         Shortcut(.global, "Bestätigungscode kopieren", combos: ["⌥⇧⌘C"]),
         Shortcut(.global, "Gehe zu Postfach I S D T E H # ! A", singles: ["G"], combos: ["⌘1…⌘9"]),
+        // M2.18m: `G` `O` als zweiter Buchstabe der Folge (deshalb keine eigene
+        // Einzeltaste — `G` ist oben schon belegt). Die Ziele stehen auch in
+        // der Befehlspalette.
+        Shortcut(.global, "Gehe zu Ordner/Label … (G O)", combos: ["⇧⌘O"]),
         Shortcut(.global, "Konto 1…9 / alle", combos: ["⌃1…⌃9", "⌃0"]),
         Shortcut(.global, "Seitenleiste", singles: ["\\"], combos: ["⌃⌘S"]),
         Shortcut(.global, "Suche", singles: ["/"], combos: ["⌥⌘F", "⌘F"]),
@@ -121,7 +125,8 @@ public enum ShortcutMap {
         Shortcut(.calendar, "zurück / weiter blättern", singles: ["-", "+", "="], combos: ["⌘←", "⌘→"]),
         Shortcut(.calendar, "Neuer Termin", singles: ["B"], combos: ["⌘N"]),
         Shortcut(.calendar, "voriger / nächster Termin", singles: ["Tab", "⇧Tab"], combos: ["↑", "↓"]),
-        Shortcut(.calendar, "Termin öffnen / bearbeiten", combos: ["↵", "⌘E"]),
+        Shortcut(.calendar, "Termin aufklappen / zuklappen", combos: ["↵"]),
+        Shortcut(.calendar, "Termin bearbeiten", combos: ["⌘E"]),
         Shortcut(.calendar, "Termin sichern (im Titelfeld ↵)", combos: ["⌘↵"]),
         Shortcut(.calendar, "schrittweise zurück", combos: ["Esc"]),
         Shortcut(.calendar, "Meeting beitreten", singles: ["O"], combos: ["⌘O"]),

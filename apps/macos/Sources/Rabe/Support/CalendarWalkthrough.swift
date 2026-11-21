@@ -289,6 +289,25 @@ enum CalendarWalkthrough {
         log("calendar_state open=\(AppModel.shared.calendarOpen) mode=\(store.mode.rawValue) anchorDay=\(store.math.dayOfMonth(store.anchor)) selDay=\(store.math.dayOfMonth(store.selectedDayOrToday)) rows=\(rows.count) days=\(store.days.count) events=\(events.count) bars=\(store.weekModel?.allDaySpans.count ?? -1) calendars=\(store.calendars.count) hidden=\(store.hiddenCalendars.sorted()) local=\(!store.hiddenLocal) sync=\(sync) layoutMs=\(String(format: "%.2f", store.lastLayoutMilliseconds)) \(cardState())")
     }
 
+    /// `calendar:dump` — jeder sichtbare Termin mit Anzeige- und Kern-Kennung,
+    /// Wiederholungsmarke, Bearbeitungsrecht und Grund. Der Beleg für M2.18 §2/§5:
+    /// ohne diese Zeilen sieht man im Log nicht, *warum* ein Stift fehlt.
+    static func dump() {
+        guard requireSandbox("dump") else { return }
+        let store = AppModel.shared.calendar
+        let events = store.visibleEvents.sorted { $0.startsAt < $1.startsAt }
+        log("calendar_dump n=\(events.count) mode=\(store.mode.rawValue) "
+            + "sel=\(store.selectedEventId.map(String.init) ?? "-") "
+            + "open=\(store.openEventId.map(String.init) ?? "-")")
+        for event in events {
+            let reason = store.editBlockReason(event) ?? "-"
+            log("event id=\(event.id) core=\(event.eventId) start=\(event.startsAt) "
+                + "series=\(event.isSeriesOccurrence ? 1 : 0) "
+                + "canEdit=\(store.canEdit(event) ? 1 : 0) reason=\(reason) "
+                + "title=\"\(event.summary ?? "")\"")
+        }
+    }
+
     /// `calendar:card:…` — die Karte am Ort (M2.9 Stufe C), ohne Zeiger:
     ///   card:open:<id> | edit | close | new | cancel | select:<±1> | save | state
     static func card(_ argument: String) {
@@ -494,6 +513,7 @@ enum CalendarWalkthrough {
     static func click(id: Int64, times: Int) {}
     static func editorState() {}
     static func state() {}
+    static func dump() {}
     static func seedM212() async {}
     static func connect(_ argument: String) async {}
     static func connectState() {}

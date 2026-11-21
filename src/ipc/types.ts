@@ -678,6 +678,8 @@ export interface Calendar {
   enabled: boolean;
   isDefault: boolean;
   lastSyncedAt: number | null;
+  /** M2.18c: eigene Kontokennung des Zugangs (`caldav_config.principal_url`). */
+  principalUrl: string | null;
 }
 
 export interface EventAttendee {

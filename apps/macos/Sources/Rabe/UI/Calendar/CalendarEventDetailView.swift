@@ -63,6 +63,7 @@ struct CalendarEventCard: View {
                 HStack(alignment: .top, spacing: 26) {
                     VStack(alignment: .leading, spacing: 7) {
                         title(event, color: color, cancelled: cancelled)
+                        if store.needsResponse(event) { responseChip }
                         if let rsvp = CalendarEventRules.rsvpKind(event), !cancelled, store.canRSVP(event) { rsvpRow(event, rsvp: rsvp) }
                         if let reason = event.syncError, !reason.isEmpty { uploadWarning(reason) }
                         hints(event)
@@ -75,6 +76,7 @@ struct CalendarEventCard: View {
                 }
             } else {
                 title(event, color: color, cancelled: cancelled)
+                if store.needsResponse(event) { responseChip }
                 details(event)
                 if let rsvp = CalendarEventRules.rsvpKind(event), !cancelled, store.canRSVP(event) { rsvpRow(event, rsvp: rsvp) }
                 if let reason = event.syncError, !reason.isEmpty { uploadWarning(reason) }
@@ -107,7 +109,7 @@ struct CalendarEventCard: View {
             Spacer(minLength: 6)
             HStack(spacing: 6) {
                 if store.canEdit(event) {
-                    headButton("pencil", help: "Bearbeiten (↵)") { store.editOpenCard() }
+                    headButton("pencil", help: "Bearbeiten (⌘E)") { store.editOpenCard() }
                 }
                 headButton("trash", help: "Löschen (⌫)") { onDelete(event) }
                 headButton("xmark", help: "Schließen (Esc)") { onClose() }
@@ -136,7 +138,7 @@ struct CalendarEventCard: View {
                 .help("Meeting beitreten (O)")
             }
             if let recurrence = CalendarEventRules.recurrenceLabel(event.rrule) {
-                row("repeat", recurrence)
+                row("repeat", event.isSeriesOccurrence ? "Teil einer Serie · \(recurrence)" : recurrence)
             }
             if let organizer = event.organizer, !organizer.isEmpty {
                 row("person", "Organisiert von \(organizer)")
@@ -212,6 +214,19 @@ struct CalendarEventCard: View {
         }
     }
 
+    /// M2.17 §3: Einladung, auf die noch keine Antwort gegeben wurde.
+    private var responseChip: some View {
+        Text("Antwort offen")
+            .font(.system(size: 10, weight: .semibold))
+            .foregroundStyle(.orange)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2)
+            .background(Capsule().fill(Color.orange.opacity(0.14)))
+            .fixedSize()
+            .help("Antwort offen")
+            .accessibilityLabel("Antwort offen")
+    }
+
     /// M2.16: Der Kalender-Server hat den Termin abgelehnt (z. B. HTTP 501).
     /// Vorher stand das nur im Log, die App zeigte den Termin als gespeichert.
     private func uploadWarning(_ reason: String) -> some View {
@@ -231,7 +246,7 @@ struct CalendarEventCard: View {
     private func hints(_ event: CalendarEvent) -> some View {
         HStack(spacing: 8) {
             hint("↑↓", "Termin")
-            if store.canEdit(event) { hint("↵", "bearbeiten") }
+            if store.canEdit(event) { hint("⌘E", "bearbeiten") }
             hint("Esc", "schließen")
             if event.joinUrl != nil { hint("O", "Meeting") }
             Spacer(minLength: 0)

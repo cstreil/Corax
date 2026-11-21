@@ -30,6 +30,11 @@ struct EventEditFields: View {
     @State private var notes: String
     @State private var calendarId: Int64?
     @State private var saving = false
+    /// M2.18 §3: Dauer in Tagen bei ganztägigen Terminen (der End-Picker ist dort
+    /// ausgeblendet, die Länge bleibt trotzdem erhalten).
+    @State private var allDayDays: Int
+    /// M2.18 §6: Dialog vor dem Sichern einer Wiederholung.
+    @State private var scopeAsk = false
 
     init(store: CalendarStore, accounts: [Account], draft: CalendarEventDraft, compact: Bool = false,
          onSaved: @escaping () -> Void, onCancel: @escaping () -> Void,
@@ -46,6 +51,9 @@ struct EventEditFields: View {
         _startsAt = State(initialValue: Date(timeIntervalSince1970: Double(draft.startsAt) / 1000))
         _endsAt = State(initialValue: Date(timeIntervalSince1970: Double(draft.endsAt) / 1000))
         _allDay = State(initialValue: stored?.allDay ?? draft.allDay)
+        let startMs = draft.startsAt
+        let endMs = stored.map { CalendarEventRules.eventEnd($0) } ?? draft.endsAt
+        _allDayDays = State(initialValue: max(1, Int(((endMs - startMs) + 86_399_999) / 86_400_000)))
         _location = State(initialValue: stored?.location ?? draft.location ?? "")
         _joinUrl = State(initialValue: stored?.joinUrl ?? "")
         _attendeesText = State(initialValue: (stored.map { $0.attendees.map(\.email) } ?? draft.attendees.map(\.email))
@@ -88,7 +96,7 @@ struct EventEditFields: View {
                 .textFieldStyle(.plain)
                 .font(.system(size: compact ? 14 : 17, weight: .semibold))
                 .focused($titleFocused)
-                .onSubmit { save() }
+                .onSubmit { requestSave() }
                 .accessibilityLabel("Titel")
                 .padding(.bottom, 3)
                 .overlay(alignment: .bottom) {
@@ -164,6 +172,8 @@ struct EventEditFields: View {
                     .background(RoundedRectangle(cornerRadius: 6).fill(theme.hover.color))
             }
 
+            if scopeAsk { scopePanel }
+
             HStack(spacing: 8) {
                 if let event = draft.event, store.canEdit(event) {
                     Button {
@@ -183,7 +193,7 @@ struct EventEditFields: View {
                     .foregroundStyle(theme.ink2.color)
                     .help("Abbrechen (Esc)")
                 Button {
-                    save()
+                    requestSave()
                 } label: {
                     HStack(spacing: 5) {
                         if saving { ProgressView().controlSize(.mini) }
@@ -207,11 +217,48 @@ struct EventEditFields: View {
         .padding(.horizontal, compact ? 12 : 14)
         .padding(.vertical, compact ? 10 : 12)
         .onAppear {
-            // Der Titel ist das erste Feld: „neuer Termin, lostippen".
+            // M2.18 §1: Der Titel ist das erste Feld — „neuer Termin, lostippen".
+            // Zweiter Versuch, weil das Feld beim ersten Layout noch nicht im
+            // Fenster hängen kann.
             DispatchQueue.main.async { titleFocused = true }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
+                if !titleFocused { titleFocused = true }
+            }
+        }
+        // M2.18 §3: Der Beginn zieht das Ende mit, die Dauer bleibt.
+        .onChange(of: startsAt) { old, new in
+            if allDay {
+                endsAt = Calendar.current.date(byAdding: .day, value: allDayDays, to: new) ?? new
+                return
+            }
+            let startMs = Int64(new.timeIntervalSince1970 * 1000)
+            let oldStartMs = Int64(old.timeIntervalSince1970 * 1000)
+            let oldEndMs = Int64(endsAt.timeIntervalSince1970 * 1000)
+            let endMs = EventTimes.end(afterStartChangeFrom: oldStartMs, end: oldEndMs, to: startMs)
+            endsAt = Date(timeIntervalSince1970: Double(endMs) / 1000)
+        }
+        .onChange(of: endsAt) { _, new in
+            let startMs = Int64(startsAt.timeIntervalSince1970 * 1000)
+            let endMs = Int64(new.timeIntervalSince1970 * 1000)
+            let clamped = EventTimes.clampedEnd(start: startMs, end: endMs)
+            if clamped != endMs { endsAt = Date(timeIntervalSince1970: Double(clamped) / 1000) }
+        }
+        .onChange(of: allDay) { _, isAllDay in
+            let startMs = Int64(startsAt.timeIntervalSince1970 * 1000)
+            let endMs = Int64(endsAt.timeIntervalSince1970 * 1000)
+            allDayDays = max(1, Int(((endMs - startMs) + 86_399_999) / 86_400_000))
+            if isAllDay {
+                endsAt = Calendar.current.date(byAdding: .day, value: allDayDays, to: startsAt) ?? endsAt
+            }
         }
         // `⌘↵` aus dem Raster (Monitor) und der Knopf im Fuß sichern beide hier.
-        .onChange(of: store.saveRequest) { _, _ in save() }
+        // M2.18o: nur die erste Karte verarbeitet den Aufruf — hing die Karte
+        // doppelt im Baum (unsichtbare Messkopie im Monat), sicherte auch die
+        // Kopie und die Änderung ging zweimal an den Kern.
+        .onChange(of: store.saveRequest) { _, _ in
+            guard store.takeSaveRequest() else { return }
+            requestSave()
+        }
     }
 
     private var saveTitle: String {
@@ -242,16 +289,81 @@ struct EventEditFields: View {
         }
     }
 
-    private func save() {
+    /// M2.18 §6: Bei einer Wiederholung fragt vor dem Sichern der Geltungsbereich.
+    /// Der Kern kann bisher nur „alle" (Teil 2); die anderen Optionen sind
+    /// sichtbar, aber gesperrt.
+    private func requestSave() {
+        if let event = draft.event, event.isSeriesOccurrence {
+            scopeAsk = true
+            PerfLog.shared.write("calendar_series_scope ask event=\(event.eventId)")
+            return
+        }
+        performSave()
+    }
+
+    private var scopePanel: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Text("Änderung gilt für …")
+                .font(.system(size: 11.5, weight: .semibold))
+            scopeRow("Nur dieser Termin", enabled: false)
+            scopeRow("Dieser und alle folgenden", enabled: false)
+            HStack(spacing: 8) {
+                Button {
+                    scopeAsk = false
+                    PerfLog.shared.write("calendar_series_scope all")
+                    performSave()
+                } label: {
+                    Text("Alle Termine der Serie")
+                        .font(.system(size: 11.5, weight: .semibold))
+                        .foregroundStyle(theme.accentInk.color)
+                        .padding(.horizontal, 9)
+                        .frame(height: 24)
+                        .background(RoundedRectangle(cornerRadius: 6).fill(theme.accent.color))
+                }
+                .buttonStyle(.plain)
+                Button("Abbrechen") { scopeAsk = false }
+                    .buttonStyle(.plain)
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(theme.ink2.color)
+            }
+            Text("„Nur dieser“ und „dieser und alle folgenden“ kommen mit dem nächsten Kern-Update.")
+                .font(.system(size: 10.5))
+                .foregroundStyle(theme.ink3.color)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(RoundedRectangle(cornerRadius: 7).fill(theme.hover.color))
+        .accessibilityElement(children: .contain)
+    }
+
+    private func scopeRow(_ title: String, enabled: Bool) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: enabled ? "checkmark.circle.fill" : "circle")
+                .font(.system(size: 10.5))
+            Text(title).font(.system(size: 11.5))
+            Spacer(minLength: 4)
+            if !enabled {
+                Text("kommt mit dem nächsten Kern-Update")
+                    .font(.system(size: 10))
+            }
+        }
+        .foregroundStyle(enabled ? theme.ink.color : theme.ink3.color)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(title + (enabled ? "" : ", nicht verfügbar"))
+    }
+
+    private func performSave() {
         guard let accountId, canSave else { return }
         saving = true
         let start = allDay
             ? store.math.startOfDay(Int64(startsAt.timeIntervalSince1970 * 1000))
             : Int64(startsAt.timeIntervalSince1970 * 1000)
         var end = allDay
-            ? store.math.addDays(start, 1)
+            ? store.math.addDays(start, max(1, allDayDays))
             : Int64(endsAt.timeIntervalSince1970 * 1000)
-        if end <= start { end = start + CalendarGrid.dayMs }
+        end = EventTimes.clampedEnd(start: start, end: end,
+                                    minimumMs: allDay ? CalendarGrid.dayMs : EventTimes.minimumMs)
         let summaryText = summary.trimmingCharacters(in: .whitespacesAndNewlines)
         let locationText = location.trimmingCharacters(in: .whitespacesAndNewlines)
         let joinText = joinUrl.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -259,13 +371,16 @@ struct EventEditFields: View {
         Task {
             let ok: Bool
             if let event = draft.event {
-                ok = await store.update(UpdateEventArgs(
-                    eventId: event.id, summary: summaryText,
+                let args = UpdateEventArgs(
+                    eventId: event.eventId, summary: summaryText,
                     description: notesText.isEmpty ? nil : notesText,
                     location: locationText.isEmpty ? nil : locationText,
                     joinUrl: joinText.isEmpty ? nil : joinText,
                     startsAt: start, endsAt: end, allDay: allDay,
-                    attendees: invites, notify: true))
+                    attendees: invites, notify: true)
+                ok = event.isSeriesOccurrence
+                    ? await store.updateSeriesOccurrence(event, args: args)
+                    : await store.update(args)
                 saving = false
                 if ok { store.savedOpenCard(); onSaved() }
                 return

@@ -56,6 +56,8 @@ struct MainView: View {
             }
             ToastView().padding(.bottom, 50)
             if model.paletteOpen { CommandPalette().transition(.opacity) }
+            // M2.18m: `G` `O` — Ordner oder Label anspringen.
+            if model.goToOpen { GoToPicker().transition(.opacity) }
             // M2.5: die Auswahl-Dialoge (Verschieben, Label, Split, Löschen).
             if model.moveOpen { MovePickerView().transition(.opacity) }
             if model.labelOpen { LabelPickerView().transition(.opacity) }
@@ -191,6 +193,11 @@ struct HintBar: View {
         // Eine Zeile statt zweier übereinander: mit fünf Tasten liefen die
         // zentrierten Kürzel in den Sync-Text (Sandbox-Lauf M2.9).
         return HStack(spacing: 12) {
+            // M2.18n: `G` allein war unsichtbar — solange die Folge läuft,
+            // zeigt die Leiste nur, was zur Wahl steht.
+            if model.goSequenceActive {
+                goHint
+            } else {
             HStack(spacing: 4) {
                 if let sync = model.sync.summary {
                     HStack(spacing: 6) {
@@ -238,6 +245,7 @@ struct HintBar: View {
                 if box.isLoading && box.loadedOnce { ProgressView().controlSize(.mini) }
             }
             .frame(maxWidth: 240, alignment: .trailing)
+            }
         }
         .padding(.horizontal, 14)
         .font(.system(size: 12))
@@ -246,6 +254,42 @@ struct HintBar: View {
         .frame(maxWidth: .infinity)
         .background(theme.bar.color)
         .overlay(alignment: .top) { Rectangle().fill(theme.line.color).frame(height: 0.5) }
+    }
+
+    /// M2.18n: der Hinweis während der `G`-Folge. Erst alle Ziele, und wenn die
+    /// Breite nicht reicht, die wichtigsten mit `O` vorn — der Weg zu Ordner
+    /// und Label darf nie abgeschnitten sein.
+    private var goHint: some View {
+        ViewThatFits(in: .horizontal) {
+            goHintRow(Array(GoSequence.targets))
+            goHintRow(compactGoTargets)
+        }
+        .frame(maxWidth: .infinity)
+    }
+
+    private var compactGoTargets: [GoSequenceTarget] {
+        let keys = ["o", "i", "s", "d", "t"]
+        return keys.compactMap { GoSequence.target(for: $0) }
+    }
+
+    private func goHintRow(_ targets: [GoSequenceTarget]) -> some View {
+        // 11,5 pt und 7 pt Abstand: damit passen alle zehn Ziele in die Leiste
+        // neben der Seitenleiste (883 pt breit), statt in die Kompaktform zu
+        // fallen.
+        HStack(spacing: 7) {
+            Text(GoSequence.headline)
+                .fontWeight(.medium)
+                .foregroundStyle(theme.ink2.color)
+            ForEach(targets) { target in
+                HStack(spacing: 3.5) {
+                    KeyCap(target.key.uppercased())
+                    Text(target.title)
+                        .lineLimit(1)
+                }
+            }
+        }
+        .font(.system(size: 11.5))
+        .fixedSize()
     }
 }
 

@@ -1584,6 +1584,11 @@ pub struct Calendar {
     pub enabled: bool,
     pub is_default: bool,
     pub last_synced_at: Option<i64>,
+    /// M2.18c: die eigene Kontokennung des CalDAV-Zugangs
+    /// (`caldav_config.principal_url`). iCloud trägt sie bei manchen Terminen
+    /// als Organisator ein; die App vergleicht damit, ob der Termin eigener
+    /// Herkunft ist. Nur lesend, keine eigene Spalte in `calendars`.
+    pub principal_url: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

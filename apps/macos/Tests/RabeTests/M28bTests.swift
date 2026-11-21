@@ -337,16 +337,18 @@ final class M28bCalendarKeyTests: XCTestCase {
         XCTAssertEqual(deleted, 42)
     }
 
-    /// M2.9 §7.4: die Karte schließt der Monitor des Bildschirms, weil auch ein
-    /// Feld in der Karte `Esc` bekommen kann. Hier bleibt `Esc` die Taste, die
-    /// den Kalender verlässt.
-    func testEscapeLeavesTheCalendar() async {
+    /// M2.18 §4: `Esc` verlässt den Kalender **nicht** mehr. Die Karte schließt
+    /// der Monitor des Bildschirms (dort hält ein Feld die Tastatur); ohne Karte
+    /// nimmt `Esc` nur die Auswahl weg.
+    func testEscapeStaysInTheCalendar() async {
         let store = await store()
+        store.selectedEventId = 42
         var closedCalendar = false
         let handled = CalendarKeyboard.handle(escapeKey, store: store, openNew: {},
                                               close: { closedCalendar = true })
         XCTAssertTrue(handled)
-        XCTAssertTrue(closedCalendar)
+        XCTAssertFalse(closedCalendar, "Esc führt nicht mehr zur Mail")
+        XCTAssertNil(store.selectedEventId, "Esc hebt die Auswahl auf")
     }
 
     func testTheSelectionSurvivesOnlyWhileTheEventIsVisible() async {

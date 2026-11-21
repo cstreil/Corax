@@ -12,18 +12,15 @@ struct CalendarYearView: View {
     var onOpenDay: (Int64) -> Void
     var onOpenMonth: (Int64) -> Void
 
-    /// Höchstens drei Farben je Tag, in der Reihenfolge der Termine.
+    /// M2.17 §4: höchstens drei Punkte je Tag, einer je **Kalender** — nicht
+    /// einer je Termin. Die Reihenfolge folgt dem ersten Termin des Tages.
     private var dots: [Int64: [Color]] {
-        var result: [Int64: [Color]] = [:]
-        let math = store.math
-        for event in store.visibleEvents {
-            let day = math.startOfDay(event.startsAt)
-            var colors = result[day] ?? []
-            guard colors.count < 3 else { continue }
-            colors.append(CalendarChrome.color(for: event, calendars: store.calendars, theme: theme))
-            result[day] = colors
+        let byDay = YearDots.byDay(events: store.visibleEvents, days: store.yearDays,
+                                   math: store.math)
+        return byDay.mapValues { ids in
+            ids.map { CalendarChrome.color(calendarId: $0, calendars: store.calendars,
+                                           theme: theme) }
         }
-        return result
     }
 
     var body: some View {
@@ -86,15 +83,26 @@ struct CalendarYearView: View {
                                     y: CalendarYearView.headerHeight + CGFloat(index / columns) * cellH)
                     }
                 }
+                // M2.18h: Der ZStack hat ohne eigenen Rahmen nur die Höhe seiner
+                // Kinder (Kopfzeile und ein Tagesfeld, ≈ 23 pt) — die Tage
+                // darunter wurden gezeichnet, aber nicht getroffen: ein Klick
+                // außerhalb der ersten Zeile lief ins Leere. Mit dem Rahmen
+                // deckt die Fläche das ganze Monatsgitter ab.
+                .frame(width: proxy.size.width, height: proxy.size.height,
+                       alignment: .topLeading)
                 .contentShape(Rectangle())
                 .gesture(SpatialTapGesture(count: 1).onEnded { value in
-                    guard let day = day(at: value.location, days: days, cellW: cellW, cellH: cellH) else { return }
-                    store.selectDay(day)
-                })
-                .simultaneousGesture(SpatialTapGesture(count: 2).onEnded { value in
-                    guard let day = day(at: value.location, days: days, cellW: cellW, cellH: cellH) else { return }
-                    store.selectDay(day)
-                    onOpenDay(day)
+                    // M2.18h: Die lokale Position steht im Log — ohne sie war
+                    // beim Belegen nicht zu sehen, ob ein Klick danebenging oder
+                    // an der falschen Stelle ankam.
+                    guard let day = day(at: value.location, days: days, cellW: cellW, cellH: cellH) else {
+                        PerfLog.shared.write("calendar_year_click x=\(Int(value.location.x)) "
+                                             + "y=\(Int(value.location.y)) cell=\(Int(cellW))x\(Int(cellH)) day=none")
+                        return
+                    }
+                    PerfLog.shared.write("calendar_year_click x=\(Int(value.location.x)) "
+                                         + "y=\(Int(value.location.y)) cell=\(Int(cellW))x\(Int(cellH)) day=\(day)")
+                    open(day)
                 })
             }
             .frame(height: CalendarYearView.monthHeight)
@@ -105,6 +113,16 @@ struct CalendarYearView: View {
             .fill(isCurrent ? theme.sel.color : Color.clear))
         .accessibilityElement(children: .contain)
         .accessibilityLabel(CalendarYearView.monthTitle(month))
+    }
+
+    /// M2.18h: Ein Klick auf einen Tag öffnet ihn in der Tagesansicht — genau
+    /// wie das Tageszahlenfeld der Monatsansicht. Das markierte Datum bleibt
+    /// dabei stehen, damit der Rückweg in die Jahresansicht dort landet.
+    private func open(_ day: Int64) {
+        // Wie in der Monatsansicht: eine offene Karte gibt dem Tag Platz.
+        if store.cardIsOpen { store.closeCard() }
+        store.selectDay(day)
+        onOpenDay(day)
     }
 
     private func weekdayHeader(cellW: CGFloat) -> some View {
@@ -129,17 +147,24 @@ struct CalendarYearView: View {
         let number = CalendarChrome.dayNumber(day)
         return VStack(spacing: 1) {
             ZStack {
-                if isToday {
+                // M2.18h: der **gewählte** Tag ist gefüllt (Akzent, weiße
+                // Zahl), heute bekommt nur einen Ring. Vorher war es umgekehrt:
+                // heute war gefüllt, die Auswahl ein dünner Ring — im Jahr
+                // stand damit scheinbar immer „heute".
+                if isSelected {
                     Circle().fill(theme.accent.color).frame(width: 17, height: 17)
-                } else if isSelected {
-                    Circle().strokeBorder(theme.accent.color, lineWidth: 1.4)
+                } else if isToday {
+                    Circle().strokeBorder(theme.accent.color, lineWidth: 1.2)
                         .frame(width: 17, height: 17)
                 }
                 Text("\(number)")
-                    .font(.system(size: 9.5, weight: isToday ? .bold : (inMonth ? .regular : .light)))
-                    .foregroundStyle(isToday ? theme.accentInk.color
-                                     : (inMonth ? (isWeekend ? theme.ink3.color : theme.ink.color)
-                                        : theme.ink3.color.opacity(0.5)))
+                    .font(.system(size: 9.5,
+                                  weight: isSelected || isToday ? .bold
+                                      : (inMonth ? .regular : .light)))
+                    .foregroundStyle(isSelected ? theme.accentInk.color
+                                     : (isToday ? theme.accent.color
+                                        : (inMonth ? (isWeekend ? theme.ink3.color : theme.ink.color)
+                                           : theme.ink3.color.opacity(0.5))))
             }
             .frame(width: cellW, height: CalendarYearView.numberHeight)
             HStack(spacing: 1.5) {

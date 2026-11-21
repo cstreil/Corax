@@ -47,6 +47,13 @@ struct CalendarScreenView: View {
             store.ownEmails = CalendarPermissions.ownAddresses(model.mailbox.accounts.map(\.email))
             await store.loadCalendars()
             if !store.loaded { await store.refresh() }
+            // M2.18 §7: beim Öffnen sofort abgleichen, nicht bis zu fünf
+            // Minuten auf den Kerntask warten.
+            await store.syncQuietly()
+        }
+        // M2.18 §7: zurück zur App heißt abgleichen (höchstens einmal pro Minute).
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            Task { await store.syncQuietly() }
         }
         // M2.15b (2.2): Konten kommen asynchron; erst mit den eigenen Adressen
         // lässt sich „mein Termin" von „Einladung" unterscheiden.
@@ -61,8 +68,8 @@ struct CalendarScreenView: View {
         // screen so it works in day, week and month alike.
         .onReceive(NotificationCenter.default.publisher(for: .rabeCalendarClick)) { note in
             guard let id = (note.userInfo?["id"] as? NSNumber)?.int64Value,
-                  let event = store.visibleEvents.first(where: { $0.id == id }) else { return }
-            store.selectedEventId = id
+                  let event = store.occurrence(forEventId: id) else { return }
+            store.selectedEventId = event.id
             PerfLog.shared.write("calendar_click id=\(id) mode=\(store.mode.rawValue) source=hook")
             // The same router the pointer uses: one click opens, two edit.
             hookClicks.click(String(id),
@@ -88,7 +95,9 @@ struct CalendarScreenView: View {
         }
         .onChange(of: store.cardMode) { _, mode in
             PerfLog.shared.write("calendar_card_mode mode=\(mode.rawValue)")
-            if mode == .edit { DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { focusRequest += 1 } }
+            // M2.18 §1: kein Fokus-Rückruf beim Bearbeiten. Der hat dem
+            // Tastenempfänger das erste Responder gegeben und dem Titelfeld den
+            // Fokus wieder weggenommen — „lostippen" landete nicht im Titel.
         }
         // M2.12 requirement 7: after every close (Esc, ×, click into the grid)
         // the keyboard belongs to the grid again.
@@ -97,8 +106,7 @@ struct CalendarScreenView: View {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { focusRequest += 1 }
             PerfLog.shared.write("calendar_card_focus_return")
         }
-        .alert(pendingDelete.map { store.canEdit($0) } == true && !(pendingDelete?.attendees.isEmpty ?? true)
-               ? "Diesen Termin absagen?" : "Diesen Termin löschen?",
+        .alert(deleteTitle,
                isPresented: Binding(get: { pendingDelete != nil },
                                     set: { if !$0 { pendingDelete = nil } })) {
             Button("Abbrechen", role: .cancel) { pendingDelete = nil }
@@ -174,12 +182,27 @@ struct CalendarScreenView: View {
         guard escapeMonitor == nil else { return }
         escapeMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
             guard event.window?.title == Instance.title else { return event }
+            // M2.17 §1: Esc schließt zuerst die Suche — das Feld hält die
+            // Tastatur, der Monitor ist der verlässliche Weg.
+            if event.keyCode == 53, store.searchOpen, store.cardMode == .view {
+                PerfLog.shared.write("calendar_search escape=1")
+                store.closeSearch()
+                focusRequest += 1
+                return nil
+            }
             if event.keyCode == 53 {
-                guard store.cardIsOpen else { return event }
+                // M2.18 §4: `Esc` führt nie zurück zur Mail. Karte und
+                // Bearbeiten schließen schrittweise; ohne Karte nimmt er die
+                // Auswahl weg, danach tut er nichts mehr.
+                guard !model.shortcutsOpen, !model.paletteOpen,
+                      event.window?.attachedSheet == nil else { return event }
+                guard store.cardIsOpen else {
+                    guard store.selectedEventId != nil else { return nil }
+                    store.clearSelection()
+                    focusRequest += 1
+                    return nil
+                }
                 PerfLog.shared.write("calendar_escape source=monitor mode=\(store.cardMode.rawValue)")
-                // M2.12: eine Entscheidung für Monitor und Test (`escapeAction`):
-                // Bearbeiten → Anzeige, Anzeige → Karte zu. Ohne Karte lässt der
-                // Monitor die Taste weiter zum Raster („zurück zur Liste“).
                 switch store.escapeAction() {
                 case .cancelEdit: store.cancelEdit()
                 case .closeCard: store.closeCard()
@@ -211,6 +234,8 @@ struct CalendarScreenView: View {
             openNew: { openNewEvent() },
             openCard: { store.openCard($0.id) },
             editCard: { store.editOpenCard() },
+            editEvent: { store.openCard($0.id, edit: true) },
+            closeCard: { store.closeCard() },
             saveCard: { store.requestSave() },
             deleteSelected: { pendingDelete = $0 },
             joinMeeting: { join($0) },
@@ -229,8 +254,21 @@ struct CalendarScreenView: View {
         model.platform.open(url)
     }
 
+    /// M2.18 §6: Eine Wiederholung lässt sich (noch) nur mit der ganzen Serie
+    /// löschen — das sagen Titel und Text, statt es zu verschweigen.
+    private var deleteTitle: String {
+        guard let event = pendingDelete else { return "Diesen Termin löschen?" }
+        if event.isSeriesOccurrence { return "Alle Termine dieser Serie löschen?" }
+        if store.canEdit(event), !event.attendees.isEmpty { return "Diesen Termin absagen?" }
+        return "Diesen Termin löschen?"
+    }
+
     private var deleteMessage: String {
         guard let event = pendingDelete else { return "" }
+        if event.isSeriesOccurrence {
+            return "Die ganze Serie verschwindet aus dem Kalender. Einzelne Termine lassen sich "
+                + "löschen, sobald der Kern den Geltungsbereich kennt."
+        }
         if store.canEdit(event) && !event.attendees.isEmpty {
             return "\(event.attendees.count) Teilnehmende erhalten eine Absage per E-Mail."
         }

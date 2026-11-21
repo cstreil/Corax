@@ -63,12 +63,17 @@ Zwei Schichten:
 | Jetzt synchronisieren | — | `⇧⌘N` |
 | Bestätigungscode kopieren | — | `⌥⇧⌘C` |
 | Gehe zu Postfach I S D T E H # ! A | `G` | `⌘1…⌘9` |
+| Gehe zu Ordner/Label … (G O) | — | `⇧⌘O` |
 | Konto 1…9 / alle | — | `⌃1…⌃9` / `⌃0` |
 | Seitenleiste | `\` | `⌃⌘S` |
 | Suche | `/` | `⌥⌘F` / `⌘F` |
 | Befehlspalette | — | `⌘K` |
 | Kürzelhilfe | `?` | `⌘/` |
 | Einstellungen · Leistung · Beenden | — | `⌘,` / `⌥⌘P` / `⌘Q` |
+
+### Die `G`-Folge
+
+`G` allein öffnet nichts. Sofort nach dem Druck zeigt die Statuszeile „Gehe zu: I Posteingang · S Markiert · D Entwürfe · T Gesendet · E Erledigt · H Später · # Papierkorb · ! Spam · A Alle · O Ordner/Label …“, und **2 Sekunden** lang wartet die App auf die zweite Taste; `Esc` bricht ab. Rechts in der Seitenleiste steht die Folge blass an jeder Zeile („G I“, „G S“ …), der Ungelesen-Zähler davor.
 
 ## KI
 
@@ -120,7 +125,8 @@ Zwei Schichten:
 | zurück / weiter blättern | `-` / `+` / `=` | `⌘←` / `⌘→` |
 | Neuer Termin | `B` | `⌘N` |
 | voriger / nächster Termin | `Tab` / `⇧Tab` | `↑` / `↓` |
-| Termin öffnen / bearbeiten | — | `↵` / `⌘E` |
+| Termin aufklappen / zuklappen | — | `↵` |
+| Termin bearbeiten | — | `⌘E` |
 | Termin sichern (im Titelfeld ↵) | — | `⌘↵` |
 | schrittweise zurück | — | `Esc` |
 | Meeting beitreten | `O` | `⌘O` |

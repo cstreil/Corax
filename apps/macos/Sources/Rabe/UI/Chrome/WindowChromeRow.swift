@@ -13,43 +13,116 @@ struct WindowChromeRow: View {
 
     @Environment(\.theme) private var theme
     private var model: AppModel { AppModel.shared }
+    /// M2.18c: nur true, wenn die Ampelknöpfe wirklich **im** Band liegen.
+    /// In normalen Fenstern sitzen sie in der Titelbar darüber, dann braucht das
+    /// Band links keine Fläche und das Symbol beginnt am Fensterrand.
+    @State private var lightsInBand = false
 
     var body: some View {
-        // Ein Band über das **ganze** Fenster: links die Ampelzone (und bei
-        // sichtbarer Seitenleiste deren Breite mit dem Ausblenden-Knopf), rechts
-        // die Werkzeugleiste des Modus. So liegt nie Inhalt unter dem Band, und
-        // die Ampel bleibt sichtbar — sie liegt über diesem Band, nicht über
-        // einer eigenen Fläche der Seitenleiste.
+        // Ein Band über das **ganze** Fenster: links die Seitenleiste bzw. die
+        // Ampelzone, rechts die Werkzeugleiste des Modus. So liegt nie Inhalt
+        // unter dem Band, und die Ampel bleibt sichtbar.
         HStack(spacing: 0) {
             lead
             if model.calendarOpen {
-                CalendarChromeRow()
+                CalendarChromeRow(lightsInBand: lightsInBand)
             } else {
-                MailChromeRow()
+                MailChromeRow(lightsInBand: lightsInBand)
             }
         }
         .frame(height: Self.height)
         .background(WindowDragArea())
         .background(theme.bar.color)
+        .background(
+            TrafficLightProbe { inside in
+                if inside != lightsInBand { lightsInBand = inside }
+            }
+            .allowsHitTesting(false)
+        )
         .overlay(alignment: .bottom) { Rectangle().fill(theme.line.color).frame(height: 0.5) }
     }
 
-    private var lead: some View {
-        HStack(spacing: 0) {
-            Color.clear.frame(width: 64, height: 1)
-            Spacer(minLength: 0)
-        }
-        .frame(width: model.sidebar.isVisible ? SidebarState.width : 104)
+    /// M2.18c: Breite der Ampelzone, wenn die Knöpfe im Band liegen.
+    static let trafficLightZone: CGFloat = 72
 
+    /// Wie viel Platz links vom Werkzeug der Zeile liegt: die Seitenleiste, wenn
+    /// sie offen ist; bei eingeklappter Leiste nur dann die Ampelzone, wenn die
+    /// Fensterknöpfe tatsächlich im Band liegen (sonst 0).
+    static func leadWidth(sidebarVisible: Bool, lightsInBand: Bool) -> CGFloat {
+        if sidebarVisible { return SidebarState.width }
+        return lightsInBand ? trafficLightZone : 0
+    }
+
+    static func rowWidth(windowWidth: CGFloat, sidebarVisible: Bool, lightsInBand: Bool) -> CGFloat {
+        windowWidth - leadWidth(sidebarVisible: sidebarVisible, lightsInBand: lightsInBand)
+    }
+
+    private var lead: some View {
+        Color.clear.frame(width: Self.leadWidth(sidebarVisible: model.sidebar.isVisible,
+                                             lightsInBand: lightsInBand),
+                          height: 1)
+    }
+}
+
+/// M2.18c: Liegt der Rahmen des Schließen-Knopfs im Band? Reine Rechnung, damit
+/// sie ohne Fenster prüfbar ist: `button` in Fensterkoordinaten (Ursprung unten
+/// links), das Band beginnt bei `topInset` von **oben** und ist `bandHeight` hoch.
+enum TrafficLights {
+    static func overlapsBand(button: CGRect, windowHeight: CGFloat,
+                             topInset: CGFloat, bandHeight: CGFloat) -> Bool {
+        let topFromTop = windowHeight - button.maxY
+        let bottomFromTop = windowHeight - button.minY
+        return bottomFromTop > topInset && topFromTop < topInset + bandHeight
+    }
+}
+
+/// Fragt beim Fenster nach den echten Knopfrahmen, statt eine Zahl anzunehmen.
+private struct TrafficLightProbe: NSViewRepresentable {
+    let onChange: (Bool) -> Void
+
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView()
+        DispatchQueue.main.async { report(view) }
+        return view
+    }
+
+    func updateNSView(_ view: NSView, context: Context) {
+        DispatchQueue.main.async { report(view) }
+    }
+
+    /// `@State` im Aufrufer hält den Wert; gemeldet wird nur bei Änderung.
+    private static var lastReported: Bool?
+
+    private func report(_ view: NSView) {
+        guard let window = view.window,
+              let button = window.standardWindowButton(.closeButton),
+              !button.isHidden
+        else {
+            onChange(false)   // kein Fenster oder keine Ampel (Vollbild): nichts freihalten
+            return
+        }
+        let rect = button.convert(button.bounds, to: nil)
+        let inside = TrafficLights.overlapsBand(button: rect,
+                                                windowHeight: window.frame.height,
+                                                topInset: ChromeMetrics.shared.topInset,
+                                                bandHeight: WindowChromeRow.height)
+        if Self.lastReported != inside {
+            Self.lastReported = inside
+            PerfLog.shared.write("chrome_traffic_lights inside_band=\(inside ? 1 : 0) "
+                                 + "button=\(Int(rect.minY))..\(Int(rect.maxY)) h=\(Int(window.frame.height)) "
+                                 + "inset=\(Int(ChromeMetrics.shared.topInset))")
+        }
+        onChange(inside)
     }
 }
 
 // MARK: - Mail
 
-/// Werkzeugleiste der Liste: Ausblenden-Knopf (nur ohne Seitenleiste), Titel,
-/// Tabs, Sync, Suche, Verfassen mit Zähler, Kalender (nur ohne Seitenleiste)
-/// und das `⋯`-Menü.
+/// Werkzeugleiste der Liste: Seitenleisten-Schalter, Titel, Tabs, Sync, Suche,
+/// Verfassen mit Zähler, Kalender (nur ohne Seitenleiste) und das `⋯`-Menü.
 struct MailChromeRow: View {
+    /// M2.18c: von `WindowChromeRow` durchgereicht (liegen die Ampeln im Band?).
+    var lightsInBand = false
     @Environment(\.theme) private var theme
     @FocusState private var searchFocused: Bool
     private var model: AppModel { AppModel.shared }
@@ -59,13 +132,11 @@ struct MailChromeRow: View {
     var body: some View {
         @Bindable var box = box
         HStack(spacing: 12) {
-            if sidebarVisible {
-                ToolbarIcon(symbol: "sidebar.left", help: "Seitenleiste ausblenden (\\)") {
-                    model.sidebar.toggle()
-                }
-            }
+            sidebarToggle
             titleMenu
-            tabs
+            if Self.showsTabs(inRowWidth: rowWidth) {
+                tabs
+            }
             Spacer(minLength: 8)
             ToolbarIcon(symbol: "arrow.clockwise", help: "Jetzt synchronisieren") {
                 ActionDispatcher.perform(.syncNow)
@@ -79,7 +150,7 @@ struct MailChromeRow: View {
             }
             overflowMenu
         }
-        .padding(.leading, sidebarVisible ? 6 : 14)
+        .padding(.leading, 6)
         .padding(.trailing, 14)
         .onChange(of: model.searchFocusRequest) { _, _ in searchFocused = true }
         .onChange(of: model.searchAIRequest) { _, _ in
@@ -88,6 +159,35 @@ struct MailChromeRow: View {
             guard model.aiFilterQuestion == nil else { return }
             model.runAISearchFilter()
         }
+    }
+
+    /// M2.17: Unter dieser Zeilenbreite passen die Tabs nicht mehr („Newsletter"
+    /// wurde zu „Newsl…"); sie stehen ohnehin im Titelmenü, also entfallen sie
+    /// hier, statt abgeschnitten zu werden.
+    static let tabsMinRowWidth: CGFloat = 790
+
+    static func showsTabs(inRowWidth width: CGFloat) -> Bool {
+        width >= tabsMinRowWidth
+    }
+
+    /// Breite, die dieser Zeile zur Verfügung steht (Band minus Ampelzone bzw.
+    /// minus Seitenleiste).
+    private var rowWidth: CGFloat {
+        WindowChromeRow.rowWidth(windowWidth: model.sidebar.windowWidth,
+                                 sidebarVisible: sidebarVisible,
+                                 lightsInBand: lightsInBand)
+    }
+
+    /// M2.18c: steht in beiden Zuständen in der Zeile; der Hilfetext sagt, was
+    /// der Klick tut. Vorher war der Knopf bei eingeklappter Leiste unsichtbar.
+    private var sidebarToggle: some View {
+        ToolbarIcon(
+            symbol: "sidebar.left",
+            help: sidebarVisible ? "Seitenleiste ausblenden (\\)" : "Seitenleiste einblenden (\\)"
+        ) {
+            model.sidebar.toggle()
+        }
+        .accessibilityIdentifier("chrome.sidebarToggle")
     }
 
     /// Title = current view; the menu switches view and account.
@@ -238,6 +338,8 @@ struct MailChromeRow: View {
 /// Kalender-Kopf in derselben Zeile: blättern, „Heute", Zeitraum, die drei
 /// Ansichten, neuer Termin, Verfassen und das `⋯`-Menü.
 struct CalendarChromeRow: View {
+    /// M2.18c: von `WindowChromeRow` durchgereicht (liegen die Ampeln im Band?).
+    var lightsInBand = false
     @Environment(\.theme) private var theme
     private var model: AppModel { AppModel.shared }
     private var store: CalendarStore { model.calendar }
@@ -245,11 +347,7 @@ struct CalendarChromeRow: View {
 
     var body: some View {
         HStack(spacing: 10) {
-            if sidebarVisible {
-                ToolbarIcon(symbol: "sidebar.left", help: "Seitenleiste ausblenden (\\)") {
-                    model.sidebar.toggle()
-                }
-            }
+            sidebarToggle
             ToolbarIcon(symbol: "chevron.left", help: "Zurück (-)") { store.page(-1) }
             ToolbarIcon(symbol: "chevron.right", help: "Weiter (=)") { store.page(1) }
             Button("Heute") { store.jumpToToday() }
@@ -266,7 +364,11 @@ struct CalendarChromeRow: View {
                 .lineLimit(1)
                 .layoutPriority(1)
             Spacer(minLength: 8)
-            modePicker
+            if Self.showsModePicker(inRowWidth: rowWidth) {
+                modePicker
+            } else {
+                modeMenu
+            }
             Button { ActionDispatcher.perform(.calendarNewEvent) } label: {
                 HStack(spacing: 4) {
                     Image(systemName: "plus").font(.system(size: 10.5, weight: .semibold))
@@ -300,8 +402,69 @@ struct CalendarChromeRow: View {
             .help("Mehr")
             .accessibilityLabel("Mehr")
         }
-        .padding(.leading, sidebarVisible ? 6 : 12)
+        .padding(.leading, 6)
         .padding(.trailing, 14)
+    }
+
+    /// M2.17: Die fünf Ansichten brauchen nebeneinander rund 256 pt; links davon
+    /// stehen rund 430 pt feste Bedienelemente (Zurück/Weiter, Heute, Neuer
+    /// Termin, Verfassen, `⋯`, Abstände) und die Überschrift soll mindestens
+    /// 120 pt behalten. Darunter passen sie nicht mehr und werden zum Popup —
+    /// lieber ein Knopf mit dem aktuellen Titel als abgeschnittenes Segment.
+    static let modePickerMinRowWidth: CGFloat = 806
+
+    static func showsModePicker(inRowWidth width: CGFloat) -> Bool {
+        width >= modePickerMinRowWidth
+    }
+
+    /// Breite, die dieser Zeile zur Verfügung steht (Band minus Ampelzone bzw.
+    /// minus Seitenleiste).
+    private var rowWidth: CGFloat {
+        WindowChromeRow.rowWidth(windowWidth: model.sidebar.windowWidth,
+                                 sidebarVisible: sidebarVisible,
+                                 lightsInBand: lightsInBand)
+    }
+
+    private var sidebarToggle: some View {
+        ToolbarIcon(
+            symbol: "sidebar.left",
+            help: sidebarVisible ? "Seitenleiste ausblenden (\\)" : "Seitenleiste einblenden (\\)"
+        ) {
+            model.sidebar.toggle()
+        }
+        .accessibilityIdentifier("chrome.sidebarToggle")
+    }
+
+    /// Popup statt Segment: Titel = aktuelle Ansicht, Menü = alle fünf (M2.17).
+    private var modeMenu: some View {
+        Menu {
+            ForEach(CalendarStore.Mode.allCases) { mode in
+                Button {
+                    store.setMode(mode)
+                } label: {
+                    Text((store.mode == mode ? "✓ " : "") + mode.title)
+                }
+            }
+        } label: {
+            HStack(spacing: 4) {
+                Text(store.mode.title)
+                    .font(.system(size: 12, weight: .semibold))
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 8, weight: .semibold))
+                    .foregroundStyle(theme.ink3.color)
+            }
+            .foregroundStyle(theme.ink.color)
+            .padding(.horizontal, 9)
+            .frame(height: 24)
+            .background(RoundedRectangle(cornerRadius: 6).fill(theme.hover.color))
+            .contentShape(Rectangle())
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .help("Ansicht (\(store.mode.shortcut))")
+        .accessibilityLabel("Ansicht: \(store.mode.title)")
+        .accessibilityIdentifier("calendar.modeMenu")
     }
 
     /// Tag | Woche | Monat — ein eigenes Segment, weil das System-Segment den

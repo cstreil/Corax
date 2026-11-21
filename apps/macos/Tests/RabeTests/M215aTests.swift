@@ -10,6 +10,10 @@ final class M215aTests: XCTestCase {
 
     /// Eigene Ordner stehen in der Liste, Systemordner nicht, und die
     /// Hierarchie kommt aus dem Trennzeichen des Servers.
+    ///
+    /// M2.18k: Sortiert wird jetzt **innerhalb jeder Ebene** nach Namen —
+    /// vorher stand die Liste in der Reihenfolge des Kerns, und genau daran
+    /// hing jedes Kind unter dem falschen Elternordner.
     func testOwnFoldersBecomeRowsWithHierarchy() {
         let folders = [
             folder(1, "INBOX", role: "inbox"),
@@ -21,15 +25,15 @@ final class M215aTests: XCTestCase {
             folder(7, "Familie"),
         ]
         let rows = Pickers.folderTree(folders)
-        XCTAssertEqual(rows.map(\.folder.id), [4, 5, 6, 7], "Systemordner dürfen nicht in der Liste stehen")
-        XCTAssertEqual(rows.map(\.name), ["Projekte", "Rabe", "Design", "Familie"])
-        XCTAssertEqual(rows.map(\.depth), [0, 1, 2, 0])
+        XCTAssertEqual(rows.map(\.folder.id), [7, 4, 5, 6], "Systemordner dürfen nicht in der Liste stehen")
+        XCTAssertEqual(rows.map(\.name), ["Familie", "Projekte", "Rabe", "Design"])
+        XCTAssertEqual(rows.map(\.depth), [0, 0, 1, 2])
     }
 
     /// Ein Konto mit anderem Trennzeichen (`.` wie bei manchen Providern).
     func testFolderTreeUsesTheAccountsDelimiter() {
         let rows = Pickers.folderTree([
-            folder(1, "Rechnungen"),
+            folder(1, "Rechnungen", delimiter: "."),
             folder(2, "Rechnungen.2026", delimiter: "."),
         ])
         XCTAssertEqual(rows.map(\.name), ["Rechnungen", "2026"])

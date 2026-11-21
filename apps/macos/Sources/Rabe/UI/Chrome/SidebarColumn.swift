@@ -14,7 +14,12 @@ struct SidebarColumn: View {
     private var box: MailboxStore { model.mailbox }
     @Environment(\.theme) private var theme
     @State private var labelsOpen = true
-    @State private var foldersOpen = false
+    /// M2.18k: der Aufklappzustand der Gruppe bleibt erhalten (eigener Schlüssel
+    /// für die Sandbox, wie bei `sidebarVisible`).
+    @AppStorage(Instance.isSandbox ? "foldersOpen.sandbox" : "foldersOpen")
+    private var foldersOpen = true
+    @State private var expandedFolders: Set<String> = []
+    @State private var disclosureLoaded = false
     @State private var accountOpen = false
 
     var body: some View {
@@ -238,16 +243,24 @@ struct SidebarColumn: View {
                     .font(.system(size: 12.5, weight: selected ? .medium : .regular))
                     .foregroundStyle(theme.ink.color)
                     .lineLimit(1)
-                Spacer(minLength: 0)
+                    .truncationMode(.tail)
+                Spacer(minLength: 6)
+                // M2.18n: Zähler **und** Folge. Vorher ersetzte der Zähler den
+                // Hinweis (`else if`), und ohne `fixedSize` wurde „G I“ bei
+                // schmaler Leiste zu „G“ zusammengedrückt. Der Name kürzt
+                // zuerst, die Folge nie.
                 if badge > 0 {
                     Text("\(badge)")
                         .font(.system(size: 10.5, weight: .medium))
                         .monospacedDigit()
                         .foregroundStyle(selected ? theme.accent.color : theme.ink3.color)
-                } else if let hint = Self.goHint(for: view) {
+                        .fixedSize()
+                }
+                if let hint = Self.goHint(for: view) {
                     Text(hint)
                         .font(.system(size: 9.5, weight: .medium))
                         .foregroundStyle(theme.ink3.color.opacity(0.75))
+                        .fixedSize()
                 }
             }
             .padding(.horizontal, 7)
@@ -274,25 +287,19 @@ struct SidebarColumn: View {
         }
     }
 
-    /// Tauri's `g`-Kürzel, wie im Entwurf blass mitgelernt.
+    /// Die Folge der Zeile („G I“), aus derselben Tabelle wie Auswertung und
+    /// Statuszeile (`GoSequence`) — so kann sie nicht mehr auseinanderlaufen.
     static func goHint(for view: MailView) -> String? {
-        switch view {
-        case .inbox: "G I"
-        case .starred: "G S"
-        case .drafts: "G D"
-        case .sent: "G T"
-        case .done: "G E"
-        case .snoozed: "G H"
-        case .trash: "G #"
-        case .spam: "G !"
-        case .all: "G A"
-        }
+        guard let target = GoSequence.targets.first(where: { $0.view == view }) else { return nil }
+        return "G " + target.key.uppercased()
     }
 
     // MARK: Labels
 
+    /// M2.18n: eigene Labels zuerst, automatische Kategorien danach — dieselbe
+    /// Reihenfolge wie in Liste und Mail (`MailLabelDisplay`).
     private var labels: [RabeKit.Label] {
-        box.labels.values.sorted { ($0.position, $0.name) < ($1.position, $1.name) }
+        MailLabelDisplay.sorted(Array(box.labels.values))
     }
 
     @ViewBuilder private var labelsSection: some View {
@@ -315,6 +322,12 @@ struct SidebarColumn: View {
                                     .font(.system(size: 12.5, weight: selected ? .medium : .regular))
                                     .foregroundStyle(theme.ink.color)
                                     .lineLimit(1)
+                                // M2.18n: automatische Kategorien mit Funkeln.
+                                if label.isAuto == true {
+                                    Image(systemName: "sparkles")
+                                        .font(.system(size: 9.5))
+                                        .foregroundStyle(theme.ink3.color)
+                                }
                                 Spacer(minLength: 0)
                                 let badge = box.labelBadge(label.id)
                                 if badge > 0 {
@@ -330,7 +343,9 @@ struct SidebarColumn: View {
                             .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
-                        .accessibilityLabel("Label \(label.name)")
+                        .accessibilityLabel(label.isAuto == true
+                                            ? "Automatische Kategorie \(label.name)"
+                                            : "Label \(label.name)")
                         .accessibilityAddTraits(selected ? .isSelected : [])
                     }
                 }
@@ -342,36 +357,87 @@ struct SidebarColumn: View {
 
     @ViewBuilder private var foldersSection: some View {
         let rows = Pickers.folderTree(box.folders)
+        let visible = FolderDisclosure.visible(rows, open: expandedFolders)
         if !rows.isEmpty {
             VStack(alignment: .leading, spacing: 1) {
                 sectionHeader("Ordner", open: $foldersOpen)
                 if foldersOpen {
-                    ForEach(rows) { row in
-                        let selected = box.filterFolderId == row.folder.id
-                        Button { box.selectFolder(row.folder); box.focusList() } label: {
-                            HStack(spacing: 8) {
-                                Image(systemName: "folder")
-                                    .font(.system(size: 11.5))
-                                    .frame(width: 18)
-                                    .foregroundStyle(theme.ink3.color)
-                                Text(row.name)
-                                    .font(.system(size: 12.5, weight: selected ? .medium : .regular))
-                                    .foregroundStyle(selected ? theme.ink.color : theme.ink2.color)
-                                    .lineLimit(1)
-                                Spacer(minLength: 0)
-                            }
-                            .padding(.leading, 7 + CGFloat(row.depth) * 12)
-                            .padding(.trailing, 7)
-                            .frame(height: 26)
-                            .contentShape(Rectangle())
-                        }
-                        .buttonStyle(.plain)
-                        .help(row.folder.imapName)
-                        .accessibilityLabel("Ordner \(row.name)")
+                    ForEach(visible) { row in
+                        folderRow(row, selected: box.filterFolderId == row.folder.id)
                     }
                 }
             }
+            // M2.18k: der letzte Aufklappzustand wird beim Start wiederhergestellt.
+            // Beim ersten Mal stehen die vorhandenen Ordner offen (sonst sähe der
+            // Baum nach dem Umbau nur noch die Wurzelordner); später neue Ordner
+            // sind eingeklappt.
+            .task(id: rows.count) {
+                guard !disclosureLoaded else { return }
+                expandedFolders = FolderDisclosure.loadOrSeed(rows: rows)
+                disclosureLoaded = true
+            }
         }
+    }
+
+    /// Eine Zeile des Ordnerbaums: Aufklapp-Dreieck (nur bei Ordnern mit
+    /// Kindern), Symbol und Name. Ein Zwischenknoten ohne echten Ordner
+    /// (Elternordner fehlt in der Serverliste) ist nicht wählbar.
+    @ViewBuilder
+    private func folderRow(_ row: FolderRow, selected: Bool) -> some View {
+        let open = FolderDisclosure.isOpen(accountId: row.folder.accountId, path: row.path,
+                                           open: expandedFolders)
+        HStack(spacing: 4) {
+            if row.hasChildren {
+                Button { toggleFolder(row) } label: {
+                    Image(systemName: open ? "chevron.down" : "chevron.right")
+                        .font(.system(size: 8, weight: .bold))
+                        .foregroundStyle(theme.ink3.color)
+                        .frame(width: 12, height: 26)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("\(row.name) \(open ? "zuklappen" : "aufklappen")")
+            } else {
+                Color.clear.frame(width: 12, height: 26)
+            }
+            if row.isSelectable {
+                Button { box.selectFolder(row.folder); box.focusList() } label: {
+                    folderLabel(row, selected: selected)
+                }
+                .buttonStyle(.plain)
+                .help(row.folder.imapName)
+                .accessibilityLabel("Ordner \(row.name)")
+            } else {
+                folderLabel(row, selected: false)
+                    .help("Elternordner von „\(row.name)“ fehlt in der Serverliste")
+            }
+        }
+        .padding(.leading, 7 + CGFloat(row.depth) * 12)
+        .padding(.trailing, 7)
+    }
+
+    private func folderLabel(_ row: FolderRow, selected: Bool) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: "folder")
+                .font(.system(size: 11.5))
+                .frame(width: 18)
+                .foregroundStyle(theme.ink3.color)
+            Text(row.name)
+                .font(.system(size: 12.5, weight: selected ? .medium : .regular))
+                .foregroundStyle(row.isSelectable
+                                 ? (selected ? theme.ink.color : theme.ink2.color)
+                                 : theme.ink3.color)
+                .lineLimit(1)
+            Spacer(minLength: 0)
+        }
+        .frame(height: 26)
+        .contentShape(Rectangle())
+    }
+
+    private func toggleFolder(_ row: FolderRow) {
+        expandedFolders = FolderDisclosure.toggle(accountId: row.folder.accountId,
+                                                  path: row.path, in: expandedFolders)
+        FolderDisclosure.save(expandedFolders)
     }
 
     private func sectionHeader(_ title: String, open: Binding<Bool>) -> some View {

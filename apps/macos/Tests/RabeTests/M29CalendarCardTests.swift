@@ -133,21 +133,72 @@ final class M29CalendarCardTests: XCTestCase {
 
     // MARK: Bearbeiten in derselben Fläche
 
-    func testReturnEditsTheOpenCardAndEscapeGoesBackStepWise() async {
+    /// M2.18c: `↵` klappt den Termin auf und wieder zu, wie in der Mailliste.
+    /// Das Bearbeiten liegt auf `⌘E`, dem Stift und dem Doppelklick.
+    func testReturnTogglesTheCardAndCommandEOpensTheEditor() async {
         let day = day()
         let store = await store([event(1, startsAt: day + 9 * 3_600_000)])
-        store.openCard(1)
+        store.selectedEventId = 1
+        let handle: (NSEvent) -> Bool = { event in
+            CalendarKeyboard.handle(event, store: store, openNew: {},
+                                    openCard: { store.openCard($0.id) },
+                                    editCard: { store.editOpenCard() },
+                                    editEvent: { store.openCard($0.id, edit: true) },
+                                    closeCard: { store.closeCard() }, close: {})
+        }
+        // 1. ↵: Karte auf, aber nur zum Ansehen.
+        XCTAssertTrue(handle(key(36, "\r")))
+        XCTAssertEqual(store.openEventId, 1)
         XCTAssertEqual(store.cardMode, CalendarStore.CardMode.view)
-        // ↵ in der Anzeige schaltet dieselbe Karte in die Bearbeitung.
-        _ = CalendarKeyboard.handle(key(36, "\r"), store: store, openNew: {},
-                                    editCard: { store.editOpenCard() }, close: {})
+        // 2. ↵: Karte wieder zu — die Auswahl bleibt für das nächste ↵.
+        XCTAssertTrue(handle(key(36, "\r")))
+        XCTAssertNil(store.openEventId)
+        XCTAssertEqual(store.selectedEventId, 1)
+        // ⌘E: derselbe Termin, jetzt im Formular.
+        let commandE = NSEvent.keyEvent(with: .keyDown, location: .zero,
+                                        modifierFlags: [.command],
+                                        timestamp: ProcessInfo.processInfo.systemUptime,
+                                        windowNumber: 0, context: nil, characters: "e",
+                                        charactersIgnoringModifiers: "e", isARepeat: false,
+                                        keyCode: 14)!
+        XCTAssertTrue(handle(commandE))
+        XCTAssertEqual(store.openEventId, 1)
         XCTAssertEqual(store.cardMode, CalendarStore.CardMode.edit)
-        XCTAssertEqual(store.openEventId, 1, "die Karte bleibt an derselben Stelle")
-        // Esc 1: zurück in die Anzeige.
+        // ⌘E bei offener Anzeige schaltet dieselbe Karte ins Formular.
+        store.cancelEdit()
+        XCTAssertEqual(store.cardMode, CalendarStore.CardMode.view)
+        XCTAssertTrue(handle(commandE))
+        XCTAssertEqual(store.cardMode, CalendarStore.CardMode.edit)
+    }
+
+    /// Genau der gemeldete Fall: ein Termin ohne Bearbeitungsrecht. Das zweite
+    /// `↵` lief vorher ins Leere, jetzt klappt es die Karte zu.
+    func testReturnAlsoClosesACardThatCannotBeEdited() async {
+        let day = day()
+        let store = await store([event(1, startsAt: day + 9 * 3_600_000, local: false)])
+        store.selectedEventId = 1
+        let handle: (NSEvent) -> Bool = { event in
+            CalendarKeyboard.handle(event, store: store, openNew: {},
+                                    openCard: { store.openCard($0.id) },
+                                    editCard: { store.editOpenCard() },
+                                    closeCard: { store.closeCard() }, close: {})
+        }
+        XCTAssertTrue(handle(key(36, "\r")))
+        XCTAssertEqual(store.openEventId, 1)
+        XCTAssertEqual(store.cardMode, CalendarStore.CardMode.view)
+        XCTAssertTrue(handle(key(36, "\r")))
+        XCTAssertNil(store.openEventId, "das zweite ↵ klappt auch einen fremden Termin zu")
+    }
+
+    /// Esc bleibt die schrittweise Kette: Bearbeiten → Anzeige → Karte zu.
+    func testEscapeGoesBackStepWiseFromTheEditor() async {
+        let day = day()
+        let store = await store([event(1, startsAt: day + 9 * 3_600_000)])
+        store.openCard(1, edit: true)
+        XCTAssertEqual(store.cardMode, CalendarStore.CardMode.edit)
         store.cancelEdit()
         XCTAssertEqual(store.cardMode, CalendarStore.CardMode.view)
         XCTAssertEqual(store.openEventId, 1)
-        // Esc 2: Karte zu.
         store.closeCard()
         XCTAssertNil(store.openEventId)
     }

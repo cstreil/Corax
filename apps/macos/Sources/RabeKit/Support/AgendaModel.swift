@@ -40,6 +40,26 @@ public enum AgendaModel {
         return rows
     }
 
+    /// M2.17 §1: die Zeilen der Trefferliste. Anders als die normale Liste gibt
+    /// es keine leeren Tage und keine Doppelten — jeder Treffer steht an seinem
+    /// Starttag, das Band unter seinem Termin.
+    public static func searchRows(events: [CalendarEvent], openEvent: Int64?,
+                                  math: CalendarMath) -> [AgendaRow] {
+        var byDay: [Int64: [CalendarEvent]] = [:]
+        for event in events {
+            byDay[math.startOfDay(event.startsAt), default: []].append(event)
+        }
+        var rows: [AgendaRow] = []
+        for day in byDay.keys.sorted() {
+            rows.append(.day(day))
+            for event in sorted(byDay[day] ?? []) {
+                rows.append(.event(event))
+                if openEvent == event.id { rows.append(.band(event.id)) }
+            }
+        }
+        return rows
+    }
+
     /// Die Anzeigereihenfolge der Liste, ohne Doppelte: ein mehrtägiger Termin
     /// steht in jeder berührten Tagesgruppe, für `↑`/`↓` zählt er aber nur
     /// einmal — an seiner ersten Stelle. M2.15b (2.3): die Auswahl muss der

@@ -85,10 +85,35 @@ final class HeaderCellView: NSView {
 }
 
 /// One thread row, drawn directly (no subviews): dot, avatar, sender, subject,
+/// Das Label-Kürzel einer Zeile (M2.18l): das erste Label in Anzeigereihenfolge
+/// und wie viele weitere es gibt (`+n`). Mehr passen in die Zeile nicht, ohne
+/// den Betreff zu verdrängen. Welche Labels erscheinen und in welcher
+/// Reihenfolge — eigene vor automatischen —, entscheidet `MailLabelDisplay`
+/// (M2.18n), dieselbe Regel wie in der geöffneten Mail.
+struct RowLabelInfo: Equatable {
+    let name: String
+    let color: NSColor
+    var more: Int = 0
+    /// Automatische Kategorie: die Kapsel setzt davor ein Funkeln (M2.18n).
+    var isAuto: Bool = false
+
+    /// Was in der Kapsel steht.
+    var text: String { more > 0 ? "\(name) +\(more)" : name }
+
+    /// Aus den Labels einer Mail das Kürzel für die Zeile.
+    static func make(ids: [Int64], labels: [Int64: Label], color: NSColor) -> RowLabelInfo? {
+        guard let badge = MailLabelDisplay.badge(ids: ids, labels: labels) else { return nil }
+        return RowLabelInfo(name: badge.name,
+                            color: NSColor(hex: badge.colorHex) ?? color,
+                            more: badge.more,
+                            isAuto: badge.isAuto)
+    }
+}
+
 /// preview, tag, attachment/star, date; hover/selection actions on the right.
 final class ThreadCellView: NSView {
     var thread: ThreadSummary? { didSet { needsDisplay = true } }
-    var labelInfo: (name: String, color: NSColor)? { didSet { needsDisplay = true } }
+    var labelInfo: RowLabelInfo? { didSet { needsDisplay = true } }
     var theme: Theme = .paper { didSet { needsDisplay = true } }
     var isOpen = false { didSet { needsDisplay = true } }
     var showActions = false { didSet { if oldValue != showActions { needsDisplay = true } } }
@@ -103,9 +128,27 @@ final class ThreadCellView: NSView {
     }
     private static let archiveImage = symbol("archivebox")
     private static let clockImage = symbol("clock")
-    private static let starImage = symbol("star")
-    private static let starFill = symbol("star.fill")
     private static let clipImage = symbol("paperclip")
+
+    /// M2.18n: das Funkeln vor einem automatischen Label-Kürzel.
+    private static let sparkleImage = NSImage(systemSymbolName: "sparkles", accessibilityDescription: nil)?
+        .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 9.5, weight: .regular))
+
+    /// Breite des Funkelns samt Abstand in der Kapsel.
+    private static let sparkleWidth: CGFloat = 9.5 + 3
+
+    /// Gelb des gefüllten Sterns.
+    static let starYellow = NSColor(srgbRed: 0.906, green: 0.647, blue: 0.043, alpha: 1)
+
+    /// Das Symbol des Sterns: markiert gefüllt, sonst leer (M2.18l).
+    static func starSymbolName(starred: Bool) -> String { starred ? "star.fill" : "star" }
+
+    /// Der Stern einer Mail. Markiert = gefüllt und gelb, sonst leer in der
+    /// Textfarbe — im Aktionsknopf und in der ruhigen Zeile derselbe.
+    static func starIcon(starred: Bool, color: NSColor) -> NSImage? {
+        let image = symbol(starSymbolName(starred: starred))
+        return starred ? image?.tinted(starYellow) : image?.tinted(color)
+    }
 
     override func draw(_ dirtyRect: NSRect) {
         guard let thread else { return }
@@ -147,19 +190,25 @@ final class ThreadCellView: NSView {
         actionRects = []
         if showActions && !isOpen {
             // `.acts`: archive, snooze, star on hover/selection, replacing date and star.
-            let items: [(AppAction, NSImage?)] = [(.archive, Self.archiveImage), (.snoozeTomorrow, Self.clockImage), (.star, Self.starImage)]
+            // M2.18l: der Stern zeigt seinen Zustand auch hier — markiert gefüllt
+            // und gelb, sonst leer. Vorher wurde immer das leere Symbol genommen.
+            let items: [(AppAction, NSImage?)] = [
+                (.archive, Self.archiveImage?.tinted(theme.ink2.ns)),
+                (.snoozeTomorrow, Self.clockImage?.tinted(theme.ink2.ns)),
+                (.star, Self.starIcon(starred: thread.isStarred, color: theme.ink2.ns)),
+            ]
             var ax = right - CGFloat(items.count) * 28 + 2
             metaLeft = ax - 8
             for (action, image) in items {
                 let rect = NSRect(x: ax, y: midY - 13, width: 26, height: 26)
                 actionRects.append((action, rect))
-                image?.tinted(theme.ink2.ns).draw(in: rect.insetBy(dx: 6, dy: 6))
+                image?.draw(in: rect.insetBy(dx: 6, dy: 6))
                 ax += 28
             }
         } else {
             date.draw(at: NSPoint(x: right - dsz.width, y: midY - dsz.height / 2))
             metaLeft -= 8
-            if thread.isStarred, let star = Self.starFill?.tinted(NSColor(srgbRed: 0.906, green: 0.647, blue: 0.043, alpha: 1)) {
+            if thread.isStarred, let star = Self.starIcon(starred: true, color: theme.ink2.ns) {
                 let r = NSRect(x: metaLeft - 14, y: midY - 7, width: 14, height: 14)
                 star.draw(in: r)
                 metaLeft -= 22
@@ -189,14 +238,21 @@ final class ThreadCellView: NSView {
         guard !isOpen else { return }
         var lx = x
         let lineRight = metaLeft - 4
-        if let labelInfo, lineRight - lx > 80 {
+        if let labelInfo, lineRight - lx > 80 + (labelInfo.isAuto ? 12.5 : 0) {
             let tagFont = NSFont.systemFont(ofSize: 10.5, weight: .semibold)
-            let tag = NSAttributedString(string: labelInfo.name, attributes: [.font: tagFont, .foregroundColor: labelInfo.color])
+            let tag = NSAttributedString(string: labelInfo.text, attributes: [.font: tagFont, .foregroundColor: labelInfo.color])
             let tsz = tag.size()
-            let tagRect = NSRect(x: lx, y: midY - 9, width: tsz.width + 12, height: 18)
+            let sparkle = labelInfo.isAuto ? Self.sparkleImage?.tinted(theme.ink3.ns) : nil
+            let lead = sparkle == nil ? 0 : Self.sparkleWidth
+            let tagRect = NSRect(x: lx, y: midY - 9, width: lead + tsz.width + 12, height: 18)
             labelInfo.color.withAlphaComponent(0.12).setFill()
             NSBezierPath(roundedRect: tagRect, xRadius: 5, yRadius: 5).fill()
-            tag.draw(at: NSPoint(x: lx + 6, y: midY - tsz.height / 2))
+            var textX = lx + 6
+            if let sparkle {
+                sparkle.draw(in: NSRect(x: textX, y: midY - 4.75, width: 9.5, height: 9.5))
+                textX += lead
+            }
+            tag.draw(at: NSPoint(x: textX, y: midY - tsz.height / 2))
             lx += tagRect.width + 10
         }
         let subjectFont = NSFont.systemFont(ofSize: 13, weight: unread ? .semibold : .regular)

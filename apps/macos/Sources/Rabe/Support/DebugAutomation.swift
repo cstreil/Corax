@@ -35,15 +35,26 @@ enum DebugAutomation {
         guard let main = NSApp.mainMenu else { return }
         for menu in main.items {
             guard let sub = menu.submenu else { continue }
-            for item in sub.items where !item.keyEquivalent.isEmpty {
+            // M2.17: **alle** Punkte, nicht nur die mit Kürzel — ein dauerhaft
+            // ausgegrauter Punkt ohne Kürzel wäre sonst unsichtbar.
+            for item in sub.items {
+                guard !item.isSeparatorItem else { continue }
                 var mask = ""
                 if item.keyEquivalentModifierMask.contains(.command) { mask += "cmd+" }
                 if item.keyEquivalentModifierMask.contains(.shift) { mask += "shift+" }
                 if item.keyEquivalentModifierMask.contains(.option) { mask += "opt+" }
                 if item.keyEquivalentModifierMask.contains(.control) { mask += "ctrl+" }
-                let key = item.keyEquivalent == "\u{7f}" ? "delete" : item.keyEquivalent
+                let specials: [String: String] = [
+                    "\u{7f}": "delete", "\u{8}": "backspace",
+                    String(Character(UnicodeScalar(NSDownArrowFunctionKey)!)): "downarrow",
+                    String(Character(UnicodeScalar(NSUpArrowFunctionKey)!)): "uparrow",
+                    "\t": "tab",
+                ]
+                let raw = item.keyEquivalent
+                let key = specials[raw] ?? (raw.isEmpty ? "-" : raw)
                 PerfLog.shared.write("menu \(menu.title) / \(item.title) key=\(mask)\(key)"
-                                     + " enabled=\(item.isEnabled ? 1 : 0)")
+                                     + " enabled=\(item.isEnabled ? 1 : 0)"
+                                     + (item.submenu != nil ? " submenu=1" : ""))
             }
         }
     }
@@ -324,6 +335,7 @@ enum DebugAutomation {
                     CalendarWalkthrough.dayList(spec.count > 1 ? spec[1] : "")
                 }
             case "state": CalendarWalkthrough.state()
+            case "dump": CalendarWalkthrough.dump()
             case "click":
                 // M2.8b: one click (click:<id>) or a double click (click2:<id>)
                 // through the grid's own handler; then the popover state.
@@ -435,6 +447,11 @@ enum DebugAutomation {
             MailWalkthrough.contextMenu()
         case "folders":
             MailWalkthrough.folds()
+        case "singles":
+            // singles:on|off — derselbe Schreibweg wie der Schalter in den
+            // Einstellungen (M2.14). Beleg: mit „off" darf `e` nur Text sein.
+            AppModel.shared.settings.set("singleKeyShortcuts", parts.count > 1 && parts[1] != "off")
+            PerfLog.shared.write("walkthrough singles on=\(AppModel.shared.settings.singleKeyShortcuts ? 1 : 0)")
         case "actionfail":
             // actionfail:<kind>[:<reason>] — exactly the `action:failed` line the
             // host sends (M2.16), handed to the production `receive` path.
@@ -449,7 +466,7 @@ enum DebugAutomation {
         case "state":
             let box = AppModel.shared.mailbox
             let w = NSApp.keyWindow ?? NSApp.mainWindow
-            PerfLog.shared.write("debug_state title=\(w?.title ?? "-") key=\(NSApp.keyWindow != nil) active=\(NSApp.isActive) responder=\(String(describing: w?.firstResponder.map { type(of: $0) })) sel=\(box.selectedId ?? -1) seln=\(box.selectedIds.count) targets=\(box.targetIds.count) open=\(box.expandedId ?? -1) threads=\(box.threads.count) compose=\(box.inlineCompose != nil) focus=\(box.expandedId.flatMap { box.details[$0] }.flatMap { box.focusedMessage(in: $0)?.id } ?? -1) vis=\(box.expandedId.flatMap { box.navigator?.visibleDetailRange($0) }.map { "\(Int($0.lowerBound))-\(Int($0.upperBound))" } ?? "-") frames=\(box.messageFrames.sorted { $0.value.minY < $1.value.minY }.map { "\($0.key):\(Int($0.value.minY))-\(Int($0.value.maxY))" }.joined(separator: ",")) toast=\(AppModel.shared.toasts.current?.text ?? "-") writes=\(AppModel.shared.writeAccess.allowed)")
+            PerfLog.shared.write("debug_state view=\(box.view.rawValue) title=\(w?.title ?? "-") key=\(NSApp.keyWindow != nil) active=\(NSApp.isActive) responder=\(String(describing: w?.firstResponder.map { type(of: $0) })) sel=\(box.selectedId ?? -1) seln=\(box.selectedIds.count) targets=\(box.targetIds.count) open=\(box.expandedId ?? -1) threads=\(box.threads.count) compose=\(box.inlineCompose != nil) focus=\(box.expandedId.flatMap { box.details[$0] }.flatMap { box.focusedMessage(in: $0)?.id } ?? -1) vis=\(box.expandedId.flatMap { box.navigator?.visibleDetailRange($0) }.map { "\(Int($0.lowerBound))-\(Int($0.upperBound))" } ?? "-") frames=\(box.messageFrames.sorted { $0.value.minY < $1.value.minY }.map { "\($0.key):\(Int($0.value.minY))-\(Int($0.value.maxY))" }.joined(separator: ",")) toast=\(AppModel.shared.toasts.current?.text ?? "-") writes=\(AppModel.shared.writeAccess.allowed)")
         default:
             break
         }

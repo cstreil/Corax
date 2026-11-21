@@ -250,6 +250,30 @@ public enum CalendarEventRules {
     }
 }
 
+// MARK: - Terminzeiten im Formular (M2.18 §3)
+
+/// Die Zeitregeln des Termin-Formulars als reine Funktionen: der Beginn zieht
+/// das Ende mit (gleiche Dauer), und ein Ende vor dem Beginn gibt es nicht.
+public enum EventTimes {
+    /// Kürzeste Dauer, die das Formular zulässt.
+    public static let minimumMs: Int64 = 15 * 60_000
+
+    /// Neues Ende, wenn der Beginn verschoben wurde: die Dauer bleibt.
+    /// War die Dauer schon 0 oder negativ, gilt das Minimum.
+    public static func end(afterStartChangeFrom oldStart: Int64, end oldEnd: Int64,
+                           to newStart: Int64, minimumMs: Int64 = EventTimes.minimumMs) -> Int64 {
+        var length = oldEnd - oldStart
+        if length <= 0 { length = minimumMs }
+        return newStart + max(length, minimumMs)
+    }
+
+    /// Ein Ende vor dem Beginn wird auf das Minimum nach dem Beginn gezogen.
+    public static func clampedEnd(start: Int64, end: Int64,
+                                  minimumMs: Int64 = EventTimes.minimumMs) -> Int64 {
+        max(end, start + minimumMs)
+    }
+}
+
 // MARK: - Day-column layout (`layoutDay`)
 
 public struct PositionedEvent: Identifiable, Sendable {

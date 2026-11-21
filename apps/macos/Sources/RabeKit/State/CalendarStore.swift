@@ -85,6 +85,20 @@ public final class CalendarStore {
     public private(set) var loading = false
     public private(set) var busy = false
 
+    // MARK: Suche und Nachladen der Terminliste (M2.17)
+
+    /// Suchfeld offen (`/` in der Liste).
+    public var searchOpen = false
+    /// Was im Suchfeld steht. Leer = normale Liste.
+    public var searchText = ""
+    /// Wie weit die Liste über das Grundfenster hinaus geladen ist. Die Suche
+    /// und das Nachladen teilen sich dieses Fenster.
+    public private(set) var listWindowBack = CalendarStore.listDaysBack
+    public private(set) var listWindowForward = CalendarStore.listDaysForward
+    public private(set) var loadingMoreList = false
+    /// Tag aus der Jahresansicht, zu dem die Liste springen soll (M2.17 §5).
+    public private(set) var pendingListScrollDay: Int64?
+
     // MARK: CalDAV connect and sync status (M2.12)
 
     /// „Konto verbinden“ läuft gerade (`connect_calendar`).
@@ -151,6 +165,10 @@ public final class CalendarStore {
     public private(set) var draft: CalendarEventDraft?
     /// Zähler für `⌘↵` aus dem Raster: die Karte in der Bearbeitung sichert.
     public private(set) var saveRequest = 0
+    /// M2.18o: welcher `⌘↵`-Aufruf schon verarbeitet ist. Die Karte kann in
+    /// mehreren Ansichten im Baum hängen; ohne diesen Riegel sicherte jede
+    /// Kopie, und dieselbe Änderung ging doppelt an den Kern.
+    private var handledSaveRequest = 0
 
     public var cardIsOpen: Bool { openEventId != nil || draft != nil }
 
@@ -160,15 +178,31 @@ public final class CalendarStore {
         return visibleEvents.first { $0.id == openEventId }
     }
 
-    /// Die Karte aufgehen lassen (Klick, `↵`, `O`).
+    /// Die Karte aufgehen lassen (Klick, `↵`, `O`). `id` darf eine Anzeige-
+    /// Kennung oder die Kern-Kennung sein (Hooks und Menüs kennen letztere).
     public func openCard(_ id: Int64, edit: Bool = false) {
-        guard visibleEvents.contains(where: { $0.id == id }) else { return }
-        selectedEventId = id
+        guard let event = occurrence(forEventId: id) else { return }
+        selectedEventId = event.id
         draft = nil
-        openEventId = id
-        let editable = visibleEvents.first { $0.id == id }.map(canEdit) ?? false
+        openEventId = event.id
+        // M2.18g: `⌘E`, Stift und Doppelklick landen hier. Ein abgewiesenes
+        // Bearbeiten fiel bisher still auf die Anzeige zurück — ohne Zeile im
+        // Log war nicht zu sehen, ob `⌘E` überhaupt ankam oder ob die Regel
+        // den Termin gesperrt hat. Derselbe Grund wie in `editOpenCard`.
+        var editable = true
+        if edit, let reason = editBlockReason(event) {
+            editable = false
+            PerfLog.shared.write("calendar_card_edit_blocked id=\(event.id) reason=\(reason)")
+        }
         cardMode = edit && editable ? .edit : .view
-        PerfLog.shared.write("calendar_card_open id=\(id) mode=\(cardMode.rawValue)")
+        PerfLog.shared.write("calendar_card_open id=\(event.id) mode=\(cardMode.rawValue)")
+    }
+
+    /// Die Wiederholung zu einer Kennung: erst die Anzeige-Kennung, dann die
+    /// Kern-Kennung (M2.18 §5 — jede Wiederholung einer Serie hat ihre eigene).
+    public func occurrence(forEventId id: Int64) -> CalendarEvent? {
+        if let exact = visibleEvents.first(where: { $0.id == id }) { return exact }
+        return visibleEvents.first { $0.eventId == id }
     }
 
     public func closeCard() {
@@ -203,11 +237,31 @@ public final class CalendarStore {
         return cardMode == .edit ? .cancelEdit : .closeCard
     }
 
+    /// M2.18 §4: `Esc` ohne Karte nimmt die Auswahl weg — und führt **nicht**
+    /// zurück zur Mail. Der Weg zurück ist `⌥⌘1`, der Knopf oder die
+    /// Seitenleiste; `Esc` bleibt im Kalender.
+    public func clearSelection() {
+        guard selectedEventId != nil else { return }
+        PerfLog.shared.write("calendar_selection_cleared")
+        selectedEventId = nil
+    }
+
     /// `↵` in der Anzeige bzw. der Stift: dieselbe Karte wird zum Formular.
     public func editOpenCard() {
-        guard let event = openEvent, canEdit(event) else { return }
+        guard let event = openEvent else { return }
+        if let reason = editBlockReason(event) {
+            // M2.18 §2: Der Grund steht im Log — sonst rätselt man wieder, warum
+            // ein Stift fehlt oder nicht wirkt.
+            PerfLog.shared.write("calendar_card_edit_blocked id=\(event.id) reason=\(reason)")
+            return
+        }
         cardMode = .edit
         PerfLog.shared.write("calendar_card_edit id=\(event.id)")
+    }
+
+    /// Warum dieser Termin nicht bearbeitet werden darf (nil = darf).
+    public func editBlockReason(_ event: CalendarEvent) -> String? {
+        CalendarPermissions.blockReason(event, calendars: calendars, ownEmails: ownEmails)
     }
 
     /// Esc im Bearbeiten: bei einem neuen Termin verschwindet der Platzhalter,
@@ -248,6 +302,16 @@ public final class CalendarStore {
 
     public func requestSave() { saveRequest += 1 }
 
+    /// M2.18o: Ein `⌘↵` gehört genau einer Karte. Der erste Aufruf nach dem
+    /// Zähler verarbeitet den Auftrag, weitere Kopien derselben Karte bekommen
+    /// `false` — sonst sicherte dieselbe Änderung mehrfach (auch die
+    /// Teilnehmer-Mail ginge doppelt raus).
+    public func takeSaveRequest() -> Bool {
+        guard saveRequest > handledSaveRequest else { return false }
+        handledSaveRequest = saveRequest
+        return true
+    }
+
     /// `↑`/`↓`: der vorige bzw. nächste Termin im sichtbaren Zeitraum, nach
     /// Start sortiert (ganztägige zuerst, gleicher Start nach Titel). Eine
     /// offene Karte wandert mit.
@@ -274,6 +338,7 @@ public final class CalendarStore {
     /// der ersten Stelle). Vorher lief die Auswahl durch alle geladenen
     /// Termine — sie sprang an der Liste vorbei.
     public func navigationOrder() -> [CalendarEvent] {
+        if isSearching { return searchResults }
         if mode == .list {
             let ordered = AgendaModel.orderedEvents(events: visibleEvents, days: listDays)
             if !ordered.isEmpty { return ordered }
@@ -408,18 +473,40 @@ public final class CalendarStore {
     }
 
     /// M2.13: das Fenster der Terminliste — 30 Tage zurück als Kontext, 30 voraus.
+    /// M2.17 §2: Das Fenster wächst beim Scrollen an den Rändern in
+    /// 30-Tage-Schritten (`listWindowBack`/`listWindowForward`), höchstens bis
+    /// ein Jahr je Seite.
     public var listDays: [Int64] {
-        let base = math.addDays(math.startOfDay(anchor), -CalendarStore.listDaysBack)
-        return (0..<(CalendarStore.listDaysBack + CalendarStore.listDaysForward))
-            .map { math.addDays(base, $0) }
+        let base = math.addDays(math.startOfDay(anchor), -listWindowBack)
+        return (0..<(listWindowBack + listWindowForward)).map { math.addDays(base, $0) }
     }
 
     public static let listDaysBack = 30
     public static let listDaysForward = 31
+    /// M2.17 §2: Schrittweite und Grenze des Nachladens (±12 Monate).
+    public static let listLoadStep = 30
+    public static let listMaxBack = 365
+    public static let listMaxForward = 365
 
     /// M2.13: gewählter Tag in der Jahresansicht (0 = heute).
     public var selectedDay: Int64 = 0
     public var selectedDayOrToday: Int64 { selectedDay == 0 ? todayStart : selectedDay }
+
+    /// M2.18h: das Datum, auf dem die aktuelle Ansicht steht — der ausgewählte
+    /// Termin, sonst ein noch sichtbarer `selectedDay`, sonst der Anker.
+    ///
+    /// Vorher nahm die Jahresansicht bei leerem `selectedDay` schlicht „heute"
+    /// und sprang damit beim Öffnen auf heute, auch wenn die Woche beim
+    /// 15. Dezember stand. Ein `selectedDay` von einer früheren Seite zählt
+    /// nicht, sonst markierte die Jahresansicht einen Tag, an dem niemand mehr
+    /// ist.
+    public var chosenDay: Int64 {
+        if let event = selectedEvent { return math.startOfDay(event.startsAt) }
+        if selectedDay != 0, days.contains(math.startOfDay(selectedDay)) {
+            return math.startOfDay(selectedDay)
+        }
+        return math.startOfDay(anchor)
+    }
 
     /// Setzt die Auswahl der Jahresansicht, ohne Daten nachzuladen.
     public func selectDay(_ day: Int64) {
@@ -427,8 +514,11 @@ public final class CalendarStore {
     }
 
     /// Ein Schritt von 7 Tagen in der Jahresansicht (`↑`/`↓`).
+    /// M2.17 §5: der gewählte Tag ist auch das Ziel der Terminliste.
     public func moveSelectedDay(byDays days: Int) {
         selectedDay = math.addDays(selectedDayOrToday, days)
+        pendingListScrollDay = selectedDay
+        PerfLog.shared.write("calendar_year_day day=\(selectedDay)")
     }
 
     /// Half-open epoch range the core is asked for.
@@ -463,11 +553,186 @@ public final class CalendarStore {
         return order.map { id in (accounts.first { $0.id == id }, byAccount[id] ?? []) }
     }
 
+    // MARK: Suche in der Terminliste (M2.17 §1)
+
+    /// Sucht die Liste gerade? Nur dann filtern die Zeilen.
+    public var isSearching: Bool {
+        !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    /// Treffer im geladenen Fenster, in Anzeigereihenfolge.
+    public var searchResults: [CalendarEvent] {
+        CalendarSearch.results(visibleEvents, query: searchText)
+    }
+
+    /// Die Zeilen der Trefferliste (Tagesgruppen, Band unter dem offenen Termin).
+    public var searchRows: [AgendaRow] {
+        AgendaModel.searchRows(events: searchResults, openEvent: openEventId, math: math)
+    }
+
+    public func openSearch() {
+        searchOpen = true
+        PerfLog.shared.write("calendar_search open=1 mode=\(mode.rawValue) "
+                             + "window=\(listWindowBack)+\(listWindowForward)")
+    }
+
+    /// `Esc`: Feld leeren, Feld schließen, normale Liste zurück.
+    public func closeSearch() {
+        let had = searchOpen || !searchText.isEmpty
+        searchOpen = false
+        searchText = ""
+        if had { PerfLog.shared.write("calendar_search open=0 query=\"\" hits=0") }
+    }
+
+    /// Wird bei jeder Änderung im Feld aufgerufen (Beleg und Trefferzahl).
+    public func searchChanged() {
+        PerfLog.shared.write("calendar_search query=\"\(searchText)\" "
+                             + "hits=\(isSearching ? searchResults.count : 0) "
+                             + "window=\(listWindowBack)+\(listWindowForward)")
+    }
+
+    // MARK: Nachladen der Liste (M2.17 §2)
+
+    public enum ListStep: String, Sendable { case earlier, later }
+
+    /// Was ein Schritt an den Rand nachladen würde — reine Entscheidung, damit
+    /// Grenze und Ausschnitt ohne UI prüfbar sind.
+    public struct ListLoadPlan: Equatable, Sendable {
+        public let allowed: Bool
+        public let start: Int64
+        public let end: Int64
+        public let back: Int
+        public let forward: Int
+    }
+
+    public func listLoadPlan(_ step: ListStep, by days: Int = CalendarStore.listLoadStep) -> ListLoadPlan {
+        let anchorDay = math.startOfDay(anchor)
+        switch step {
+        case .earlier:
+            let back = min(listWindowBack + days, CalendarStore.listMaxBack)
+            guard back > listWindowBack else {
+                return ListLoadPlan(allowed: false, start: 0, end: 0,
+                                    back: listWindowBack, forward: listWindowForward)
+            }
+            return ListLoadPlan(allowed: true,
+                                start: math.addDays(anchorDay, -back),
+                                end: math.addDays(anchorDay, -listWindowBack),
+                                back: back, forward: listWindowForward)
+        case .later:
+            let forward = min(listWindowForward + days, CalendarStore.listMaxForward)
+            guard forward > listWindowForward else {
+                return ListLoadPlan(allowed: false, start: 0, end: 0,
+                                    back: listWindowBack, forward: listWindowForward)
+            }
+            return ListLoadPlan(allowed: true,
+                                start: math.addDays(anchorDay, listWindowForward),
+                                end: math.addDays(anchorDay, forward),
+                                back: listWindowBack, forward: forward)
+        }
+    }
+
+    /// Hängt einen 30-Tage-Block an den Anfang oder das Ende der Liste. Die
+    /// Auswahl bleibt stehen (kein `pendingSelection`).
+    public func loadMoreList(_ step: ListStep) async {
+        guard mode == .list, let client, !loading, !loadingMoreList else { return }
+        let plan = listLoadPlan(step)
+        guard plan.allowed else {
+            PerfLog.shared.write("calendar_list_load direction=\(step.rawValue) allowed=0 "
+                                 + "back=\(listWindowBack) forward=\(listWindowForward)")
+            return
+        }
+        loadingMoreList = true
+        defer { loadingMoreList = false }
+        do {
+            let rows = try await client.listEvents(startMs: plan.start, endMs: plan.end)
+            let known = Set(events.map(\.id))
+            events.append(contentsOf: Self.labelled(rows).filter { !known.contains($0.id) })
+            events.sort { $0.startsAt < $1.startsAt }
+            listWindowBack = plan.back
+            listWindowForward = plan.forward
+            rebuildWeekModel()
+            PerfLog.shared.write("calendar_list_load direction=\(step.rawValue) fetched=\(rows.count) "
+                                 + "total=\(events.count) back=\(listWindowBack) "
+                                 + "forward=\(listWindowForward) "
+                                 + "selected=\(selectedEventId.map(String.init) ?? "-")")
+        } catch {
+            toasts.error(error)
+            PerfLog.shared.write("calendar_list_load direction=\(step.rawValue) failed")
+        }
+    }
+
+    // MARK: Sprung aus der Jahresansicht (M2.17 §5)
+
+    /// Merkt sich den Tag, zu dem die Liste springen soll. Ein Klick in der
+    /// Jahresansicht wählt den Tag und merkt ihn vor; die Liste löst ihn beim
+    /// nächsten Aufbau ein.
+    public func scrollListToDay(_ day: Int64) {
+        pendingListScrollDay = math.startOfDay(day)
+        // M2.18f: der gewählte Tag wählt auch den ersten Termin dort aus.
+        pendingListSelectDay = pendingListScrollDay
+        PerfLog.shared.write("calendar_list_target day=\(pendingListScrollDay ?? 0)")
+    }
+
+    /// M2.17 §2: `End`/`Home` in der Liste springen an den Rand; erst dort
+    /// lädt der Rand-Nachlader den nächsten 30-Tage-Block.
+    public private(set) var listEdgeRequest = 0
+    public private(set) var listEdgeTarget: ListStep?
+
+    public func requestListEdge(_ step: ListStep) {
+        listEdgeTarget = step
+        listEdgeRequest += 1
+        PerfLog.shared.write("calendar_list_edgescroll edge=\(step.rawValue)")
+    }
+
+    public func consumePendingListScroll() -> Int64? {
+        let day = pendingListScrollDay
+        pendingListScrollDay = nil
+        return day
+    }
+
+    /// M2.18f: der erste Termin ab diesem Tag wird ausgewählt („Heute" in der
+    /// Liste und der Sprung aus der Jahresansicht). Ausgewertet nach dem
+    /// nächsten Laden in `applyPendingListSelection`.
+    public private(set) var pendingListSelectDay: Int64?
+
+    /// Wählt den ersten Termin, der an diesem Tag noch läuft oder danach
+    /// beginnt — dieselbe Reihenfolge wie `↑`/`↓`.
+    public func selectFirstEvent(from day: Int64) {
+        pendingListSelectDay = math.startOfDay(day)
+        applyPendingListSelection()
+    }
+
+    private func applyPendingListSelection() {
+        guard let day = pendingListSelectDay else { return }
+        pendingListSelectDay = nil
+        let ordered = navigationOrder()
+        guard let first = ordered.first(where: { CalendarEventRules.eventEnd($0) > day }) else {
+            PerfLog.shared.write("calendar_list_select day=\(day) none")
+            return
+        }
+        selectedEventId = first.id
+        if cardIsOpen, draft == nil { openCard(first.id) }
+        PerfLog.shared.write("calendar_list_select day=\(day) id=\(first.id) start=\(first.startsAt)")
+    }
+
+    /// „Antwort offen“ (M2.17 §3): gilt für Einladungen, bei denen der Nutzer
+    /// Teilnehmer ist und noch nicht geantwortet hat.
+    public func needsResponse(_ event: CalendarEvent) -> Bool {
+        CalendarPermissions.needsResponse(event, ownEmails: ownEmails)
+    }
+
     // MARK: Loading
 
     public func loadCalendars() async {
         guard let client else { return }
         do { calendars = try await client.listCalendars(accountId: nil) } catch { toasts.error(error) }
+    }
+
+    /// M2.18 §5: Der Kern liefert alle Wiederholungen einer Serie mit derselben
+    /// Kennung. Für Anzeige und Auswahl bekommt jede ihre eigene (negativ,
+    /// aus Kern-Kennung und Beginn gerechnet).
+    static func labelled(_ rows: [CalendarEvent]) -> [CalendarEvent] {
+        rows.map { $0.taggedAsSeriesOccurrence() }
     }
 
     /// Fetches the visible range and rebuilds the grid model.
@@ -480,7 +745,7 @@ public final class CalendarStore {
             let fetchStarted = Date()
             let rows = try await client.listEvents(startMs: range.start, endMs: range.end)
             lastFetchMilliseconds = Date().timeIntervalSince(fetchStarted) * 1000
-            events = rows
+            events = Self.labelled(rows)
             loaded = true
             // M2.13 §8.5: der Messpunkt für „Jahr in einem Zug laden“.
             if mode == .year {
@@ -493,6 +758,7 @@ public final class CalendarStore {
         }
         rebuildWeekModel()
         applyPendingSelection()
+        applyPendingListSelection()
     }
 
     /// Nach dem Blättern am Rand (M2.12): der erste bzw. letzte Termin der neuen
@@ -541,7 +807,52 @@ public final class CalendarStore {
 
     public func setMode(_ mode: Mode) {
         guard self.mode != mode else { return }
+        // M2.17 §1: die Suche gehört zur Liste; wer die Ansicht verlässt,
+        // schließt sie (das Feld wäre im Raster nicht mehr erreichbar).
+        if mode != .list {
+            searchOpen = false
+            searchText = ""
+        } else if let target = pendingListScrollDay {
+            // M2.17 §5: die Liste zentriert sich auf den gewählten Tag, damit
+            // der Sprung auch bei einem Tag außerhalb des Fensters ankommt.
+            anchor = math.startOfDay(target)
+        }
+        // M2.17 §2: das nachgeladene Fenster gilt nur für die Liste.
+        if self.mode == .list && mode != .list {
+            listWindowBack = CalendarStore.listDaysBack
+            listWindowForward = CalendarStore.listDaysForward
+        }
+        let previous = self.mode
+        // M2.18f: das **gewählte** Datum wandert mit. Im Jahr ist das der
+        // gewählte Tag, in der Liste der ausgewählte Termin; sonst bleibt der
+        // Anker stehen. Vorher sprang der Wechsel nach Jahr/Liste auf heute.
+        switch previous {
+        case .year:
+            anchor = math.startOfDay(selectedDayOrToday)
+        case .list:
+            if let event = selectedEvent { anchor = math.startOfDay(event.startsAt) }
+        default:
+            break
+        }
+        // M2.18h: Die Jahresansicht öffnet auf dem **gewählten** Datum, nicht
+        // auf heute. `yearDays` hängt am Anker, und der Kreis hängt an
+        // `selectedDay` — beide werden hier gesetzt, damit Jahr und Markierung
+        // zusammenpassen (vorher: Jahr des Ankers, Kreis auf heute oder gar
+        // keiner, wenn heute in einem anderen Jahr lag).
+        if mode == .year {
+            let day = chosenDay
+            anchor = day
+            selectedDay = day
+            let year = math.calendar.component(.year, from: math.date(day))
+            PerfLog.shared.write("calendar_year_open year=\(year) day=\(day)")
+        }
         self.mode = mode
+        // M2.18f: beim Wechsel **in** die Liste wird der erste Termin ab dem
+        // gewählten Tag ausgewählt — sonst zeigte sie die alte Auswahl aus einer
+        // anderen Ansicht und scrollte dorthin statt zum Datum.
+        if mode == .list { pendingListSelectDay = math.startOfDay(anchor) }
+        PerfLog.shared.write("calendar_mode from=\(previous.rawValue) to=\(mode.rawValue) "
+                             + "anchorDay=\(math.dayOfMonth(anchor)) selDay=\(math.dayOfMonth(selectedDayOrToday))")
         refreshAfterNavigation()
     }
 
@@ -559,7 +870,14 @@ public final class CalendarStore {
     }
 
     public func jumpToToday() {
-        anchor = math.startOfDay(Int64(Date().timeIntervalSince1970 * 1000))
+        let today = math.startOfDay(Int64(Date().timeIntervalSince1970 * 1000))
+        anchor = today
+        selectedDay = today
+        // M2.18f: in der Liste muss „Heute" auch etwas auswählen, sonst
+        // passiert sichtbar nichts (der Anker allein scrollt nicht). Sind die
+        // Termine noch nicht geladen, greift der Merker nach dem Laden.
+        if mode == .list { selectFirstEvent(from: today) }
+        PerfLog.shared.write("calendar_today mode=\(mode.rawValue) day=\(today)")
         refreshAfterNavigation()
     }
 
@@ -616,6 +934,7 @@ public final class CalendarStore {
             toasts.show(invites > 0
                         ? "Termin erstellt, Einladung an \(invites) Teilnehmende wird gesendet"
                         : "Termin zum Kalender hinzugefügt")
+            await syncQuietly(force: true)
             return true
         } catch {
             toasts.error(error)
@@ -634,11 +953,50 @@ public final class CalendarStore {
             let invited = args.notify && !event.attendees.isEmpty
             toasts.show(invited ? "Termin aktualisiert, Änderung an Teilnehmende gemailt"
                                 : "Termin aktualisiert")
+            await syncQuietly(force: true)
             return true
         } catch {
             toasts.error(error)
             return false
         }
+    }
+
+    /// M2.18 §6: Sichern einer **Wiederholung**. Der Kern kennt (noch) keinen
+    /// Geltungsbereich; die App zeigt deshalb nur „Alle Termine der Serie".
+    /// Dabei bleibt das Datum der Serie stehen: der Master übernimmt die
+    /// Uhrzeit und die Dauer dieses Termins (`SeriesShift`).
+    ///
+    /// Dafür braucht die App den Beginn des Masters. Der Kern liefert
+    /// Wiederholungen mit der Master-Kennung, aber ohne Master-Zeiten; die
+    /// erste Wiederholung ab dem Serienbeginn ist der Master. Einmal je Sichern
+    /// abgefragt, nicht im Hintergrund.
+    @discardableResult
+    public func updateSeriesOccurrence(_ event: CalendarEvent, args: UpdateEventArgs) async -> Bool {
+        guard event.isSeriesOccurrence else { return await update(args) }
+        var shifted = args
+        // Bisheriger Beginn dieser Wiederholung: der Eintrag selbst.
+        let occurrenceStart = event.startsAt
+        if let masterStart = await seriesStart(eventId: event.eventId, beforeOrAt: occurrenceStart) {
+            let times = SeriesShift.master(start: masterStart,
+                                           chosenStart: args.startsAt, chosenEnd: args.endsAt,
+                                           math: math)
+            shifted.startsAt = times.start
+            shifted.endsAt = times.end
+            PerfLog.shared.write("calendar_series_edit event=\(event.eventId) "
+                                 + "master=\(masterStart) chosen=\(args.startsAt) "
+                                 + "shifted=\(times.start) scope=all")
+        } else {
+            PerfLog.shared.write("calendar_series_edit event=\(event.eventId) master=unknown")
+        }
+        return await update(shifted)
+    }
+
+    /// Beginn der Serie (der Master), nicht später als `limit`. Fragt die
+    /// Wiederholungen ab Serienbeginn ab; die früheste ist der Master.
+    private func seriesStart(eventId: Int64, beforeOrAt limit: Int64) async -> Int64? {
+        guard let client else { return nil }
+        guard let rows = try? await client.listEvents(startMs: 0, endMs: limit + 1) else { return nil }
+        return rows.filter { $0.id == eventId }.map(\.startsAt).min()
     }
 
     /// Drag move/resize: the event's fields with new times.
@@ -649,15 +1007,24 @@ public final class CalendarStore {
     @discardableResult
     public func move(_ event: CalendarEvent, startsAt: Int64, endsAt: Int64) async -> Bool {
         let attendees = event.attendees.count
-        let moved = await update(UpdateEventArgs(event, startsAt: startsAt, endsAt: endsAt, notify: attendees == 0))
+        let args = UpdateEventArgs(event, startsAt: startsAt, endsAt: endsAt, notify: attendees == 0)
+        let moved = event.isSeriesOccurrence
+            ? await updateSeriesOccurrence(event, args: args)
+            : await update(args)
         guard moved, attendees > 0 else { return moved }
-        let args = UpdateEventArgs(event, startsAt: startsAt, endsAt: endsAt, notify: true)
+        let mailArgs = UpdateEventArgs(event, startsAt: startsAt, endsAt: endsAt, notify: true)
         let text = attendees == 1
             ? "Termin verschoben. Änderung an 1 Teilnehmenden mailen?"
             : "Termin verschoben. Änderung an \(attendees) Teilnehmende mailen?"
         toasts.show(text, actionTitle: "Mailen", duration: 8) { [weak self] in
             guard let self else { return }
-            Task { await self.update(args) }
+            Task {
+                if event.isSeriesOccurrence {
+                    await self.updateSeriesOccurrence(event, args: mailArgs)
+                } else {
+                    await self.update(mailArgs)
+                }
+            }
         }
         PerfLog.shared.write("event_notify_ask n=\(attendees)")
         return moved
@@ -671,14 +1038,22 @@ public final class CalendarStore {
         busy = true
         defer { busy = false }
         do {
-            try await client.deleteEvent(event.id, notify: true)
-            events.removeAll { $0.id == event.id }
+            try await client.deleteEvent(event.eventId, notify: true)
+            // Alle Wiederholungen dieser Serie verschwinden mit (M2.18 §5).
+            events.removeAll { $0.eventId == event.eventId }
             rebuildWeekModel()
             let invited = canEdit(event) && !event.attendees.isEmpty
-            let text = invited
-                ? "Termin abgesagt, Absage an \(event.attendees.count) Teilnehmende gemailt"
-                : "Termin gelöscht"
-            if canEdit(event) && event.attendees.isEmpty {
+            let text: String
+            if event.isSeriesOccurrence {
+                text = invited
+                    ? "Serie abgesagt, Absage an \(event.attendees.count) Teilnehmende gemailt"
+                    : "Alle Termine der Serie gelöscht"
+            } else {
+                text = invited
+                    ? "Termin abgesagt, Absage an \(event.attendees.count) Teilnehmende gemailt"
+                    : "Termin gelöscht"
+            }
+            if !event.isSeriesOccurrence, canEdit(event), event.attendees.isEmpty {
                 toasts.show(text, actionTitle: Strings.undo) { [weak self] in
                     guard let self else { return }
                     Task { await self.recreate(event) }
@@ -686,6 +1061,7 @@ public final class CalendarStore {
             } else {
                 toasts.show(text)
             }
+            await syncQuietly(force: true)
         } catch {
             toasts.error(error)
         }
@@ -725,12 +1101,16 @@ public final class CalendarStore {
         busy = true
         defer { busy = false }
         do {
-            let updated = try await client.rsvpEvent(event.id, response: response)
+            let updated = try await client.rsvpEvent(event.eventId, response: response)
             if let messageId = event.messageId, let rows = messageEvents[messageId] {
                 messageEvents[messageId] = rows.map { $0.id == updated.id ? updated : $0 }
             }
-            events = events.map { $0.id == updated.id ? updated : $0 }
-            rebuildWeekModel()
+            if event.isSeriesOccurrence {
+                await refresh()
+            } else {
+                events = events.map { $0.id == updated.id ? updated : $0 }
+                rebuildWeekModel()
+            }
             let text: String = switch response {
             case .accepted: "Zugesagt, Antwort an die einladende Person gesendet"
             case .tentative: "Mit Vorbehalt zugesagt, Antwort an die einladende Person gesendet"
@@ -831,6 +1211,43 @@ public final class CalendarStore {
             if let now = lastSyncAt, now > (before ?? -1) { return true }
         }
         return false
+    }
+
+    // MARK: Leiser Abgleich (M2.18 §7)
+
+    /// Letzter leiser Abgleich (Öffnen, Fensteraktivierung).
+    public private(set) var lastQuietSyncAt: Date?
+
+    /// `calendar_sync_now`, ohne Toast und ohne auf die Bestätigung zu warten:
+    /// beim Öffnen des Kalenders, wenn das Fenster aktiv wird (höchstens einmal
+    /// pro Minute) und nach jedem eigenen Sichern.
+    ///
+    /// `refresh` im Anschluss holt, was der Kern inzwischen geschrieben hat; ein
+    /// paar hundert Millisekunden Vorlauf geben dem Kerntask die Chance, den
+    /// Abgleich zu beginnen.
+    public func syncQuietly(force: Bool = false) async {
+        guard let client, !connecting else { return }
+        let now = Date()
+        if !force, let last = lastQuietSyncAt, now.timeIntervalSince(last) < 60 { return }
+        lastQuietSyncAt = now
+        let before = lastSyncAt
+        do {
+            try await client.calendarSyncNow(accountId: nil)
+            // Der Kerntask gleicht im Hintergrund ab; drei kurze Blicke auf den
+            // Zeitstempel reichen für iCloud, ohne die Oberfläche zu blockieren.
+            for _ in 0..<3 {
+                try? await Task.sleep(for: .milliseconds(700))
+                await loadCalendars()
+                if let after = lastSyncAt, after != before { break }
+            }
+            await refresh()
+            PerfLog.shared.write("calendar_sync_quiet ok calendars=\(calendars.count) "
+                                 + "forced=\(force ? 1 : 0) "
+                                 + "moved=\(lastSyncAt != before ? 1 : 0)")
+        } catch {
+            // Kein Toast: der Nutzer hat den Abgleich nicht angefordert.
+            PerfLog.shared.write("calendar_sync_quiet failed")
+        }
     }
 
     // MARK: Connecting a CalDAV account (M2.12)

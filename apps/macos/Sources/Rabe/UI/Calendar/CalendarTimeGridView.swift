@@ -20,7 +20,12 @@ struct EventEditorRequest: Identifiable {
 
 /// M2.9: der Koordinatenraum, in dem die Block-Rechtecke für die Karte liegen.
 extension CalendarGrid {
+    /// Sichtbarer Bereich (Kopf + Raster), feste Origin.
     static let space = "calendar-card-space"
+    /// Scrollender Rasterinhalt: 0:00 liegt auf y = 0 (M2.18i). Die Karte
+    /// rechnet den Scroll-Offset selbst dazu, damit sie auch nach dem Scrollen
+    /// am Block bleibt.
+    static let contentSpace = "calendar-grid-content"
 }
 
 /// Wo die Blöcke des Rasters stehen (M2.9 §7.5).
@@ -31,12 +36,128 @@ struct EventFramePreference: PreferenceKey {
     }
 }
 
+/// Ganztägige Balken sitzen im **festen** Kopf und liegen damit schon im
+/// sichtbaren Raum (M2.18i).
+struct EventHeaderFramePreference: PreferenceKey {
+    static var defaultValue: [Int64: CGRect] { [:] }
+    static func reduce(value: inout [Int64: CGRect], nextValue: () -> [Int64: CGRect]) {
+        value.merge(nextValue()) { _, new in new }
+    }
+}
+
+/// Platzierung der Terminkarte im Zeitraster (M2.18i) — reine Rechnung, damit
+/// der Test sie ohne UI prüfen kann.
+enum CalendarCardPlacement {
+    static let width: CGFloat = 360
+    static let margin: CGFloat = 8
+
+    /// Lage eines Blocks im scrollenden Raster (0:00 = 0), mit denselben Zahlen,
+    /// mit denen `block` ihn zeichnet. Sie wird **gerechnet** und nicht per
+    /// `GeometryReader` gemessen: `.offset`, das den Block an seine Zeit setzt,
+    /// ist eine reine Zeichentransformation — `frame(in:)` sieht sie nicht. Im
+    /// Beleg meldete deshalb jeder Block `bminY=0` (Spaltenkopf), und die Karte
+    /// stand bei jedem Termin an der 0:00-Linie. Der Treffertest
+    /// (`CalendarHitTest.rect`, der die Klicks richtig zuordnet) rechnet die
+    /// Spalte lokal; hier kommt der Spaltenversatz dazu (M2.18i).
+    static func blockRect(_ placed: PositionedEvent, column: Int, columnWidth: CGFloat) -> CGRect {
+        let local = CalendarHitTest.rect(of: placed, columnWidth: Double(columnWidth))
+        return CGRect(x: CGFloat(CalendarGrid.gutterPx) + CGFloat(column) * columnWidth + local.x,
+                      y: local.y, width: local.width, height: local.height)
+    }
+
+    /// Karte **neben** dem Block, oben bündig mit ihm, sonst in den sichtbaren
+    /// Bereich geklemmt. `block` liegt im scrollenden Raster (0:00 = 0),
+    /// `scrollOffset` ist der aktuelle Scrollstand, `gridTop` die Höhe des
+    /// festen Kopfs.
+    static func anchor(block: CGRect?, visible: CGSize, gridTop: CGFloat,
+                       cardHeight: CGFloat, scrollOffset: CGFloat) -> (x: CGFloat, y: CGFloat) {
+        var x: CGFloat
+        var top: CGFloat
+        if let block {
+            let left = block.minX - margin - width
+            x = left >= margin ? left : block.maxX + margin
+            top = gridTop + block.minY - scrollOffset
+        } else {
+            x = visible.width - width - margin
+            top = gridTop + margin
+        }
+        x = min(max(margin, x), max(margin, visible.width - width - margin))
+        let maxTop = max(gridTop + margin, visible.height - cardHeight - margin)
+        top = min(max(gridTop + margin, top), maxTop)
+        return (x, top)
+    }
+
+    /// Ganztägiger Balken: der sitzt schon im sichtbaren Raum (unter dem Kopf).
+    static func anchorBar(bar: CGRect, visible: CGSize,
+                          cardHeight: CGFloat) -> (x: CGFloat, y: CGFloat) {
+        var x = bar.maxX + margin
+        x = min(max(margin, x), max(margin, visible.width - width - margin))
+        let maxTop = max(margin, visible.height - cardHeight - margin)
+        let top = min(max(margin, bar.maxY + margin), maxTop)
+        return (x, top)
+    }
+}
+
 extension EventEditorRequest {
     /// Aus dem Anlege-Wunsch (Klick, Ziehen, Palette, KI) wird der Entwurf, den
     /// die Karte zeigt.
     var draft: CalendarEventDraft {
         CalendarEventDraft(event: event, startsAt: startsAt, endsAt: endsAt, allDay: allDay,
                            title: title, location: location, notes: notes, attendees: attendees)
+    }
+}
+
+/// Die Inline-Karte der Tagesansicht rechnet (M2.18j): ein eingeschobener
+/// Streifen im Raster, in dem die Karte steht. Alles darunter rückt um genau die
+/// **gemessene** Kartenhöhe nach unten, die Stundenleiste links mit — sonst
+/// passten die Zeiten nicht mehr zu den Zeilen. Reine Rechnung, damit der Test
+/// sie ohne UI prüfen kann.
+enum CalendarInlineCard {
+    /// Rand über und unter der Karte.
+    static let inset: CGFloat = 6
+    /// Grundhöhe, bevor die Karte zum ersten Mal gemessen ist — sonst hätte sie
+    /// keinen Platz, um sich zu messen.
+    static let baseHeight: CGFloat = 160
+
+    struct Gap: Equatable {
+        /// Unterkante des Blocks, unter dem die Karte aufklappt (Rastermaß).
+        var afterY: CGFloat
+        /// Höhe des Streifens: Karte plus Rand oben und unten.
+        var height: CGFloat
+    }
+
+    static func gap(bottom: CGFloat, cardHeight: CGFloat) -> Gap {
+        let card = cardHeight > 0 ? cardHeight : baseHeight
+        return Gap(afterY: bottom, height: card + 2 * inset)
+    }
+
+    /// Zeit → Anzeige: ab der Blockunterkante rückt alles nach unten.
+    static func shown(_ y: CGFloat, gap: Gap?) -> CGFloat {
+        guard let gap, y >= gap.afterY else { return y }
+        return y + gap.height
+    }
+
+    /// Anzeige → Zeit: derselbe Versatz rückwärts, für Klicks ins Raster.
+    static func time(_ y: CGFloat, gap: Gap?) -> CGFloat {
+        guard let gap, y >= gap.afterY + gap.height else { return y }
+        return y - gap.height
+    }
+
+    /// Höhe des Rasters samt Einschub.
+    static func height(_ content: CGFloat, gap: Gap?) -> CGFloat {
+        content + (gap?.height ?? 0)
+    }
+
+    /// Scrollziel, damit die Karte ganz sichtbar ist: so weit wie nötig, nicht
+    /// weiter, und innerhalb des Rasters.
+    static func scrollTarget(gap: Gap, scrollOffset: CGFloat, visible: CGFloat,
+                             total: CGFloat) -> CGFloat {
+        guard visible > 0 else { return scrollOffset }
+        var target = scrollOffset
+        let bottom = gap.afterY + gap.height
+        if bottom > target + visible - 10 { target = bottom - visible + 10 }
+        if gap.afterY < target { target = gap.afterY - 10 }
+        return max(0, min(target, max(0, total - visible)))
     }
 }
 
@@ -58,6 +179,58 @@ struct CalendarTimeGridView: View {
     private var model: CalendarWeekModel? { store.weekModel }
     private var contentHeight: CGFloat { CGFloat(24 * CalendarGrid.hourPx) }
 
+    // MARK: Inline-Karte in der Tagesansicht (M2.18j)
+
+    /// In der Tagesansicht klappt die Karte **im** Raster auf und schiebt die
+    /// späteren Stunden nach unten; die Wochenansicht behält die schwebende
+    /// Karte aus M2.18i (dort ist für eine Inline-Karte kein Platz).
+    private var inlineDay: Bool { store.mode == .day && days.count == 1 }
+
+    private var inlineGap: CalendarInlineCard.Gap? {
+        guard inlineDay, store.cardIsOpen, let anchor = inlineAnchor else { return nil }
+        return CalendarInlineCard.gap(bottom: anchor.bottom, cardHeight: inlineCardHeight)
+    }
+
+    /// Ober- und Unterkante des Blocks, unter dem aufgeklappt wird: der gewählte
+    /// Termin, sonst der Entwurf eines neuen.
+    private var inlineAnchor: (top: CGFloat, bottom: CGFloat)? {
+        if let id = store.openEventId, let placed = positionedEvent(id) {
+            return (CGFloat(placed.top), CGFloat(placed.top + placed.height))
+        }
+        if let draft = store.draft {
+            let day = store.math.startOfDay(draft.startsAt)
+            let top = CGFloat(CalendarMath.msToY(max(draft.startsAt, day), dayStart: day))
+            let bottom = CGFloat(CalendarMath.msToY(
+                max(draft.endsAt, draft.startsAt + 30 * 60_000), dayStart: day))
+            return (top, max(top + 16, bottom))
+        }
+        return nil
+    }
+
+    private func shiftedY(_ y: CGFloat) -> CGFloat {
+        CalendarInlineCard.shown(y, gap: inlineGap)
+    }
+
+    private func timeY(_ y: CGFloat) -> CGFloat {
+        CalendarInlineCard.time(y, gap: inlineGap)
+    }
+
+    /// Höhe des Rasters samt Einschub.
+    private var gridHeight: CGFloat { CalendarInlineCard.height(contentHeight, gap: inlineGap) }
+
+    /// Wie weit eine Zeitposition durch den Einschub nach unten rückt.
+    private func shiftFor(top: CGFloat) -> CGFloat { shiftedY(top) - top }
+
+    /// Scrollt die aufgeklappte Karte ganz in den Blick (M2.18j).
+    private func showInlineCard(_ gap: CalendarInlineCard.Gap) {
+        let target = CalendarInlineCard.scrollTarget(gap: gap, scrollOffset: scrollOffset,
+                                                     visible: visibleHeight, total: gridHeight)
+        guard abs(target - scrollOffset) > 0.5 else { return }
+        scrollPosition.scrollTo(y: target)
+        PerfLog.shared.write("calendar_inline_scroll top=\(Int(gap.afterY)) "
+                             + "bottom=\(Int(gap.afterY + gap.height)) to=\(Int(target))")
+    }
+
     /// Live preview while a drag runs; the store only sees the committed drop.
     private struct Preview {
         enum Kind { case create, move, resize }
@@ -78,6 +251,19 @@ struct CalendarTimeGridView: View {
     /// placed from these rectangles and therefore never scrolls away with the
     /// content and never hangs outside the window.
     @State private var frames: [Int64: CGRect] = [:]
+    /// Ganztägige Balken (fester Kopf, sichtbarer Raum).
+    @State private var headerFrames: [Int64: CGRect] = [:]
+    /// Aktueller Scrollstand des Rasters (M2.18i).
+    @State private var scrollOffset: CGFloat = 0
+    /// Höhe des sichtbaren Rasters: damit die aufgeklappte Karte ganz in den
+    /// Blick gescrollt werden kann (M2.18j).
+    @State private var visibleHeight: CGFloat = 0
+    /// Gemessene Höhe der Inline-Karte in der Tagesansicht (M2.18j): die
+    /// späteren Stunden rücken um genau diesen Wert nach unten.
+    @State private var inlineCardHeight: CGFloat = 0
+    /// Scrollziel für die Auswahl (M2.18i): gesetzt wird nur der Zielpunkt,
+    /// gelesen wird der Stand weiter über `onScrollGeometryChange`.
+    @State private var scrollPosition = ScrollPosition()
     /// Höhe von Tageskopf und Ganztagszeile: darunter beginnt das Raster, und
     /// die Karte darf nicht in den Kopf ragen.
     @State private var headerHeight: CGFloat = 0
@@ -87,11 +273,13 @@ struct CalendarTimeGridView: View {
     var body: some View {
         VStack(spacing: 0) {
             header
-            // M2.12: die Auswahl wandert mit den Pfeiltasten; `scrollTo` hält den
-            // gewählten Block im Blick (die Karte liegt als Overlay darüber).
-            ScrollViewReader { scrollProxy in
-                ScrollView(.vertical) {
-                    GeometryReader { proxy in
+            // M2.12: die Auswahl wandert mit den Pfeiltasten und soll dabei im
+            // Blick bleiben. M2.18i: gescrollt wird über die **gerechnete** Lage
+            // des Blocks, nicht über `scrollTo(id:)` — dessen Ziel ist die
+            // Layout-Position, und die liegt wegen `.offset` für jeden Block am
+            // Spaltenkopf. Belegt: ein Klick auf den 21-Uhr-Termin sprang auf 0:00.
+            ScrollView(.vertical) {
+                GeometryReader { proxy in
                     let gutter = CGFloat(CalendarGrid.gutterPx)
                     let colWidth = max(1, (proxy.size.width - gutter) / CGFloat(max(days.count, 1)))
                     ZStack(alignment: .topLeading) {
@@ -99,36 +287,60 @@ struct CalendarTimeGridView: View {
                             drawGrid(context: context, size: size, gutter: gutter,
                                      colWidth: colWidth, days: days)
                         }
-                        .frame(width: proxy.size.width, height: contentHeight)
+                        .frame(width: proxy.size.width, height: gridHeight)
                         ForEach(Array(days.enumerated()), id: \.element) { index, day in
                             column(day: day, index: index, width: colWidth)
-                                .frame(width: colWidth, height: contentHeight)
+                                .frame(width: colWidth, height: gridHeight)
                                 .offset(x: gutter + CGFloat(index) * colWidth)
                         }
                     }
-                    }
-                    .frame(height: contentHeight)
+                    .coordinateSpace(name: CalendarGrid.contentSpace)
                 }
-                .scrollIndicators(.automatic)
-                // Land on the working day instead of 00:00 (`scrollTo` on the
-                // first layout pass was ignored; the default anchor is not).
-                .defaultScrollAnchor(UnitPoint(x: 0.5,
-                                               y: workingHour * CalendarGrid.hourPx / contentHeight))
-                .onAppear { PerfLog.shared.write("calendar_grid_shown hour=\(Int(workingHour))") }
-                .onChange(of: store.selectedEventId) { _, id in
-                    guard let id, frames[id] != nil else { return }
-                    withAnimation(Motion.animation) { scrollProxy.scrollTo(id, anchor: .center) }
-                    PerfLog.shared.write("calendar_selected_scroll id=\(id)")
-                }
+                .frame(height: gridHeight)
+            }
+            .scrollIndicators(.automatic)
+            .onScrollGeometryChange(for: CGFloat.self) { geometry in
+                geometry.contentOffset.y
+            } action: { _, offset in
+                if abs(offset - scrollOffset) > 0.5 { scrollOffset = offset }
+            }
+            .onScrollGeometryChange(for: CGFloat.self) { geometry in
+                geometry.containerSize.height
+            } action: { _, height in
+                if abs(height - visibleHeight) > 0.5 { visibleHeight = height }
+            }
+            // Land on the working day instead of 00:00 (`scrollTo` on the
+            // first layout pass was ignored; the default anchor is not).
+            .defaultScrollAnchor(UnitPoint(x: 0.5,
+                                           y: workingHour * CalendarGrid.hourPx / max(1, gridHeight)))
+            .scrollPosition($scrollPosition)
+            .onAppear { PerfLog.shared.write("calendar_grid_shown hour=\(Int(workingHour))") }
+            .onChange(of: store.selectedEventId) { _, id in
+                guard let id, let placed = positionedEvent(id) else { return }
+                let target = max(0, placed.top - 2 * CalendarGrid.hourPx)
+                scrollPosition.scrollTo(y: CGFloat(target))
+                PerfLog.shared.write("calendar_selected_scroll id=\(id) to=\(Int(target))")
+            }
+            // M2.18j: die aufgeklappte Inline-Karte soll ganz sichtbar sein.
+            .onChange(of: store.cardIsOpen) { _, open in
+                guard inlineDay, open, let gap = inlineGap else { return }
+                showInlineCard(gap)
+            }
+            .onChange(of: inlineGap) { _, gap in
+                guard let gap else { return }
+                showInlineCard(gap)
             }
         }
-        // Der Koordinatenraum liegt **außerhalb** des Scroll-Inhalts: die
-        // Rechtecke der Blöcke sind damit schon um den Scroll-Offset bereinigt,
-        // und die Karte (als Overlay über dem sichtbaren Bereich) sitzt am
-        // richtigen Fleck (§7.5).
+        // Der Koordinatenraum liegt **außerhalb** des Scroll-Inhalts und dient
+        // den Ganztagsbalken im festen Kopf: die sitzen schon im sichtbaren Raum.
+        // Die Terminblöcke melden ihre Lage dagegen im Inhalt (0:00 = 0); den
+        // Scrollstand zieht die Karte selbst ab (M2.18i).
         .coordinateSpace(name: CalendarGrid.space)
         .onPreferenceChange(EventFramePreference.self) { frames = $0 }
-        .overlay { cardOverlay }
+        .onPreferenceChange(EventHeaderFramePreference.self) { headerFrames = $0 }
+        // Die schwebende Karte gibt es nur noch in der Woche; in der Tages-
+        // ansicht steckt sie im Raster (M2.18j).
+        .overlay { if inlineDay { EmptyView() } else { cardOverlay } }
     }
 
     /// Die Karte neben dem Block: links, wenn dort Platz ist, sonst rechts;
@@ -154,36 +366,58 @@ struct CalendarTimeGridView: View {
                     }
                     .offset(x: anchor.x, y: anchor.y)
                     .transition(.opacity)
+                    // Eine Zeile je Ankerwechsel: der Beleg kann „Karte am
+                    // Block" von „Karte im Ersatzpfad" unterscheiden (M2.18i).
+                    .onAppear { logAnchor(anchor, visible: proxy.size) }
+                    .onChange(of: anchor.id) { _, _ in logAnchor(anchor, visible: proxy.size) }
+                    .onChange(of: frames) { _, _ in logAnchor(anchor, visible: proxy.size) }
+                    // Nach dem Scrollen steht die Karte erst an ihrem Platz; ohne
+                    // diese Zeile zeigte der Beleg den Stand mitten in der Fahrt.
+                    .onChange(of: scrollOffset) { _, _ in logAnchor(anchor, visible: proxy.size) }
             }
         }
         .animation(Motion.reduce ? nil : .timingCurve(0.22, 0.8, 0.2, 1, duration: 0.22),
                    value: store.cardIsOpen)
     }
 
-    /// Position und Größe der Karte. Der Anker ist der Block des Termins; fehlt
-    /// er (Termin außerhalb der Sicht), sitzt die Karte mittig rechts.
+    /// Position der Karte. Der Anker ist der Block des Termins: oben bündig
+    /// mit ihm und **neben** ihm, nicht darüber (M2.18i). Fehlt der Block
+    /// (Termin außerhalb der Sicht), sitzt die Karte oben rechts.
     private func cardAnchor(in size: CGSize) -> (x: CGFloat, y: CGFloat, id: String) {
-        let cardWidth: CGFloat = 360
-        let margin: CGFloat = 8
         let id = store.openEvent?.id ?? -1
-        // Das Raster beginnt unter dem Tageskopf; darunter muss die Karte
-        // bleiben, sonst deckt sie die Wochentage zu (Sandbox-Lauf).
-        let gridTop = headerHeight
-        let block = frames[id]
-        var x: CGFloat
-        var top: CGFloat
-        if let block {
-            let left = block.minX - margin - cardWidth
-            x = left >= margin ? left : block.maxX + margin
-            top = block.midY - cardSize.height / 2
+        let placed: (x: CGFloat, y: CGFloat)
+        if let block = frames[id] {
+            placed = CalendarCardPlacement.anchor(block: block, visible: size, gridTop: headerHeight,
+                                                  cardHeight: cardSize.height,
+                                                  scrollOffset: scrollOffset)
+        } else if let bar = headerFrames[id] {
+            placed = CalendarCardPlacement.anchorBar(bar: bar, visible: size,
+                                                     cardHeight: cardSize.height)
         } else {
-            x = size.width - cardWidth - margin
-            top = gridTop + margin
+            placed = CalendarCardPlacement.anchor(block: nil, visible: size, gridTop: headerHeight,
+                                                  cardHeight: cardSize.height,
+                                                  scrollOffset: scrollOffset)
         }
-        x = min(max(margin, x), max(margin, size.width - cardWidth - margin))
-        let maxTop = max(gridTop + margin, size.height - cardSize.height - margin)
-        top = min(max(gridTop + margin, top), maxTop)
-        return (x, top, "\(id)-\(Int(x))-\(Int(top))")
+        return (placed.x, placed.y, "\(id)-\(Int(placed.x))-\(Int(placed.y))")
+    }
+
+    /// Belegzeile für die Karte: Block gefunden oder Ersatzpfad (M2.18i).
+    /// Mit dem gemessenen Block-Rechteck, damit „Karte am Block" von „Karte
+    /// am Kopf geklemmt" unterscheidbar ist, ohne ein Foto zu deuten.
+    private func logAnchor(_ anchor: (x: CGFloat, y: CGFloat, id: String), visible: CGSize) {
+        let id = store.openEvent?.id ?? -1
+        let block = frames[id].map { "bminX=\(Int($0.minX)) bminY=\(Int($0.minY)) bmaxY=\(Int($0.maxY))" }
+            ?? "bminX=- bminY=- bmaxY=-"
+        let line = "calendar_card_anchor id=\(id) "
+            + "block=\(frames[id] != nil ? 1 : 0) "
+            + "bar=\(headerFrames[id] != nil ? 1 : 0) "
+            + "\(block) "
+            + "scroll=\(Int(scrollOffset)) header=\(Int(headerHeight)) "
+            + "vis=\(Int(visible.width))x\(Int(visible.height)) "
+            + "cardH=\(Int(cardSize.height)) x=\(Int(anchor.x)) y=\(Int(anchor.y))"
+        guard line != lastAnchorLine else { return }
+        lastAnchorLine = line
+        PerfLog.shared.write(line)
     }
 
     // MARK: Header (day names, all-day bars)
@@ -309,7 +543,7 @@ struct CalendarTimeGridView: View {
         .buttonStyle(.plain)
         .background(
             GeometryReader { geometry in
-                Color.clear.preference(key: EventFramePreference.self,
+                Color.clear.preference(key: EventHeaderFramePreference.self,
                                        value: [span.event.id: geometry.frame(in: .named(CalendarGrid.space))])
             }
         )
@@ -348,7 +582,7 @@ struct CalendarTimeGridView: View {
                 Rectangle()
                     .fill(Color.red.opacity(0.7))
                     .frame(height: 1)
-                    .offset(y: nowTop)
+                    .offset(y: shiftedY(nowTop))
                     .allowsHitTesting(false)
             }
             ForEach(positioned) { placed in
@@ -361,6 +595,10 @@ struct CalendarTimeGridView: View {
             if let draft = store.draft, let draftTop = draftBlockTop(draft, day: day) {
                 draftBlock(draft, top: draftTop, width: width)
             }
+            // Zuletzt, damit sie über den Blöcken liegt (M2.18j).
+            if inlineDay, index == 0, let gap = inlineGap {
+                inlineCard(gap, width: width)
+            }
         }
         .overlay(alignment: .trailing) {
             Rectangle().fill(theme.line.color.opacity(0.7)).frame(width: 0.5)
@@ -372,6 +610,8 @@ struct CalendarTimeGridView: View {
         let color = CalendarChrome.color(for: event, calendars: store.calendars, theme: theme)
         let draggable = CalendarEventRules.isDraggable(event, editable: store.canEdit(event))
         let laneWidth = width / CGFloat(max(placed.lanes, 1))
+        // M2.18j: Blöcke unter dem Einschub rücken mit ihm nach unten.
+        let shift = shiftFor(top: CGFloat(placed.top))
         return CalendarEventBlockView(
             store: store, event: event, color: color, height: placed.height, draggable: draggable,
             onOpen: { store.openCard(event.id) },
@@ -388,18 +628,37 @@ struct CalendarTimeGridView: View {
             },
             onCancel: { preview = nil })
             .frame(width: laneWidth - 4, height: placed.height - 2)
-            .offset(x: CGFloat(placed.lane) * laneWidth + 2, y: placed.top + 1)
+            .offset(x: CGFloat(placed.lane) * laneWidth + 2,
+                    y: CGFloat(placed.top) + 1 + shift)
+            // Lage des Blocks im scrollenden Raster (M2.18i). Nicht per
+            // `GeometryReader` gemessen: `.offset` ist eine reine Zeichentransformation,
+            // `frame(in:)` sieht sie nicht — jeder Block meldete dann den Spaltenkopf
+            // (`bminY=0`), und die Karte stand bei jedem Termin an der 0:00-Linie.
+            // Deshalb dasselbe Rechteck, das auch gezeichnet wird und das der
+            // Treffertest benutzt (`CalendarHitTest.rect`).
             .background(
-                GeometryReader { geometry in
-                    Color.clear.preference(key: EventFramePreference.self,
-                                           value: [event.id: geometry.frame(in: .named(CalendarGrid.space))])
-                }
+                Color.clear.preference(key: EventFramePreference.self,
+                                        value: [event.id: CalendarCardPlacement.blockRect(
+                                            placed, column: index, columnWidth: width)
+                                            .offsetBy(dx: 0, dy: shift)])
             )
             // M2.12: Der Auswahlrand im Zeitraster ist wieder heraus. Er
             // zeichnete auf Tagen mit überlappenden Terminen einen leeren
             // Kasten am Spaltenkopf (belegt im Sandbox-Lauf, Ursache dort nicht
             // abschließend geklärt). In der Monatsansicht bleibt er; im Raster
             // zeigt die offene Karte den gewählten Termin. Siehe Bericht M2.12.
+    }
+
+    /// Zuletzt geschriebene Ankerzeile: der Scroll meldet viele Zwischenstände,
+    /// im Log steht nur, was sich wirklich ändert (M2.18i).
+    @State private var lastAnchorLine = ""
+    /// Der gewählte Termin mit seiner Lage, für das Scrollziel der Auswahl.
+    private func positionedEvent(_ id: Int64) -> PositionedEvent? {
+        guard let positioned = model?.positioned else { return nil }
+        for list in positioned.values {
+            if let hit = list.first(where: { $0.event.id == id }) { return hit }
+        }
+        return nil
     }
 
     /// One click of a block: single opens the detail (after the double-click
@@ -447,7 +706,7 @@ struct CalendarTimeGridView: View {
             .fill(color.opacity(isCreate ? 0.16 : 0.3)))
         .overlay(RoundedRectangle(cornerRadius: 5)
             .strokeBorder(color.opacity(0.8), lineWidth: isCreate ? 1 : 0))
-        .offset(x: 2, y: top)
+        .offset(x: 2, y: top + shiftFor(top: top))
         .allowsHitTesting(false)
     }
 
@@ -481,8 +740,59 @@ struct CalendarTimeGridView: View {
         .background(RoundedRectangle(cornerRadius: 5).fill(theme.accent.color.opacity(0.12)))
         .overlay(RoundedRectangle(cornerRadius: 5)
             .strokeBorder(theme.accent.color.opacity(0.85), style: StrokeStyle(lineWidth: 1, dash: [4, 3])))
-        .offset(x: 2, y: top)
+        .offset(x: 2, y: top + shiftFor(top: top))
         .allowsHitTesting(false)
+    }
+
+    // MARK: Inline-Karte in der Tagesansicht (M2.18j)
+
+    /// Die Karte im Raster: volle Spaltenbreite, im Einschub unter ihrem Block.
+    /// Ihre **gemessene** Höhe bestimmt, wie weit die späteren Stunden nach
+    /// unten rücken — wie das Band im Monat.
+    private func inlineCard(_ gap: CalendarInlineCard.Gap, width: CGFloat) -> some View {
+        CalendarEventCard(store: store, layout: .band,
+                          onClose: {
+                              PerfLog.shared.write("calendar_card_close_button")
+                              store.closeCard()
+                          },
+                          onDelete: onDelete)
+            .frame(width: max(0, width - 2 * CalendarInlineCard.inset))
+            .fixedSize(horizontal: false, vertical: true)
+            .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { height in
+                if abs(height - inlineCardHeight) > 0.5 { inlineCardHeight = height }
+            }
+            .offset(x: CalendarInlineCard.inset,
+                    y: gap.afterY + CalendarInlineCard.inset)
+            .transition(.opacity)
+            .onAppear { logInline(gap) }
+            .onChange(of: inlineCardHeight) { _, _ in logInline(gap) }
+    }
+
+    /// Belegzeile (M2.18j): der Einschub, die gemessene Karte, ein Termin
+    /// darunter mit seiner verschobenen Lage und eine Stundenbeschriftung — so
+    /// ist belegbar, dass Karte, Blocks und Stundenleiste denselben Abstand
+    /// haben, ohne ein Foto zu deuten.
+    private func logInline(_ gap: CalendarInlineCard.Gap) {
+        PerfLog.shared.write("calendar_inline after=\(Int(gap.afterY)) "
+                             + "cardH=\(Int(inlineCardHeight)) gap=\(Int(gap.height))")
+        if let next = nextBlockBelow(gap.afterY) {
+            let shown = shiftedY(CGFloat(next.top))
+            PerfLog.shared.write("calendar_inline_shift id=\(next.event.id) "
+                                 + "model=\(Int(next.top)) shown=\(Int(shown)) "
+                                 + "delta=\(Int(shown - CGFloat(next.top)))")
+        }
+        let hour = CGFloat(Int(gap.afterY / CalendarGrid.hourPx) + 1)
+        let model = hour * CalendarGrid.hourPx
+        PerfLog.shared.write("calendar_inline_hour hour=\(Int(hour)) model=\(Int(model)) "
+                             + "shown=\(Int(shiftedY(model)))")
+    }
+
+    /// Der nächste Block unterhalb der Karte (für die Belegzeile).
+    private func nextBlockBelow(_ y: CGFloat) -> PositionedEvent? {
+        guard let positioned = model?.positioned else { return nil }
+        return positioned.values.flatMap { $0 }
+            .filter { CGFloat($0.top) >= y }
+            .min { $0.top < $1.top }
     }
 
     // MARK: Gestures
@@ -490,9 +800,10 @@ struct CalendarTimeGridView: View {
     private func createGesture(day: Int64, index: Int, width: CGFloat) -> some Gesture {
         DragGesture(minimumDistance: 0)
             .onChanged { value in
-                let startY = value.startLocation.y
+                // M2.18j: unter dem Einschub liegt die Zeit um die Kartenhöhe höher.
+                let startY = timeY(value.startLocation.y)
                 let startMs = CalendarMath.yToMs(startY, dayStart: day)
-                let nowMs = CalendarMath.yToMs(value.location.y, dayStart: day)
+                let nowMs = CalendarMath.yToMs(timeY(value.location.y), dayStart: day)
                 let a = min(startMs, nowMs), b = max(startMs, nowMs)
                 let snappedStart = day + Int64(CalendarMath.snapMinutes(
                     Double(a - day) / 60_000)) * 60_000
@@ -504,8 +815,8 @@ struct CalendarTimeGridView: View {
             }
             .onEnded { value in
                 let moved = hypot(value.translation.width, value.translation.height) > 6
-                let startMs = CalendarMath.yToMs(value.startLocation.y, dayStart: day)
-                let endMs = CalendarMath.yToMs(value.location.y, dayStart: day)
+                let startMs = CalendarMath.yToMs(timeY(value.startLocation.y), dayStart: day)
+                let endMs = CalendarMath.yToMs(timeY(value.location.y), dayStart: day)
                 preview = nil
                 // M2.12 requirement 6: a click on empty space closes the open
                 // card instead of starting a new event right away. Dragging
@@ -519,7 +830,7 @@ struct CalendarTimeGridView: View {
     /// "Neuer Termin hier" from the empty-space menu: the event starts at the
     /// time under the last pointer position in that column (snapped to 15 min).
     private func createHere(day: Int64, index: Int) {
-        let y = Double(hoverY[index] ?? CGFloat(9 * CalendarGrid.hourPx))
+        let y = Double(timeY(hoverY[index] ?? CGFloat(9 * CalendarGrid.hourPx)))
         let start = CalendarMath.snapMinutes(Double(CalendarMath.yToMs(y, dayStart: day) - day) / 60_000)
         let startMs = day + Int64(start) * 60_000
         openNew(EventEditorRequest(startsAt: startMs, endsAt: startMs + 30 * 60_000))
@@ -590,7 +901,7 @@ struct CalendarTimeGridView: View {
         let lineColor = GraphicsContext.Shading.color(theme.line.color.opacity(0.8))
         let faint = GraphicsContext.Shading.color(theme.line.color.opacity(0.35))
         for h in 0...24 {
-            let y = CGFloat(h) * hour
+            let y = shiftedY(CGFloat(h) * hour)
             var path = Path()
             path.move(to: CGPoint(x: 0, y: y))
             path.addLine(to: CGPoint(x: size.width, y: y))
@@ -615,10 +926,11 @@ struct CalendarTimeGridView: View {
             let text = Text(label)
                 .font(.system(size: 10.5).monospacedDigit())
                 .foregroundColor(theme.ink3.color)
-            context.draw(text, at: CGPoint(x: gutter - 7, y: y), anchor: .trailing)
+            context.draw(text, at: CGPoint(x: gutter - 7, y: shiftedY(y)), anchor: .trailing)
         }
         if showsToday {
-            drawNowLine(context: context, size: size, gutter: gutter, top: nowTop, now: now)
+            drawNowLine(context: context, size: size, gutter: gutter,
+                        top: shiftedY(nowTop), now: now)
         }
     }
 
