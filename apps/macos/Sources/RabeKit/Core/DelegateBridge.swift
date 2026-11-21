@@ -66,7 +66,7 @@ public final class DelegateBridge: RabeDelegate, @unchecked Sendable {
         content.body = notification.body
         content.sound = .default
         if let threadId = notification.threadId { content.userInfo = ["threadId": threadId] }
-        let request = UNNotificationRequest(identifier: "rabe.outbox.\(notification.id)", content: content, trigger: nil)
+        let request = UNNotificationRequest(identifier: AppIdentity.bundleID + ".outbox.\(notification.id)", content: content, trigger: nil)
 
         let done = DispatchSemaphore(value: 0)
         let result = ResultBox()

@@ -30,6 +30,12 @@ let rustNativeFrameworks: [LinkerSetting] = [
 let package = Package(
     name: "Rabe",
     platforms: [.macOS("27.0")],
+    // M3.2: Sparkle 2 (MIT) für Updates. Fest angeheftet: die App ist ad-hoc
+    // signiert, die Updates trägt die EdDSA-Signatur (siehe Updater.swift).
+    // Nur das App-Target bekommt Sparkle; RabeKit bleibt AppKit-frei.
+    dependencies: [
+        .package(url: "https://github.com/sparkle-project/Sparkle", exact: "2.10.1"),
+    ],
     targets: [
         // Generated C module: RabeFFI.h + module.modulemap from uniffi-bindgen.
         .target(
@@ -58,8 +64,15 @@ let package = Package(
         // Nur UI: AppKit, SwiftUI, WebKit und die Mac-Seite von `PlatformServices`.
         .executableTarget(
             name: "Rabe",
-            dependencies: ["RabeKit", "RabeBindings", "RabeFFI"],
-            path: "Sources/Rabe"
+            dependencies: [
+                "RabeKit", "RabeBindings", "RabeFFI",
+                .product(name: "Sparkle", package: "Sparkle"),
+            ],
+            path: "Sources/Rabe",
+            // Sparkle.framework liegt im Bundle unter Contents/Frameworks.
+            linkerSettings: [
+                .unsafeFlags(["-Xlinker", "-rpath", "-Xlinker", "@executable_path/../Frameworks"]),
+            ]
         ),
         // Argument names of the IPC wrappers against the contract in
         // `src/ipc/types.ts` (run with `swift test`).

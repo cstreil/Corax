@@ -17,8 +17,8 @@ import RabeKit
 /// der Text stehen nur im Debug- und im Hook-Build.
 enum StartGuard {
     /// Reine Funktion für die Tests: ein Hook-Build startet nur mit der
-    /// Sandbox-Kennung. Alles andere — leer, unbekannt, `de.streil.rabe.native`
-    /// — verweigert den Start.
+    /// Sandbox-Kennung (`AppIdentity.sandboxID`). Alles andere — leer,
+    /// unbekannt, die Kennung der echten Instanz — verweigert den Start.
     static func shouldRefuseStart(hooks: Bool, identifier: String) -> Bool {
         hooks && identifier != Instance.sandbox
     }

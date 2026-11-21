@@ -438,7 +438,7 @@ public final class CalendarStore {
 
     private static let hiddenKey = "rabe.calendarHidden"
     private static let hiddenLocalKey = "rabe.calendarHiddenLocal"
-    private static let signposter = OSSignposter(subsystem: "de.streil.rabe.native", category: "calendar")
+    private static let signposter = OSSignposter(subsystem: AppIdentity.bundleID, category: "calendar")
 
     public init(toasts: ToastCenter, anchor: Int64? = nil) {
         self.toasts = toasts

@@ -5,7 +5,7 @@ import SwiftUI
 extension Notification.Name {
     /// M2.4: menu bar icon or Dock click asks for the main window (it may be
     /// closed; `openWindow` brings it back).
-    static let rabeShowMainWindow = Notification.Name("de.streil.rabe.native.showMain")
+    static let rabeShowMainWindow = AppIdentity.notification("showMain")
 }
 
 /// SwiftUI entry (replaces the AppKit `main.swift` of P0). The host starts in
@@ -95,7 +95,7 @@ struct WindowOpenHook: ViewModifier {
 @MainActor
 enum MenuBarLabel {
     static var count: Int64 { AppModel.shared.unreadBadge }
-    static var title: String { count > 0 ? "\(count)" : "Rabe" }
+    static var title: String { count > 0 ? "\(count)" : AppIdentity.displayName }
     static var symbol: String { count > 0 ? "envelope.badge" : "envelope" }
 }
 
@@ -109,7 +109,7 @@ struct MenuBarMenu: View {
         }
         .disabled(true)
         Divider()
-        Button("Rabe öffnen") {
+        Button("\(AppIdentity.displayName) öffnen") {
             NotificationCenter.default.post(name: .rabeShowMainWindow, object: nil)
         }
         Button("Neue E-Mail") {
@@ -117,7 +117,7 @@ struct MenuBarMenu: View {
             ActionDispatcher.perform(.compose)
         }
         Divider()
-        Button("Rabe beenden") { NSApp.terminate(nil) }
+        Button("\(AppIdentity.displayName) beenden") { NSApp.terminate(nil) }
             .keyboardShortcut("q")
     }
 }
@@ -128,6 +128,11 @@ struct RabeCommands: Commands {
     private var model: AppModel { AppModel.shared }
 
     var body: some Commands {
+        // M3.2: „Nach Updates suchen …" im App-Menü, direkt unter „Über …".
+        CommandGroup(after: .appInfo) {
+            Button("Nach Updates suchen …") { Updater.shared.checkForUpdates() }
+                .disabled(!Updater.shared.canCheckForUpdates)
+        }
         CommandGroup(replacing: .newItem) {
             // M2.14 §6: ⌘N heißt je nach Modus „Neue Mail“ oder „Neuer Termin“.
             Button("Neue E-Mail\t C") {

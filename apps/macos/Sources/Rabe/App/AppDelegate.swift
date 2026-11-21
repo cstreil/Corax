@@ -14,6 +14,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         AttachmentPreview.removeStalePreviews()
         WebViewPool.shared.warmUp(remoteAllowed: AppModel.shared.settings.loadRemoteImages)
         installKeyMonitor()
+        // M3.2: Sparkle startet nur, wenn die Policy es erlaubt (Release mit
+        // Feed und Schlüssel; Sandbox/Hooks nur mit lokalem Test-Feed).
+        Updater.shared.start()
         AppModel.shared.requestNotificationPermission()
         // System appearance drives the `system` theme.
         appearanceObservation = NSApp.observe(\.effectiveAppearance, options: [.initial, .new]) { app, _ in
@@ -21,6 +24,61 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             Task { @MainActor in AppModel.shared.systemDark = dark }
         }
         Task { await AppModel.shared.start() }
+        // M3.1: die Übernahme kann den Hoststart anhalten; der Hinweis auf die
+        // Tauri-App ist eine Warnung. Beides erst, wenn das Fenster steht.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { [weak self] in
+            self?.showStartupNotices()
+        }
+    }
+
+    // MARK: M3.1 — Hinweise beim Start
+
+    private func showStartupNotices() {
+        let model = AppModel.shared
+        switch model.migrationOutcome {
+        case .legacyRunning, .failed:
+            showMigrationBlocked()
+            return
+        case .notNeeded, .migrated:
+            break
+        }
+        guard ApplicationChecks.tauriRunning else { return }
+        PerfLog.shared.write("dialog tauri_running")
+        let alert = NSAlert()
+        alert.messageText = "Rabe (Tauri) läuft"
+        alert.informativeText = "Die ältere App gleicht dieselben Konten ab. Zwei Instanzen am selben "
+            + "Postfach können Mails doppelt verschieben. Die App wird nur gemeldet, nicht angefasst."
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "Trotzdem fortfahren")
+        alert.addButton(withTitle: "\(AppIdentity.displayName) beenden")
+        if alert.runModal() == .alertSecondButtonReturn { NSApp.terminate(nil) }
+    }
+
+    /// Übernahme aus Rabe Native nicht möglich: Rabe Native läuft noch, oder
+    /// das Kopieren ist gescheitert (dann wurde nichts verändert).
+    private func showMigrationBlocked() {
+        let model = AppModel.shared
+        PerfLog.shared.write("dialog migration_blocked")
+        let alert = NSAlert()
+        alert.messageText = "Rabe Native beenden"
+        alert.informativeText = model.startError ?? "Die Daten aus Rabe Native konnten nicht übernommen werden."
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "Erneut versuchen")
+        alert.addButton(withTitle: "\(AppIdentity.displayName) beenden")
+        if alert.runModal() == .alertFirstButtonReturn {
+            relaunch()
+        } else {
+            NSApp.terminate(nil)
+        }
+    }
+
+    /// Nach dem Beenden von Rabe Native noch einmal von vorn: ein frischer
+    /// Start findet den alten Ordner und übernimmt ihn.
+    private func relaunch() {
+        PerfLog.shared.write("relaunch for migration")
+        let configuration = NSWorkspace.OpenConfiguration()
+        NSWorkspace.shared.openApplication(at: Bundle.main.bundleURL, configuration: configuration) { _, _ in }
+        NSApp.terminate(nil)
     }
 
     private var appearanceObservation: NSKeyValueObservation?
@@ -115,7 +173,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     }
 
     /// M2.4: the menu bar icon keeps the app alive, as Tauri's tray does — a
-    /// closed window ends the window, not the process. "Rabe beenden" and ⌘Q
+    /// closed window ends the window, not the process. "Corax beenden" and ⌘Q
     /// still quit.
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
 

@@ -6,11 +6,11 @@ import UniformTypeIdentifiers
 extension Notification.Name {
     /// M2.3: ⌘J / ⌘⇧P from the menu reach the compose view that holds the key
     /// window (`object`: "draft" | "proofread").
-    static let rabeComposeAI = Notification.Name("de.streil.rabe.native.compose.ai")
+    static let rabeComposeAI = AppIdentity.notification("compose.ai")
     /// M2.5: composer commands from the menu, the palette or a key
     /// (`object`: "send_done" | "send_later" | "instant_send" | "attach" |
     /// "snippet" | "quote:<text>").
-    static let rabeComposeAction = Notification.Name("de.streil.rabe.native.compose.action")
+    static let rabeComposeAction = AppIdentity.notification("compose.action")
 }
 
 /// M2.9: Panel und Inline-Entwurf liegen im selben Fenster. Ein Kürzel aus dem

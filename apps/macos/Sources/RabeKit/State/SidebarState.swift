@@ -65,10 +65,19 @@ public final class SidebarState {
         }
     }
 
+    /// M3.1: die Datenübernahme schreibt `UserDefaults` erst, nachdem dieser
+    /// Zustand entstanden ist — `AppModel` legt ihn als Eigenschaft an, bevor
+    /// sein `init` läuft. Nach der Übernahme liest er die Wahl deshalb neu,
+    /// damit sie schon im ersten Start gilt.
+    public func reloadFromDefaults() {
+        userWantsVisible = (defaults.object(forKey: key) as? Bool) ?? true
+        forcedVisible = false
+        PerfLog.shared.write("sidebar_reload wants=\(userWantsVisible ? 1 : 0)")
+    }
+
     /// `\`, `⌃⌘S`, the button in the sidebar band and the menu item.
     /// Turning it on under the auto-hide width counts as an explicit wish.
-    public func toggle() {
-        if isVisible {
+    public func toggle() {        if isVisible {
             userWantsVisible = false
             forcedVisible = false
         } else {

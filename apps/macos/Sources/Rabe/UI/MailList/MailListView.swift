@@ -175,7 +175,7 @@ struct MailListView: NSViewRepresentable {
         /// und die Mail gerade erst aufging.
         private var revealPending: (id: Int64, at: CFTimeInterval)?
         private static let revealWindow: CFTimeInterval = 1.5
-        private static let signposter = OSSignposter(subsystem: "de.streil.rabe.native", category: "ui")
+        private static let signposter = OSSignposter(subsystem: AppIdentity.bundleID, category: "ui")
 
         // MARK: Reconcile
 

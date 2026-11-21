@@ -135,7 +135,7 @@ public final class MailboxStore {
     private let cache = ThreadCache()
     private let pageSize = 100
     private var listGeneration = 0
-    private static let signposter = OSSignposter(subsystem: "de.streil.rabe.native", category: "ui")
+    private static let signposter = OSSignposter(subsystem: AppIdentity.bundleID, category: "ui")
     public private(set) var firstListMs: Int?
 
     public init(toasts: ToastCenter, settings: SettingsStore, writeAccess: WriteAccess,

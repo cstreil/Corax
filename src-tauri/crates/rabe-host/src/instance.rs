@@ -25,7 +25,7 @@ pub(crate) const RESOURCE_ENV: &str = "COMAIL_RESOURCE_DIR";
 /// Keyring service [`HostConfig::for_tests`] runs with. No keychain entry of
 /// this name exists; the test suites also set the core's credentials-file
 /// switch, so nothing ever asks the login keychain.
-pub(crate) const TEST_KEYRING_SERVICE: &str = "de.streil.rabe.native.test";
+pub(crate) const TEST_KEYRING_SERVICE: &str = "de.streil.corax.test";
 
 /// Keyring services that belong to the release app or to a pre-rename build.
 ///
@@ -45,6 +45,10 @@ const RELEASE_KEYRING_SERVICES: &[&str] = &[
     "com.deanoss.comail.dev",
     // Dev build of the fork.
     "de.streil.rabe.dev",
+    // M3.1: the pre-rename native instances. Their entries are the source of
+    // `CredentialAdoption`; nothing in the renamed app may write there.
+    "de.streil.rabe.native",
+    "de.streil.rabe.native.sandbox",
 ];
 
 /// Directory names that belong to the release app: its data directory (the
@@ -301,11 +305,12 @@ fn same_file(_left: &std::fs::Metadata, _right: &std::fs::Metadata) -> bool {
 
 /// True when `service` is (or is built from) a release/legacy keyring service.
 ///
-/// Exact matches cover the five known services. The dotted-component check
-/// covers a suffixed service such as `comail.profiling`: it is a different
-/// keychain entry, but it belongs to the release family and refusing it costs
-/// the user only a different name. `de.streil.rabe.native` stays allowed - it
-/// shares a prefix with the release identifier but no component.
+/// Exact matches cover the known services: the release apps of upstream and of
+/// this fork, the dev build, and since M3.1 the pre-rename native instances
+/// (`de.streil.rabe.native`, `…native.sandbox`) whose entries the credential
+/// adoption reads. The dotted-component check covers a suffixed service such as
+/// `comail.profiling`: it is a different keychain entry, but it belongs to the
+/// release family and refusing it costs the user only a different name.
 pub(crate) fn is_release_keyring_service(service: &str) -> bool {
     let normalized = service.trim().to_ascii_lowercase();
     if normalized.is_empty() {
@@ -375,19 +380,16 @@ mod tests {
             "de.streil.rabe.dev",
             "comail.profiling",
             "profile.comail",
+            // M3.1: pre-rename instances are protected like the release app.
+            "de.streil.rabe.native",
+            "de.streil.rabe.native.sandbox",
         ] {
             assert!(
                 is_release_keyring_service(service),
                 "{service:?} must be refused"
             );
         }
-        for service in [
-            "de.streil.rabe.native",
-            "de.streil.rabe.native.sandbox",
-            TEST_KEYRING_SERVICE,
-            "comail-native",
-            "",
-        ] {
+        for service in [TEST_KEYRING_SERVICE, "comail-native", ""] {
             assert!(
                 !is_release_keyring_service(service),
                 "{service:?} must stay allowed"
@@ -400,12 +402,12 @@ mod tests {
         let native = HostConfig::default();
         assert_eq!(
             keyring_service_for(&native).expect("native"),
-            "de.streil.rabe.native"
+            "de.streil.corax"
         );
         let sandbox = HostConfig::new(crate::SANDBOX_IDENTIFIER).expect("sandbox");
         assert_eq!(
             keyring_service_for(&sandbox).expect("sandbox"),
-            "de.streil.rabe.native.sandbox"
+            "de.streil.corax.sandbox"
         );
         let dir = tempfile::tempdir().expect("dir");
         let tests = HostConfig::for_tests(dir.path());

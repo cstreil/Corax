@@ -1,5 +1,5 @@
 #!/bin/bash
-# Build "Rabe Native.app" without Xcode.
+# Build the app bundle (`Corax.app`) without Xcode.
 #
 #   Rust staticlib -> UniFFI Swift bindings -> swift build -> .app bundle -> codesign
 #
@@ -16,7 +16,27 @@ root="$(cd "$package/../.." && pwd)"
 tauri="$root/src-tauri"
 target="$tauri/target/release"
 generated="$package/Generated"
-app="$package/build/Rabe Native.app"
+# M3.1: Name und Kennung stehen nur hier im Skript (der Swift-Code liest
+# dieselben Werte aus `Sources/RabeKit/Support/AppIdentity.swift`; der Test
+# `M31IdentityTests` vergleicht beide Seiten, damit sie nicht auseinanderlaufen).
+APP_NAME="Corax"
+BUNDLE_ID="de.streil.corax"
+
+# Ablage des Bundles: standardmäßig `apps/macos/build` (das Release-Bundle des
+# Nutzers). Für einen Probelauf woandershin: CORAX_BUILD_DIR=/tmp/…
+build_dir="${CORAX_BUILD_DIR:-$package/build}"
+app="$build_dir/$APP_NAME.app"
+
+# M3.2: Version und Build aus apps/macos/VERSION (Zeile 1 Version, Zeile 2
+# Build-Nummer), Update-Quelle und Schlüssel aus der Umgebung. release.sh setzt
+# diese Variablen; ein normaler Entwicklungsbau lässt Feed und Schlüssel leer
+# und bekommt damit keinen laufenden Updater.
+version="$(sed -n '1p' "$package/VERSION" 2>/dev/null | tr -d '[:space:]')"
+build_number="$(sed -n '2p' "$package/VERSION" 2>/dev/null | tr -d '[:space:]')"
+: "${version:=0.0.1}"
+: "${build_number:=1}"
+feed_url="${CORAX_FEED_URL:-}"
+public_key="${CORAX_PUBLIC_ED_KEY:-}"
 
 # Both halves must agree on the minimum system version, otherwise `ld` warns
 # that the Rust objects were built for a newer macOS than the bundle targets.
@@ -70,9 +90,14 @@ if [ "${RABE_TEST_HOOKS:-0}" = "1" ]; then
 fi
 
 echo "==> swift build -c release"
-mkdir -p "$package/build"
-build_log="$package/build/swift-build.log"
-if ! swift build -c release ${swift_flags[@]+"${swift_flags[@]}"} --package-path "$package" 2>&1 | tee "$build_log"; then
+mkdir -p "$build_dir"
+build_log="$build_dir/swift-build.log"
+# `--disable-sandbox`: SwiftPM übersetzt das Manifest jeder Abhängigkeit in
+# einem eigenen `sandbox-exec`. Seit Sparkle dazukommt, muss das auch auf einem
+# warmen Bauweg laufen; in eingeschränkten Umgebungen (CI, Agenten-Sitzung)
+# scheitert `sandbox_apply` dort. Für den normalen Bau ändert der Schalter
+# nichts, er betrifft nur SwiftPMs eigenes Sandboxing der Manifest-Übersetzung.
+if ! swift build -c release --disable-sandbox ${swift_flags[@]+"${swift_flags[@]}"} --package-path "$package" 2>&1 | tee "$build_log"; then
     echo "error: swift build failed (see $build_log)" >&2
     exit 1
 fi
@@ -91,7 +116,7 @@ if [ "${version_warnings:-0}" -gt 0 ]; then
     echo "      Fix: LSMinimumSystemVersion to the same version, or a toolchain whose std is built for 26.0."
     echo
 fi
-bin_path="$(swift build -c release ${swift_flags[@]+"${swift_flags[@]}"} --package-path "$package" --show-bin-path)"
+bin_path="$(swift build -c release --disable-sandbox ${swift_flags[@]+"${swift_flags[@]}"} --package-path "$package" --show-bin-path)"
 executable="$bin_path/Rabe"
 [ -x "$executable" ] || { echo "error: no executable at $executable" >&2; exit 1; }
 
@@ -99,22 +124,28 @@ echo "==> assembling $app"
 rm -rf "$app"
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
 cp "$executable" "$app/Contents/MacOS/Rabe"
+# M3.2: Sparkle.framework mit ins Bundle; der Linker sucht es zur Laufzeit
+# unter Contents/Frameworks (@executable_path/../Frameworks).
+if [ -d "$bin_path/Sparkle.framework" ]; then
+    mkdir -p "$app/Contents/Frameworks"
+    ditto --norsrc "$bin_path/Sparkle.framework" "$app/Contents/Frameworks/Sparkle.framework"
+fi
 cp "$root/src-tauri/icons/icon.icns" "$app/Contents/Resources/icon.icns"
 printf 'APPL????' > "$app/Contents/PkgInfo"
 
-cat > "$app/Contents/Info.plist" <<'PLIST'
+cat > "$app/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
 	<key>CFBundleName</key>
-	<string>Rabe Native</string>
+	<string>${APP_NAME}</string>
 	<key>CFBundleDisplayName</key>
-	<string>Rabe Native</string>
+	<string>${APP_NAME}</string>
 	<key>CFBundleExecutable</key>
 	<string>Rabe</string>
 	<key>CFBundleIdentifier</key>
-	<string>de.streil.rabe.native</string>
+	<string>${BUNDLE_ID}</string>
 	<key>CFBundleIconFile</key>
 	<string>icon</string>
 	<key>CFBundlePackageType</key>
@@ -129,7 +160,7 @@ cat > "$app/Contents/Info.plist" <<'PLIST'
 	<true/>
 	<key>NSPrincipalClass</key>
 	<string>NSApplication</string>
-	<!-- M2.4: the bundle handles `mailto:` (RFC 6068), so macOS may hand the
+	<!-- M2.4: the bundle handles mailto: (RFC 6068), so macOS may hand the
 	     app such a URL (Ai: "Neue Mail" from another app). Registering the
 	     scheme does NOT make Rabe the default mail app — that is a choice in
 	     Mail's settings. LSHandlerRank Alternate keeps the app out of the way
@@ -138,7 +169,7 @@ cat > "$app/Contents/Info.plist" <<'PLIST'
 	<array>
 		<dict>
 			<key>CFBundleURLName</key>
-			<string>de.streil.rabe.native.mailto</string>
+			<string>${BUNDLE_ID}.mailto</string>
 			<key>CFBundleTypeRole</key>
 			<string>Viewer</string>
 			<key>LSHandlerRank</key>
@@ -152,6 +183,18 @@ cat > "$app/Contents/Info.plist" <<'PLIST'
 </dict>
 </plist>
 PLIST
+
+# M3.2: Version, Build und Update-Werte aus den Variablen oben.
+/usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $version" "$app/Contents/Info.plist"
+/usr/libexec/PlistBuddy -c "Set :CFBundleVersion $build_number" "$app/Contents/Info.plist"
+if [ -n "$feed_url" ] && [ -n "$public_key" ]; then
+    /usr/libexec/PlistBuddy -c "Add :SUFeedURL string $feed_url" "$app/Contents/Info.plist"
+    /usr/libexec/PlistBuddy -c "Add :SUPublicEDKey string $public_key" "$app/Contents/Info.plist"
+    /usr/libexec/PlistBuddy -c "Add :SUEnableAutomaticChecks bool true" "$app/Contents/Info.plist"
+    echo "==> updater: feed=$feed_url version=$version ($build_number)"
+else
+    echo "==> updater: aus (kein Feed/Schlüssel — Entwicklungsbau)"
+fi
 
 # Mark hook builds inside the bundle (W5): the release for the user must not
 # carry the debug notification hooks.
@@ -184,7 +227,7 @@ sign_bundle() {
         attempt=$((attempt + 1))
         xattr -cr "$bundle" 2>/dev/null || true
         if codesign --force --timestamp=none --sign "$identity" \
-            --identifier de.streil.rabe.native "$bundle" 2>"$err"; then
+            --identifier "$BUNDLE_ID" "$bundle" 2>"$err"; then
             rm -f "$err"
             return 0
         fi
@@ -204,14 +247,14 @@ else
     scratch="$(mktemp -d "${TMPDIR:-/tmp}/rabe-sign.XXXXXX")"
     echo "note: signing in place failed (iCloud keeps FinderInfo on the bundle root);"
     echo "      signing a copy in $scratch and copying it back."
-    ditto --norsrc "$app" "$scratch/Rabe Native.app"
-    if ! sign_bundle "$scratch/Rabe Native.app"; then
+    ditto --norsrc "$app" "$scratch/$APP_NAME.app"
+    if ! sign_bundle "$scratch/$APP_NAME.app"; then
         echo "error: codesign failed in the scratch copy as well" >&2
         exit 1
     fi
-    codesign --verify --verbose=2 "$scratch/Rabe Native.app"
+    codesign --verify --verbose=2 "$scratch/$APP_NAME.app"
     rm -rf "$app"
-    ditto --norsrc "$scratch/Rabe Native.app" "$app"
+    ditto --norsrc "$scratch/$APP_NAME.app" "$app"
     rm -rf "$scratch"
     xattr -cr "$app" 2>/dev/null || true
     codesign --verify --verbose=2 "$app"

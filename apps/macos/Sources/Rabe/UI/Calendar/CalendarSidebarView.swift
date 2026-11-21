@@ -190,13 +190,13 @@ struct CalendarSidebarContent: View {
 
 extension Notification.Name {
     /// Sidebar "Neuer Termin" asks the screen for the editor.
-    static let rabeCalendarNewEvent = Notification.Name("de.streil.rabe.native.calendar.newEvent")
+    static let rabeCalendarNewEvent = AppIdentity.notification("calendar.newEvent")
     /// M2.6: the hook build opens the "+N weitere" card for a screenshot.
-    static let rabeCalendarDayList = Notification.Name("de.streil.rabe.native.calendar.dayList")
+    static let rabeCalendarDayList = AppIdentity.notification("calendar.dayList")
     /// M2.8b: the hook build feeds one click into the grid (`userInfo`: id), so
     /// the click → detail → popover path can be checked without a pointer.
-    static let rabeCalendarClick = Notification.Name("de.streil.rabe.native.calendar.click")
+    static let rabeCalendarClick = AppIdentity.notification("calendar.click")
     /// M2.3: the palette's `create_event` intent opens the editor pre-filled
     /// (`userInfo`: summary, location, startsAt, endsAt, allDay).
-    static let rabeCalendarPrefill = Notification.Name("de.streil.rabe.native.calendar.prefill")
+    static let rabeCalendarPrefill = AppIdentity.notification("calendar.prefill")
 }

@@ -1,6 +1,6 @@
-# Rabe native — Tastaturbelegung
+# Corax — Tastaturbelegung
 
-Stand 2026-11-20 · Vom Nutzer abgenommen (M2.14) · Gilt für macOS und später Linux.
+Stand 2026-11-21 · Vom Nutzer abgenommen (M2.14) · Gilt für macOS und später Linux. Seit M3.1 heißt die App Corax; an den Tasten ändert das nichts.
 Quelle ist die Tabelle `ShortcutMap` in `RabeKit/Support/ShortcutMap.swift`; ein Test prüft, dass jede Zeile hier wörtlich vorkommt.
 
 Zwei Schichten:

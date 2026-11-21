@@ -40,7 +40,7 @@ public actor RabeClient {
     public nonisolated let dataDirectory: String
     private let encoder = JSONEncoder()
     private let decoder = JSONDecoder()
-    private static let signposter = OSSignposter(subsystem: "de.streil.rabe.native", category: "ipc")
+    private static let signposter = OSSignposter(subsystem: AppIdentity.bundleID, category: "ipc")
 
     /// Starts the host. Returns as soon as the instance lock is held; the core
     /// starts in the background (`waitReady`).

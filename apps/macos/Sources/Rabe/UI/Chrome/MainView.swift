@@ -91,7 +91,7 @@ struct MainView: View {
         if let error = model.startError {
             EmptyState(title: "Start fehlgeschlagen", detail: error)
         } else if !box.loadedOnce {
-            EmptyState(title: model.coreReady ? "Liste wird geladen …" : "Rabe startet …", detail: nil, spinner: true)
+            EmptyState(title: model.coreReady ? "Liste wird geladen …" : "\(AppIdentity.displayName) startet …", detail: nil, spinner: true)
         } else if !box.hasThreads && !box.isLoading {
             if box.searchQuery != nil {
                 EmptyState(title: "Keine Treffer", detail: "Esc leert die Suche."

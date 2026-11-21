@@ -23,7 +23,7 @@ public final class PerfLog: @unchecked Sendable {
     /// Point at the identifier's usual log before the host has reported its
     /// own directory, so launch-time lines (window shown, first paint) are not
     /// lost to stderr when the app is opened from Finder.
-    public func configureDefault(identifier: String = "de.streil.rabe.native") {
+    public func configureDefault(identifier: String = AppIdentity.bundleID) {
         guard
             let base = FileManager.default.urls(
                 for: .applicationSupportDirectory,

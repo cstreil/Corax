@@ -12,7 +12,7 @@ import RabeKit
 /// `keyDown` of the list). Lets the acceptance walkthrough run without taking
 /// the user's foreground or pointer.
 ///
-///   name:   de.streil.rabe.native.debug
+///   name:   <AppIdentity.current>.debug
 ///   object: "key:j" | "key:r:shift" | "key:return:cmd" | "key:k:cmd" | "type:Hallo" | "log:<text>"
 @MainActor
 enum DebugAutomation {
@@ -21,7 +21,7 @@ enum DebugAutomation {
     static func install() {
         guard enabled else { return }
         DistributedNotificationCenter.default().addObserver(
-            forName: Notification.Name("de.streil.rabe.native.debug"), object: nil, queue: .main
+            forName: AppIdentity.notification("debug"), object: nil, queue: .main
         ) { note in
             let command = note.object as? String ?? ""
             MainActor.assumeIsolated { run(command) }
@@ -461,6 +461,12 @@ enum DebugAutomation {
             AppModel.shared.receiveDebugEvent(
                 "{\"name\":\"action:failed\",\"payload\":{\"actionId\":7,\"kind\":\"\(kind)\",\"reason\":\"\(reason)\",\"error\":\"hook\"}}")
             PerfLog.shared.write("walkthrough actionfail kind=\(kind) reason=\(reason)")
+        case "update":
+            // M3.2: derselbe Weg wie der Menüpunkt „Nach Updates suchen …".
+            // Den Feed gibt in Sandbox/Hook-Builds nur CORAX_UPDATER_TEST_FEED
+            // frei (UpdaterPolicy); sonst ist der Updater aus.
+            PerfLog.shared.write("walkthrough update check available=\(Updater.shared.available ? 1 : 0) reason=\(Updater.shared.disabledReason ?? "-")")
+            Updater.shared.checkForUpdates()
         case "log":
             PerfLog.shared.write("debug_log \(parts[1])")
         case "state":

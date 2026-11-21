@@ -4,9 +4,9 @@ import SwiftUI
 
 extension Notification.Name {
     /// Selects a page in the settings window (already open or about to open).
-    static let rabeSettingsPage = Notification.Name("de.streil.rabe.native.settings.page")
+    static let rabeSettingsPage = AppIdentity.notification("settings.page")
     /// Asks the main window to open ⌘, (it owns the `openSettings` action).
-    static let rabeOpenSettings = Notification.Name("de.streil.rabe.native.settings.open")
+    static let rabeOpenSettings = AppIdentity.notification("settings.open")
 }
 
 /// Opens the settings window on one page. Used by the AI hints ("Einrichten …",
@@ -144,6 +144,8 @@ struct SettingsView: View {
             IntelligenceSettingsView()
         case .mcp:
             McpSettingsView()
+        case .updates:
+            UpdatesSettingsView()
         }
     }
 }

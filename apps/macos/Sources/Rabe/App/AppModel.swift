@@ -18,6 +18,10 @@ final class AppModel {
     private(set) var client: RabeClient?
     let bridge: DelegateBridge
     private(set) var startError: String?
+    /// M3.1: Ergebnis der Datenübernahme in diesem Start (für Dialog und Log).
+    private(set) var migrationOutcome: LegacyMigration.Outcome = .notNeeded
+    /// M3.1: wie viele Schlüsselbund-Einträge übernommen wurden.
+    private(set) var credentialsAdopted = 0
     private(set) var coreReady = false
 
     /// The Mac side of `PlatformServices` (M2.0): created here and handed to
@@ -102,8 +106,25 @@ final class AppModel {
     private var focusRetryScheduled = false
 
     private init() {
-        PerfLog.shared.configureDefault(identifier: (try? Instance.selected()) ?? Instance.native)
+        // M3.1: erst die Datenübernahme, dann alles andere. Der neue Ordner
+        // darf noch nicht existieren, sonst hielte die App eine leere Datenbank
+        // für ihren Stand. `configureDefault` setzt nur den Logpfad.
+        let selection = try? Instance.selected()
+        let sandbox = selection == Instance.sandbox
+        let identity = selection ?? AppIdentity.bundleID
+        PerfLog.shared.configureDefault(identifier: identity)
         PerfLog.shared.markStartNow()
+        if selection != nil {
+            let taken = Self.takeOverLegacyData(sandbox: sandbox, identity: identity)
+            migrationOutcome = taken.outcome
+            credentialsAdopted = taken.credentials
+            if case .migrated = taken.outcome {
+                // `sidebar` entsteht als Eigenschaft, also vor dieser Zeile und
+                // damit vor den übernommenen Defaults; ohne das Neuladen zeigte
+                // der erste Start die Standardwahl.
+                sidebar.reloadFromDefaults()
+            }
+        }
         PerfLog.shared.write("phase model_init ms=\(PerfLog.shared.elapsedMilliseconds)")
 
         // The gate first: `shared` is built lazily here, so its initial state
@@ -152,6 +173,21 @@ final class AppModel {
             startError = error.localizedDescription
             PerfLog.shared.write("identifier_refused \(error.localizedDescription)")
             return
+        }
+        // M3.1: ohne Übernahme kein Hoststart. Sonst legte der Host eine leere
+        // Datenbank im neuen Ordner an, und der nächste Start hielte sie für
+        // den übernommenen Stand.
+        switch migrationOutcome {
+        case .legacyRunning:
+            startError = "Rabe Native läuft noch. Bitte beenden und \(AppIdentity.displayName) neu starten — dann werden die Daten übernommen."
+            PerfLog.shared.write("migration_blocked reason=legacy_running")
+            return
+        case .failed(let reason):
+            startError = "Die Datenübernahme aus Rabe Native ist fehlgeschlagen: \(reason) Es wurde nichts verändert."
+            PerfLog.shared.write("migration_blocked reason=failed")
+            return
+        case .notNeeded, .migrated:
+            break
         }
         do {
             let client = try RabeClient.start(identifier: identifier!, delegate: bridge)
@@ -317,7 +353,7 @@ final class AppModel {
         content.body = Self.reminderBody(reminder)
         content.sound = .default
         content.userInfo = ["calendarEventId": reminder.event.id, "occurrenceStart": reminder.occurrenceStart]
-        let id = "rabe.event.\(reminder.event.id).\(reminder.occurrenceStart)"
+        let id = AppIdentity.bundleID + ".event.\(reminder.event.id).\(reminder.occurrenceStart)"
         let request = UNNotificationRequest(identifier: id, content: content, trigger: nil)
         UNUserNotificationCenter.current().add(request) { error in
             if let error {
@@ -570,6 +606,41 @@ final class AppModel {
                 aiFilterQuestion = next
             }
         }
+    }
+
+    // MARK: M3.1 — Umbenennen: Daten und Zugangsdaten übernehmen
+
+    /// Datenordner der bisherigen Instanz kopieren und, wenn dabei etwas
+    /// ankam, die Schlüsselbund-Einträge übernehmen. Läuft nur hier, einmal je
+    /// Start, **vor** dem Host: der Host legt sonst schon den neuen Ordner an.
+    private static func takeOverLegacyData(sandbox: Bool, identity: String) -> (outcome: LegacyMigration.Outcome, credentials: Int) {
+        let legacy = AppIdentity.legacyIdentifier(sandbox: sandbox)
+        let appSupport = LegacyMigration.applicationSupport
+        let outcome = LegacyMigration.runIfNeeded(
+            appSupport: appSupport,
+            from: legacy,
+            to: identity,
+            // Sperre des alten Ordners statt Bundle-Kennung: die Sandbox trug
+            // früher dieselbe Bundle-Kennung wie die echte Instanz.
+            isRunning: { _ in
+                ApplicationChecks.isDataDirectoryLocked(appSupport.appendingPathComponent(legacy))
+                    || ApplicationChecks.isRunning(bundleID: legacy)
+            },
+            defaults: .standard,
+            copyDatabase: { source, target in try DatabaseCopy.vacuum(from: source, to: target) }
+        )
+        guard case .migrated = outcome else { return (outcome, 0) }
+        let database = appSupport.appendingPathComponent(identity).appendingPathComponent("comail.db")
+        let accounts = CredentialAdoption.accounts(fromIDs: DatabaseCopy.accountIDs(in: database))
+        let result = CredentialAdoption.run(
+            from: legacy,
+            to: identity,
+            accounts: accounts,
+            exists: KeychainAccess.exists(service:account:),
+            read: KeychainAccess.secret(service:account:),
+            write: KeychainAccess.store(service:account:secret:)
+        )
+        return (outcome, result.adopted)
     }
 
     // MARK: M2.18n — die `G`-Folge

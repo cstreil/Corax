@@ -10,7 +10,7 @@ typealias MailLabel = RabeKit.Label
 enum SettingsPage: String, CaseIterable, Identifiable {
     case appearance, notifications, reading, compose, signatures
     case splits, snippets, labels, calendar
-    case accounts, mcp
+    case accounts, mcp, updates
     case intelligence
 
     var id: String { rawValue }
@@ -32,7 +32,7 @@ enum SettingsPage: String, CaseIterable, Identifiable {
         switch self {
         case .appearance, .notifications, .reading, .compose, .signatures: .general
         case .splits, .snippets, .labels, .calendar: .organization
-        case .accounts, .mcp: .system
+        case .accounts, .mcp, .updates: .system
         case .intelligence: .intelligence
         }
     }
@@ -50,6 +50,7 @@ enum SettingsPage: String, CaseIterable, Identifiable {
         case .calendar: "Kalender"
         case .accounts: "Konten"
         case .mcp: "KI-Clients (MCP)"
+        case .updates: "Updates"
         case .intelligence: "Intelligenz"
         }
     }
@@ -67,6 +68,7 @@ enum SettingsPage: String, CaseIterable, Identifiable {
         case .calendar: "calendar"
         case .accounts: "person.2"
         case .mcp: "app.connected.to.app.below.fill"
+        case .updates: "arrow.triangle.2.circlepath"
         case .intelligence: "sparkles"
         }
     }
@@ -126,6 +128,7 @@ enum SettingsIndex {
         // System
         .init(page: .accounts, label: "Konten", keywords: "accounts add remove gmail microsoft imap oauth color name konten konto abmelden"),
         .init(page: .mcp, label: "KI-Clients (MCP)", keywords: "mcp model context protocol claude code desktop chatgpt cursor vscode copilot agent schnittstelle"),
+        .init(page: .updates, label: "Updates", keywords: "update sparkle appcast version build aktualisieren automatisch neu installieren upgrade"),
         // Intelligenz
         .init(page: .intelligence, label: "KI-Status", keywords: "ai status konfiguriert configured key schlüssel api openrouter apple intelligence modelle"),
         .init(page: .intelligence, label: "API-Schlüssel", keywords: "api key token schlüssel openrouter openai commandcode securefield schlüsselbund"),

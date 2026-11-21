@@ -7,8 +7,9 @@ import Foundation
 /// never reach a server. Anything but the two known identifiers is refused
 /// instead of silently falling back to the real mailbox.
 public enum Instance {
-    public static let native = "de.streil.rabe.native"
-    public static let sandbox = "de.streil.rabe.native.sandbox"
+    /// M3.1: Name und Kennungen stehen in `AppIdentity`.
+    public static let native = AppIdentity.bundleID
+    public static let sandbox = AppIdentity.sandboxID
 
     enum SelectionError: LocalizedError {
         case unknown(String)
@@ -38,9 +39,7 @@ public enum Instance {
 
     /// Window title. The suffix keeps a working window from being mistaken for
     /// the real mailbox.
-    public static var title: String {
-        isSandbox ? "Rabe Native (Sandbox)" : "Rabe Native"
-    }
+    public static var title: String { AppIdentity.windowTitle }
 
     /// Where the host keeps its database and logs, for the status line.
     static var dataDirectoryHint: String {

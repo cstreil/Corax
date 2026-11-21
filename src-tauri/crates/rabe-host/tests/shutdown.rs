@@ -95,7 +95,7 @@ fn a_host_can_be_dropped_from_a_runtime_worker_and_releases_its_lock() {
         std::env::var("COMAIL_KEYRING_SERVICE").expect("keyring"),
         host.keyring_service()
     );
-    assert_eq!(host.keyring_service(), "de.streil.rabe.native.test");
+    assert_eq!(host.keyring_service(), "de.streil.corax.test");
     let runtime = host.runtime().handle().clone();
     let dropped = Arc::new(AtomicBool::new(false));
     let flag = dropped.clone();

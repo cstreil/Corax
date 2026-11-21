@@ -13,17 +13,17 @@ enum RichTextBridge {
 
     enum Key {
         /// Quote depth of the paragraph (`Int`, 0 = not quoted).
-        static let quote = NSAttributedString.Key("de.streil.rabe.rich.quote")
+        static let quote = NSAttributedString.Key(AppIdentity.bundleID + ".rich.quote")
         /// List kind of the paragraph (`String`, "bullet" | "ordered").
-        static let list = NSAttributedString.Key("de.streil.rabe.rich.list")
+        static let list = NSAttributedString.Key(AppIdentity.bundleID + ".rich.list")
         /// List nesting of the paragraph (`Int`, 1-based).
-        static let listDepth = NSAttributedString.Key("de.streil.rabe.rich.listDepth")
+        static let listDepth = NSAttributedString.Key(AppIdentity.bundleID + ".rich.listDepth")
         /// Paragraph belongs to the signature block (`Bool`).
-        static let signature = NSAttributedString.Key("de.streil.rabe.rich.signature")
+        static let signature = NSAttributedString.Key(AppIdentity.bundleID + ".rich.signature")
         /// The picture of an attachment run (`RichImage`).
-        static let image = NSAttributedString.Key("de.streil.rabe.rich.image")
+        static let image = NSAttributedString.Key(AppIdentity.bundleID + ".rich.image")
         /// E-mail of an `@`-mention chip (`String`).
-        static let mention = NSAttributedString.Key("de.streil.rabe.rich.mention")
+        static let mention = NSAttributedString.Key(AppIdentity.bundleID + ".rich.mention")
     }
 
     static let bodyFontSize: CGFloat = 14
