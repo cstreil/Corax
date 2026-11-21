@@ -31,10 +31,14 @@ final class M34OAuthTests: XCTestCase {
         }
     }
 
-    /// Das Konto-mit-Passwort bleibt auch mit Schreibrecht gesperrt.
-    func testPasswordAccountsStayBlocked() {
-        XCTAssertEqual(CommandPolicy.decision(for: "add_account_password", writesAllowed: true), .notAllowed)
-        XCTAssertEqual(CommandPolicy.decision(for: "test_connection", writesAllowed: true), .notAllowed)
+    /// M4: Das Konto-mit-Passwort ist seit der Freigabe nicht mehr gesperrt,
+    /// sondern läuft wie jede andere Änderung über den Schalter (siehe
+    /// `CommandPolicyTests.testPasswordAccountIsReleasedWithTheSwitch`).
+    func testPasswordAccountsLeftTheBlocklist() {
+        XCTAssertFalse(CommandPolicy.blocked.contains("add_account_password"))
+        XCTAssertFalse(CommandPolicy.blocked.contains("test_connection"))
+        XCTAssertEqual(CommandPolicy.decision(for: "add_account_password", writesAllowed: true), .allowed)
+        XCTAssertEqual(CommandPolicy.decision(for: "test_connection", writesAllowed: true), .allowed)
     }
 
     // MARK: Deutsche Texte statt Rust

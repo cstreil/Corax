@@ -392,8 +392,10 @@ struct AccountSheet: View {
         status = "Teste Verbindung …"
         do {
             let result = try await client.testConnection(args)
-            status = result.ok ? "Verbindung klappt." : "Verbindung fehlgeschlagen: \(result.error ?? "")"
-        } catch { status = RabeClientError.from(error).errorDescription }
+            // Der Kern liefert im Fehlerfeld englischen IPC-Text; die
+            // Übersetzung ist rein und reicht ihn nie durch.
+            status = result.ok ? "Verbindung klappt." : AccountConnectionText.message(forTestError: result.error ?? "")
+        } catch { status = AccountConnectionText.message(for: error) }
     }
 
     private func add() async {
@@ -403,6 +405,6 @@ struct AccountSheet: View {
             try await client.addAccount(args)
             AppModel.shared.accountSheetOpen = false
             await AppModel.shared.mailbox.bootstrap()
-        } catch { status = RabeClientError.from(error).errorDescription }
+        } catch { status = AccountConnectionText.message(for: error) }
     }
 }

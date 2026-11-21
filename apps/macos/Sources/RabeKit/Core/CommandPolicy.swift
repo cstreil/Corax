@@ -152,10 +152,19 @@ enum CommandPolicy {
         // die Token in den Schlüsselbund; `reauth_account` erneuert sie,
         // `cancel_oauth` beendet nur das Warten. Alles drei ändern den Zustand
         // der Instanz und gehen deshalb nur mit „Änderungen erlauben“.
-        // `add_account_password` bleibt bewusst gesperrt (siehe `blocked`).
         "start_oauth",
         "reauth_account",
         "cancel_oauth",
+        // M4 — Konto per App-Passwort. `test_connection` öffnet eine echte
+        // IMAP-Verbindung mit dem eingegebenen Passwort, `add_account_password`
+        // prüft sie erneut, legt die Kontenzeile an und schreibt das Passwort in
+        // den Schlüsselbund (Dienst `COMAIL_KEYRING_SERVICE`, also die eigene
+        // Kennung). Beides ändert den Zustand der Instanz, deshalb wie jede
+        // andere Änderung nur mit „Änderungen erlauben“. Vorher im Blatt als
+        // „noch nicht freigegeben“ gesperrt; die Freigabe kam nach der Prüfung
+        // von Fehlertexten und Schlüsselbund-Dienst.
+        "add_account_password",
+        "test_connection",
     ]
 
     /// `ActionKind` in the core (`models.rs`), limited to what the UI offers.
@@ -170,17 +179,14 @@ enum CommandPolicy {
 
     /// Deliberately refused, for the report and for readers of this file.
     ///
-    /// `add_account_password` and `test_connection` are not part of the daily
-    /// use yet. M3.4 ändert das nicht: Die Google-Anmeldung läuft über
-    /// `start_oauth`, das Konto-mit-Passwort-Blatt bleibt im Client gesperrt.
+    /// **Empty since M4.** `add_account_password` und `test_connection` standen
+    /// hier bis zur Prüfung von Fehlertexten und Schlüsselbund-Dienst; jetzt
+    /// laufen sie über `writing` wie jede andere Änderung.
     ///
     /// `mcp_install_client` steht seit M4 nicht mehr hier: Der Kern schreibt
     /// nur noch den instanz-eigenen Schlüssel (`corax`), der `comail`-Eintrag
-    /// der Tauri-App bleibt erhalten (`mcp/clients.rs`). Die Freigabe läuft
-    /// deshalb über `writing` wie bei jeder anderen Änderung.
-    public static let blocked: Set<String> = [
-        "add_account_password", "test_connection",
-    ]
+    /// der Tauri-App bleibt erhalten (`mcp/clients.rs`).
+    public static let blocked: Set<String> = []
 
     /// **Empty since the M2 audit.** Every command the settings window, the
     /// calendar, the AI pages and M2.4/M2.5 implement was released above, most

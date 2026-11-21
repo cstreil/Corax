@@ -122,7 +122,7 @@ final class CommandPolicyTests: XCTestCase {
     /// The M2 audit released everything the app implements.
     func testTheAuditLeftNothingPending() {
         XCTAssertTrue(CommandPolicy.pendingAudit.isEmpty)
-        XCTAssertEqual(CommandPolicy.blocked, ["add_account_password", "test_connection"])
+        XCTAssertTrue(CommandPolicy.blocked.isEmpty)
         // M2.12: `connect_calendar` is released under `writing` (the settings
         // window has "Konto verbinden"); the other two calendar commands the
         // UI does not use stay refused.
@@ -132,6 +132,17 @@ final class CommandPolicyTests: XCTestCase {
         }
         XCTAssertEqual(CommandPolicy.decision(for: "connect_calendar", writesAllowed: true), .allowed)
         XCTAssertEqual(CommandPolicy.decision(for: "connect_calendar"), .writesDisabled)
+    }
+
+    /// M4: Konto per App-Passwort ist freigegeben — aber nur mit dem Schalter.
+    func testPasswordAccountIsReleasedWithTheSwitch() {
+        for command in ["add_account_password", "test_connection"] {
+            XCTAssertFalse(CommandPolicy.reading.contains(command), command)
+            XCTAssertTrue(CommandPolicy.writing.contains(command), command)
+            XCTAssertEqual(CommandPolicy.decision(for: command), .writesDisabled, command)
+            XCTAssertEqual(CommandPolicy.decision(for: command, writesAllowed: true), .allowed, command)
+            XCTAssertEqual(CommandPolicy.decision(for: command, sandbox: true), .allowed, command)
+        }
     }
 
     func testTheSandboxIsUnrestricted() {
