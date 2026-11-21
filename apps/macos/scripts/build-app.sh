@@ -120,10 +120,57 @@ bin_path="$(swift build -c release --disable-sandbox ${swift_flags[@]+"${swift_f
 executable="$bin_path/Rabe"
 [ -x "$executable" ] || { echo "error: no executable at $executable" >&2; exit 1; }
 
+# M3.3: Siri und Kurzbefehle brauchen `Metadata.appintents` im Bundle; SwiftPM
+# erzeugt die Datei nicht selbst, deshalb läuft Apples Metadaten-Prozessor hier.
+# Fehlt das Ergebnis, bricht der Bau ab — ohne die Datei böte das System keinen
+# einzigen Intent an.
+echo "==> app intents metadata"
+meta_out="$generated/appintents"
+rm -rf "$meta_out"
+mkdir -p "$meta_out"
+intents_src="$package/Sources/RabeIntents"
+sdk_path="$(xcrun --sdk macosx --show-sdk-path)"
+processor="$(xcrun --sdk macosx --find appintentsmetadataprocessor)"
+swiftc_path="$(xcrun --sdk macosx --find swiftc)"
+# Dieselbe Ableitung wie in `src-tauri/build.rs`: das Verzeichnis der Toolchain
+# ist drei Ebenen über `swiftc`.
+toolchain_dir="$(dirname "$(dirname "$(dirname "$swiftc_path")")")"
+xcode_build="$(xcodebuild -version 2>/dev/null | awk '/^Build version/ {print $3}')"
+target_arch="$(uname -m)"
+find "$intents_src" -name '*.swift' | sort > "$meta_out/sources.txt"
+# SwiftPM (Xcode-Backend) übersetzt das Manifest der Intents-Ziele bereits mit
+# `-emit-const-values-path` und `-const-gather-protocols-file`; die Datei liegt
+# bei den Zwischenergebnissen und wird hier wiederverwendet, statt die Quellen
+# ein zweites Mal zu übersetzen. Fehlt sie, läuft der Prozessor ohne.
+const_values="$(find "$bin_path/../.." -name 'RabeIntents-*.swiftconstvalues' -type f -print 2>/dev/null | head -1)"
+: > "$meta_out/constvalues.txt"
+if [ -n "$const_values" ]; then
+    echo "$const_values" > "$meta_out/constvalues.txt"
+    echo "      const values: $const_values"
+fi
+"$processor" \
+    --output "$meta_out" \
+    --toolchain-dir "$toolchain_dir" \
+    --module-name RabeIntents \
+    --sdk-root "$sdk_path" \
+    --xcode-version "$xcode_build" \
+    --platform-family macOS \
+    --deployment-target "$MACOSX_DEPLOYMENT_TARGET" \
+    --target-triple "$target_arch-apple-macosx$MACOSX_DEPLOYMENT_TARGET" \
+    --source-file-list "$meta_out/sources.txt" \
+    --swift-const-vals-list "$meta_out/constvalues.txt" \
+    --no-app-shortcuts-localization \
+    --force
+[ -f "$meta_out/Metadata.appintents/extract.actionsdata" ] || {
+    echo "error: appintentsmetadataprocessor produced no Metadata.appintents" >&2
+    exit 1
+}
+
 echo "==> assembling $app"
 rm -rf "$app"
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
 cp "$executable" "$app/Contents/MacOS/Rabe"
+ditto --norsrc "$meta_out/Metadata.appintents" "$app/Contents/Resources/Metadata.appintents"
 # M3.2: Sparkle.framework mit ins Bundle; der Linker sucht es zur Laufzeit
 # unter Contents/Frameworks (@executable_path/../Frameworks).
 if [ -d "$bin_path/Sparkle.framework" ]; then
@@ -148,6 +195,10 @@ cat > "$app/Contents/Info.plist" <<PLIST
 	<string>${BUNDLE_ID}</string>
 	<key>CFBundleIconFile</key>
 	<string>icon</string>
+	<!-- M3.3: die Kurzbefehl-Sätze sind deutsch; ohne diese Zeile ordnet Siri
+	     sie keiner Sprache zu (es gibt keine Lokalisierungsdateien). -->
+	<key>CFBundleDevelopmentRegion</key>
+	<string>de</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>

@@ -142,6 +142,15 @@ enum CommandPolicy {
         "ai_learn_voice",
         // M2.4 — a real unsubscribe on the sender's side.
         "unsubscribe_message",
+        // M3.4 — Google-Anmeldung. Der Kern öffnet den Browser, hält den
+        // Loopback-Rücksprung offen, legt danach die Kontenzeile an und schreibt
+        // die Token in den Schlüsselbund; `reauth_account` erneuert sie,
+        // `cancel_oauth` beendet nur das Warten. Alles drei ändern den Zustand
+        // der Instanz und gehen deshalb nur mit „Änderungen erlauben“.
+        // `add_account_password` bleibt bewusst gesperrt (siehe `blocked`).
+        "start_oauth",
+        "reauth_account",
+        "cancel_oauth",
     ]
 
     /// `ActionKind` in the core (`models.rs`), limited to what the UI offers.
@@ -163,7 +172,8 @@ enum CommandPolicy {
     /// user's call (M2 audit).
     ///
     /// `add_account_password` and `test_connection` are not part of the daily
-    /// use yet.
+    /// use yet. M3.4 ändert das nicht: Die Google-Anmeldung läuft über
+    /// `start_oauth`, das Konto-mit-Passwort-Blatt bleibt im Client gesperrt.
     public static let blocked: Set<String> = [
         "add_account_password", "test_connection", "mcp_install_client",
     ]

@@ -61,11 +61,22 @@ let package = Package(
             dependencies: ["RabeBindings", "RabeFFI"],
             path: "Sources/RabeKit"
         ),
+        // M3.3: Siri und Kurzbefehle. Eigenes Modul, damit der Intent-Code ohne
+        // AppKit auskommt und sich später unverändert nach `rabe-app` tragen
+        // lässt; das App-Target hängt nur davon ab.
+        .target(
+            name: "RabeIntents",
+            dependencies: ["RabeKit"],
+            path: "Sources/RabeIntents",
+            linkerSettings: [
+                .linkedFramework("AppIntents"),
+            ]
+        ),
         // Nur UI: AppKit, SwiftUI, WebKit und die Mac-Seite von `PlatformServices`.
         .executableTarget(
             name: "Rabe",
             dependencies: [
-                "RabeKit", "RabeBindings", "RabeFFI",
+                "RabeKit", "RabeBindings", "RabeFFI", "RabeIntents",
                 .product(name: "Sparkle", package: "Sparkle"),
             ],
             path: "Sources/Rabe",
@@ -78,7 +89,7 @@ let package = Package(
         // `src/ipc/types.ts` (run with `swift test`).
         .testTarget(
             name: "RabeTests",
-            dependencies: ["Rabe"],
+            dependencies: ["Rabe", "RabeIntents"],
             path: "Tests/RabeTests"
         ),
     ]

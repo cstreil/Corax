@@ -1,4 +1,5 @@
 import AppKit
+import RabeIntents
 import RabeKit
 import UserNotifications
 
@@ -6,6 +7,12 @@ import UserNotifications
 /// `AppModel.shared` (first touched in `RabeApp.init`).
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelegate {
+    /// M3.3: so früh wie möglich — startet das System die App für einen Intent,
+    /// sucht der Intent die Sitzung schon, bevor das Fenster steht.
+    func applicationWillFinishLaunching(_ notification: Notification) {
+        IntentStartup.install(host: AppIntentHost())
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         PerfLog.shared.write("phase did_finish_launching ms=\(PerfLog.shared.elapsedMilliseconds)")
         UNUserNotificationCenter.current().delegate = self

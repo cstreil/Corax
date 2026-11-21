@@ -32,6 +32,13 @@ public enum RabeClientError: LocalizedError, Sendable {
     }
 }
 
+/// `Provider` in `comail-core/src/models.rs`, soweit die Oberfläche ihn
+/// anbietet: M3.4 bleibt bei Google, Microsoft ist im Client ausgeblendet.
+/// `Provider` serialisiert klein (`#[serde(rename_all = "lowercase")]`).
+public enum OAuthProvider: String, Encodable, Sendable {
+    case gmail
+}
+
 /// Typed wrappers over the JSON dispatcher (`RabeHost.invoke`). One instance per
 /// process; the host is thread-safe, so the actor only serializes encoding and
 /// keeps timing in one place.
@@ -238,6 +245,26 @@ public actor RabeClient {
         try await send("add_account_password", WithArgs(args: args))
     }
 
+    // MARK: M3.4 — Google-Anmeldung (OAuth)
+
+    /// Öffnet den Browser über den Kern und antwortet erst nach dem Rücksprung
+    /// auf `http://localhost:{port}/` (oder nach `cancelOAuth`). Ergebnis ist
+    /// das neue Konto.
+    public func startOAuth(provider: OAuthProvider) async throws -> Account {
+        try await call("start_oauth", IPCArgs.StartOAuth(provider: provider))
+    }
+
+    /// Repariert ein Konto mit `needs_reauth` (abgelaufenes Refresh-Token).
+    public func reauthAccount(id: Int64) async throws -> Account {
+        try await call("reauth_account", IPCArgs.ReauthAccount(accountId: id))
+    }
+
+    /// Bricht eine laufende Anmeldung ab: der wartende `startOAuth`-Aufruf
+    /// antwortet dann mit „sign-in cancelled“.
+    public func cancelOAuth() async throws {
+        _ = try await raw("cancel_oauth")
+    }
+
     /// Settings stay untyped: the object has ~60 fields and `set_settings` must
     /// always receive all of them (read-modify-write).
     public func settingsJSON() async throws -> String { try await raw("get_settings") }
@@ -316,4 +343,10 @@ enum IPCArgs {
     struct VerificationCode: Encodable, Sendable { let maxAgeMinutes: Int? }
     struct ThreadID: Encodable, Sendable { let threadId: Int64 }
     struct MessageID: Encodable, Sendable { let messageId: Int64 }
+
+    // M3.4 — OAuth. Anders als viele andere Befehle parst `dispatch.rs` beide
+    // ohne `args`-Hülle: `start_oauth {"provider":"gmail"}`,
+    // `reauth_account {"accountId":…}` (`deny_unknown_fields`).
+    struct StartOAuth: Encodable, Sendable { let provider: OAuthProvider }
+    struct ReauthAccount: Encodable, Sendable { let accountId: Int64 }
 }

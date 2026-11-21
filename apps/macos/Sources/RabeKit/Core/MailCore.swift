@@ -90,6 +90,12 @@ public protocol MailCore: AICore {
     func mcpRegenerateToken() async throws -> String
     func mcpClientSnippet(id: String) async throws -> String
     func mcpInstallClient(id: String) async throws -> McpInstallResult
+
+    // M3.4 — Google-Anmeldung. `startOAuth` antwortet erst nach dem Rücksprung
+    // aus dem Browser; `cancelOAuth` beendet das Warten.
+    func startOAuth(provider: OAuthProvider) async throws -> Account
+    func reauthAccount(id: Int64) async throws -> Account
+    func cancelOAuth() async throws
 }
 
 /// The actor's methods satisfy the async requirements directly; `notifyUiReady`

@@ -240,7 +240,7 @@ struct DisplayLinkHost: NSViewRepresentable {
     func updateNSView(_ nsView: NSView, context: Context) {}
 }
 
-// MARK: - Account sheet (IMAP with app password)
+// MARK: - Account sheet (Google sign-in, IMAP with app password)
 
 struct AccountSheet: View {
     @Environment(\.theme) private var theme
@@ -253,12 +253,20 @@ struct AccountSheet: View {
     @State private var smtpPort = "587"
     @State private var status: String?
     @State private var busy = false
+    /// M3.4: läuft gerade die Browser-Anmeldung? Dann steht dort „Warte auf
+    /// Browser …“ mit „Abbrechen“ statt des Google-Knopfs.
+    @State private var googleBusy = false
+    @State private var googleStatus: String?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Konto hinzufügen").font(.system(size: 17, weight: .semibold))
-            Text("IMAP mit App-Passwort. Gmail und Microsoft per Anmeldung folgen später.")
+            Text("Mit Google anmelden, oder ein Konto per IMAP und App-Passwort hinzufügen.")
                 .foregroundStyle(.secondary).font(.system(size: 12))
+            googleSection
+            Divider()
+            Text("IMAP mit App-Passwort").font(.system(size: 12, weight: .medium))
+                .foregroundStyle(.secondary)
             Form {
                 TextField("E-Mail-Adresse", text: $email).onChange(of: email) { _, v in guess(v) }
                 TextField("Name (optional)", text: $name)
@@ -279,6 +287,85 @@ struct AccountSheet: View {
         }
         .padding(20)
         .frame(width: 460)
+    }
+
+    // MARK: M3.4 — Google
+
+    /// Die Client-ID aus den Einstellungen; `COMAIL_GOOGLE_CLIENT_ID` sticht sie
+    /// aus, so wie im Kern (`GoogleOAuthSetup`).
+    private var googleConfigured: Bool {
+        GoogleOAuthSetup.isConfigured(
+            stored: AppModel.shared.settings.raw[GoogleOAuthSetup.clientIDKey] as? String,
+            environment: ProcessInfo.processInfo.environment)
+    }
+
+    private var googleSection: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            if googleBusy {
+                HStack(spacing: 8) {
+                    ProgressView().controlSize(.small)
+                    Text("Warte auf Browser …").font(.system(size: 12))
+                    Spacer()
+                    Button("Abbrechen") { Task { await cancelGoogle() } }
+                }
+            } else {
+                Button {
+                    Task { await startGoogle() }
+                } label: {
+                    Text("Mit Google anmelden").frame(maxWidth: .infinity)
+                }
+                .disabled(!googleConfigured)
+                if !googleConfigured {
+                    HStack(spacing: 6) {
+                        Text(GoogleOAuthSetup.missingHint)
+                            .font(.system(size: 11)).foregroundStyle(.secondary)
+                        Button("Einstellungen …") {
+                            AppModel.shared.accountSheetOpen = false
+                            SettingsNavigation.request(.accounts)
+                        }
+                        .buttonStyle(.link)
+                        .font(.system(size: 11))
+                    }
+                }
+            }
+            if let googleStatus {
+                Text(googleStatus).font(.system(size: 11)).foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    /// Startet die Anmeldung. Die Zeilen im Log tragen nur Provider, Ergebnis,
+    /// Dauer und einen Grund — nie Adresse, Code oder Token.
+    private func startGoogle() async {
+        guard let client = AppModel.shared.client else { return }
+        googleBusy = true
+        googleStatus = nil
+        PerfLog.shared.write(OAuthLog.start(provider: OAuthProvider.gmail.rawValue))
+        let started = Date()
+        do {
+            let account = try await client.startOAuth(provider: .gmail)
+            PerfLog.shared.write(OAuthLog.done(ok: true, milliseconds: milliseconds(since: started)))
+            googleStatus = "\(account.email) ist verbunden."
+            AppModel.shared.toasts.show("\(account.email) verbunden")
+            await AppModel.shared.mailbox.refreshAccounts()
+            AppModel.shared.sync.refreshSoon()
+            AppModel.shared.accountSheetOpen = false
+        } catch {
+            PerfLog.shared.write(OAuthLog.done(ok: false, milliseconds: milliseconds(since: started),
+                                               reason: OAuthErrorText.reason(for: error)))
+            googleStatus = OAuthErrorText.message(for: error)
+        }
+        googleBusy = false
+    }
+
+    private func cancelGoogle() async {
+        PerfLog.shared.write(OAuthLog.cancel)
+        if let client = AppModel.shared.client { try? await client.cancelOAuth() }
+        // Den Text setzt der wartende `startGoogle`-Aufruf („sign-in cancelled“).
+    }
+
+    private func milliseconds(since start: Date) -> Int {
+        Int(Date().timeIntervalSince(start) * 1000)
     }
 
     private var valid: Bool { email.contains("@") && !password.isEmpty && !imapHost.isEmpty && !smtpHost.isEmpty }

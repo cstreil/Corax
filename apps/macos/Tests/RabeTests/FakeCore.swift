@@ -274,6 +274,38 @@ actor FakeCore: MailCore {
         McpInstallResult(ok: true, message: "eingerichtet", path: nil, openUrl: nil)
     }
 
+    // MARK: - Google-Anmeldung (M3.4)
+
+    /// Providers the UI asked for, in order (`"gmail"`).
+    private(set) var oauthStarts: [String] = []
+    /// Account ids `reauth_account` was called with.
+    private(set) var oauthReauths: [Int64] = []
+    private(set) var oauthCancels = 0
+    /// The account a sign-in returns; without one the call fails like the core
+    /// does when the user cancels.
+    var oauthAccount: Account?
+    /// Set to make the sign-in fail (e.g. the timeout text).
+    var oauthError: RabeClientError?
+
+    func setOAuthAccount(_ value: Account?) { oauthAccount = value }
+    func setOAuthError(_ value: RabeClientError?) { oauthError = value }
+
+    func startOAuth(provider: OAuthProvider) async throws -> Account {
+        oauthStarts.append(provider.rawValue)
+        if let oauthError { throw oauthError }
+        if let oauthAccount { return oauthAccount }
+        throw RabeClientError.core(code: "auth", message: "sign-in cancelled")
+    }
+
+    func reauthAccount(id: Int64) async throws -> Account {
+        oauthReauths.append(id)
+        if let oauthError { throw oauthError }
+        if let oauthAccount { return oauthAccount }
+        throw RabeClientError.core(code: "auth", message: "sign-in cancelled")
+    }
+
+    func cancelOAuth() async throws { oauthCancels += 1 }
+
     private func nextID() -> Int64 {
         nextRowID += 1
         return nextRowID
