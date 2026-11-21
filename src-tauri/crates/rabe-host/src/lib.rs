@@ -38,9 +38,10 @@ pub use dispatch::{COMMANDS, EXCEPTIONS};
 pub use sandbox::{SANDBOX_IDENTIFIER, SeedReport, is_sandbox_identifier};
 
 /// Bundle identifier of the native app (own data directory, own keyring).
-/// M3.1: renamed from `de.streil.rabe.native`; the Swift side (`AppIdentity`)
-/// carries the same value and the migration reads the old directory once.
-pub const NATIVE_IDENTIFIER: &str = "de.streil.corax";
+/// M3.5: final identifier (`com.coraxapp.corax`); the Swift side (`AppIdentity`)
+/// carries the same value, and the migration reads the previous directories
+/// (`de.streil.corax`, then `de.streil.rabe.native`) once.
+pub const NATIVE_IDENTIFIER: &str = "com.coraxapp.corax";
 /// Identifier of the Tauri release app whose directory must never be opened.
 pub const RELEASE_IDENTIFIER: &str = "de.streil.rabe";
 /// Port the native instance uses when its settings would claim the release

@@ -1,6 +1,8 @@
 import Foundation
 
 /// M3.1: beim ersten Start die Daten der bisherigen Instanz übernehmen.
+/// M3.5: es gibt zwei Altkennungen; übernommen wird die **erste vorhandene**
+/// Quelle, nie eine Mischung aus beiden.
 ///
 /// Die App heißt jetzt anders (`AppIdentity.bundleID`), also zeigt auch ihr
 /// Datenordner auf ein neues Verzeichnis. Beim ersten Start wird der alte
@@ -36,30 +38,43 @@ public struct LegacyMigration {
     ]
 
     public static func runIfNeeded(appSupport: URL = applicationSupport,
-                                   from: String,
+                                   from sources: [String],
                                    to: String,
                                    isRunning: (String) -> Bool = { _ in false },
                                    defaults: UserDefaults? = nil,
                                    copyDatabase: (URL, URL) throws -> Void) -> Outcome {
         let fm = FileManager.default
-        let source = appSupport.appendingPathComponent(from, isDirectory: true)
         let target = appSupport.appendingPathComponent(to, isDirectory: true)
         let staging = appSupport.appendingPathComponent(to + ".migrating", isDirectory: true)
         let started = Date()
 
-        var isDirectory: ObjCBool = false
-        guard fm.fileExists(atPath: source.path, isDirectory: &isDirectory), isDirectory.boolValue else {
-            PerfLog.shared.write("migration_skipped reason=no_legacy from=\(from)")
-            return .notNeeded
+        func directoryExists(_ url: URL) -> Bool {
+            var isDirectory: ObjCBool = false
+            return fm.fileExists(atPath: url.path, isDirectory: &isDirectory) && isDirectory.boolValue
         }
+
         // Schon eine Datenbank im Ziel: die Übernahme ist gelaufen (oder das
         // Ziel ist bewusst frisch). Nie über eine Datenbank kopieren.
         if fm.fileExists(atPath: target.appendingPathComponent("comail.db").path) {
             PerfLog.shared.write("migration_skipped reason=target_has_db to=\(to)")
             return .notNeeded
         }
-        guard !isRunning(from) else {
-            PerfLog.shared.write("migration_skipped reason=legacy_running id=\(from)")
+
+        // M3.5: die erste Altkennung, die einen Datenordner hat. Daten werden
+        // nie aus zwei Quellen gemischt.
+        guard let source = sources
+            .map({ appSupport.appendingPathComponent($0, isDirectory: true) })
+            .first(where: directoryExists)
+        else {
+            PerfLog.shared.write("migration_skipped reason=no_legacy from=\(sources.joined(separator: ","))")
+            return .notNeeded
+        }
+        let from = source.lastPathComponent
+
+        // Läuft eine der Altinstanzen noch, wird nicht kopiert — auch nicht aus
+        // der anderen: die ältere könnte die jüngere später noch beschreiben.
+        if let running = sources.first(where: isRunning) {
+            PerfLog.shared.write("migration_skipped reason=legacy_running id=\(running)")
             return .legacyRunning
         }
 

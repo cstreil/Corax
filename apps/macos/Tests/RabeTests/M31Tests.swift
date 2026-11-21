@@ -26,12 +26,12 @@ final class M31IdentityTests: XCTestCase {
 
     func testTheIdentityIsOneValue() {
         XCTAssertEqual(AppIdentity.displayName, "Corax")
-        XCTAssertEqual(AppIdentity.bundleID, "de.streil.corax")
-        XCTAssertEqual(AppIdentity.sandboxID, "de.streil.corax.sandbox")
-        XCTAssertEqual(AppIdentity.legacyID, "de.streil.rabe.native")
+        XCTAssertEqual(AppIdentity.bundleID, "com.coraxapp.corax")
+        XCTAssertEqual(AppIdentity.sandboxID, "com.coraxapp.corax.sandbox")
+        XCTAssertEqual(AppIdentity.legacyID, "de.streil.corax")
         XCTAssertEqual(Instance.native, AppIdentity.bundleID)
         XCTAssertEqual(Instance.sandbox, AppIdentity.sandboxID)
-        XCTAssertEqual(AppIdentity.urlScheme, "de.streil.corax.mailto")
+        XCTAssertEqual(AppIdentity.urlScheme, "com.coraxapp.corax.mailto")
         XCTAssertEqual(AppIdentity.identifier(sandbox: false), AppIdentity.bundleID)
         XCTAssertEqual(AppIdentity.identifier(sandbox: true), AppIdentity.sandboxID)
         XCTAssertEqual(AppIdentity.legacyIdentifier(sandbox: true), AppIdentity.legacySandboxID)
@@ -84,7 +84,7 @@ final class M31IdentityTests: XCTestCase {
                      isRunning: Bool = false,
                      copyDatabase: @escaping (URL, URL) throws -> Void = { _, _ in }) -> LegacyMigration.Outcome {
         LegacyMigration.runIfNeeded(appSupport: base,
-                                    from: source.lastPathComponent,
+                                    from: [source.lastPathComponent],
                                     to: target.lastPathComponent,
                                     isRunning: { _ in isRunning },
                                     defaults: nil,
@@ -95,7 +95,7 @@ final class M31IdentityTests: XCTestCase {
         let base = fm.temporaryDirectory.appendingPathComponent("m31-\(UUID().uuidString)")
         try fm.createDirectory(at: base, withIntermediateDirectories: true)
         let outcome = LegacyMigration.runIfNeeded(
-            appSupport: base, from: "alt", to: "neu", defaults: nil,
+            appSupport: base, from: ["alt"], to: "neu", defaults: nil,
             copyDatabase: { _, _ in XCTFail("darf nicht kopieren") })
         XCTAssertEqual(outcome, .notNeeded)
         XCTAssertFalse(fm.fileExists(atPath: base.appendingPathComponent("neu").path))
@@ -244,7 +244,7 @@ final class M31IdentityTests: XCTestCase {
                        writable: Bool = true) -> (CredentialAdoption.Result, [String: String]) {
         var written: [String: String] = [:]
         let result = CredentialAdoption.run(
-            from: "alt", to: "neu", accounts: [0, 1],
+            from: ["alt"], to: "neu", accounts: [0, 1],
             exists: { service, name in
                 service == "alt" ? existing.contains(name) : presentInTarget.contains(name)
             },

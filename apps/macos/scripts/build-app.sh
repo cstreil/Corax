@@ -20,7 +20,7 @@ generated="$package/Generated"
 # dieselben Werte aus `Sources/RabeKit/Support/AppIdentity.swift`; der Test
 # `M31IdentityTests` vergleicht beide Seiten, damit sie nicht auseinanderlaufen).
 APP_NAME="Corax"
-BUNDLE_ID="de.streil.corax"
+BUNDLE_ID="com.coraxapp.corax"
 
 # Ablage des Bundles: standardmäßig `apps/macos/build` (das Release-Bundle des
 # Nutzers). Für einen Probelauf woandershin: CORAX_BUILD_DIR=/tmp/…

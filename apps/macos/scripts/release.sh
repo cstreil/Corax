@@ -35,7 +35,7 @@ build="$(sed -n '2p' "$version_file" | tr -d '[:space:]')"
 [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || fail "Version '$version' ist nicht x.y.z"
 [[ "$build" =~ ^[0-9]+$ ]] || fail "Build-Nummer '$build' ist keine Zahl"
 
-feed_url="${CORAX_FEED_URL:-https://github.com/cstreil/corax-releases/releases/latest/download/appcast.xml}"
+feed_url="${CORAX_FEED_URL:-https://github.com/coraxapp/releases/releases/latest/download/appcast.xml}"
 public_key="${CORAX_PUBLIC_ED_KEY:-}"
 app_name="${CORAX_APP_NAME:-Corax}"
 # Probelauf wie in build-app.sh: CORAX_BUILD_DIR und CORAX_DIST_DIR woandershin.

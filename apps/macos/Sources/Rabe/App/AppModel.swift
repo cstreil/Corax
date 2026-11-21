@@ -614,15 +614,16 @@ final class AppModel {
     /// ankam, die Schlüsselbund-Einträge übernehmen. Läuft nur hier, einmal je
     /// Start, **vor** dem Host: der Host legt sonst schon den neuen Ordner an.
     private static func takeOverLegacyData(sandbox: Bool, identity: String) -> (outcome: LegacyMigration.Outcome, credentials: Int) {
-        let legacy = AppIdentity.legacyIdentifier(sandbox: sandbox)
+        // M3.5: zwei Altkennungen, neueste zuerst. Übernommen wird eine Quelle.
+        let legacySources = AppIdentity.legacyIdentifiers(sandbox: sandbox)
         let appSupport = LegacyMigration.applicationSupport
         let outcome = LegacyMigration.runIfNeeded(
             appSupport: appSupport,
-            from: legacy,
+            from: legacySources,
             to: identity,
             // Sperre des alten Ordners statt Bundle-Kennung: die Sandbox trug
             // früher dieselbe Bundle-Kennung wie die echte Instanz.
-            isRunning: { _ in
+            isRunning: { legacy in
                 ApplicationChecks.isDataDirectoryLocked(appSupport.appendingPathComponent(legacy))
                     || ApplicationChecks.isRunning(bundleID: legacy)
             },
@@ -633,7 +634,7 @@ final class AppModel {
         let database = appSupport.appendingPathComponent(identity).appendingPathComponent("comail.db")
         let accounts = CredentialAdoption.accounts(fromIDs: DatabaseCopy.accountIDs(in: database))
         let result = CredentialAdoption.run(
-            from: legacy,
+            from: legacySources,
             to: identity,
             accounts: accounts,
             exists: KeychainAccess.exists(service:account:),

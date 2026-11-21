@@ -25,7 +25,7 @@ pub(crate) const RESOURCE_ENV: &str = "COMAIL_RESOURCE_DIR";
 /// Keyring service [`HostConfig::for_tests`] runs with. No keychain entry of
 /// this name exists; the test suites also set the core's credentials-file
 /// switch, so nothing ever asks the login keychain.
-pub(crate) const TEST_KEYRING_SERVICE: &str = "de.streil.corax.test";
+pub(crate) const TEST_KEYRING_SERVICE: &str = "com.coraxapp.corax.test";
 
 /// Keyring services that belong to the release app or to a pre-rename build.
 ///
@@ -49,6 +49,10 @@ const RELEASE_KEYRING_SERVICES: &[&str] = &[
     // `CredentialAdoption`; nothing in the renamed app may write there.
     "de.streil.rabe.native",
     "de.streil.rabe.native.sandbox",
+    // M3.5: the interim identifiers of this fork (`de.streil.corax`), the
+    // sources the M3.5 migration reads. Same rule: never write there.
+    "de.streil.corax",
+    "de.streil.corax.sandbox",
 ];
 
 /// Directory names that belong to the release app: its data directory (the
@@ -383,6 +387,9 @@ mod tests {
             // M3.1: pre-rename instances are protected like the release app.
             "de.streil.rabe.native",
             "de.streil.rabe.native.sandbox",
+            // M3.5: the interim identifiers are now legacy sources too.
+            "de.streil.corax",
+            "de.streil.corax.sandbox",
         ] {
             assert!(
                 is_release_keyring_service(service),
@@ -402,13 +409,15 @@ mod tests {
         let native = HostConfig::default();
         assert_eq!(
             keyring_service_for(&native).expect("native"),
-            "de.streil.corax"
+            crate::NATIVE_IDENTIFIER
         );
+        assert_eq!(crate::NATIVE_IDENTIFIER, "com.coraxapp.corax");
         let sandbox = HostConfig::new(crate::SANDBOX_IDENTIFIER).expect("sandbox");
         assert_eq!(
             keyring_service_for(&sandbox).expect("sandbox"),
-            "de.streil.corax.sandbox"
+            crate::SANDBOX_IDENTIFIER
         );
+        assert_eq!(crate::SANDBOX_IDENTIFIER, "com.coraxapp.corax.sandbox");
         let dir = tempfile::tempdir().expect("dir");
         let tests = HostConfig::for_tests(dir.path());
         assert_eq!(

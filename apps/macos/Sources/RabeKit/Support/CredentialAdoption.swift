@@ -36,39 +36,45 @@ public enum CredentialAdoption {
         "decision_api_key_custom",
     ]
 
-    /// Ein Eintrag gilt als vorhanden, wenn `exists` ihn unter der alten
-    /// Kennung findet. Fehlt er, kostet die Abfrage höchstens einen
-    /// Metadaten-Blick — keinen Dialog.
-    public static func run(from: String,
+    /// Ein Eintrag gilt als vorhanden, wenn `exists` ihn unter einer der alten
+    /// Kennungen findet — es gilt die **erste** Quelle, die ihn hat (M3.5).
+    /// Fehlt er überall, kostet die Abfrage höchstens einen Metadaten-Blick —
+    /// keinen Dialog.
+    public static func run(from sources: [String],
                            to: String,
                            accounts: [Int64],
                            exists: (String, String) -> Bool,
                            read: (String, String) -> String?,
                            write: (String, String, String) -> Bool) -> Result {
         var result = Result()
+        var perSource: [String: Int] = [:]
         for account in Set(accounts).sorted() {
             for slot in slots {
                 let name = "\(account):\(slot)"
-                guard exists(from, name) else { continue }
+                guard let source = sources.first(where: { exists($0, name) }) else { continue }
                 if exists(to, name) {
                     result.skipped += 1
                     continue
                 }
-                guard let secret = read(from, name) else {
+                guard let secret = read(source, name) else {
                     result.failed += 1
-                    PerfLog.shared.write("credential_failed account=\(account) slot=\(slot) reason=read")
+                    PerfLog.shared.write("credential_failed account=\(account) slot=\(slot) source=\(source) reason=read")
                     continue
                 }
                 if write(to, name, secret) {
                     result.adopted += 1
-                    PerfLog.shared.write("credential_adopted account=\(account) slot=\(slot)")
+                    perSource[source, default: 0] += 1
+                    PerfLog.shared.write("credential_adopted account=\(account) slot=\(slot) source=\(source)")
                 } else {
                     result.failed += 1
-                    PerfLog.shared.write("credential_failed account=\(account) slot=\(slot) reason=write")
+                    PerfLog.shared.write("credential_failed account=\(account) slot=\(slot) source=\(source) reason=write")
                 }
             }
         }
-        PerfLog.shared.write("credentials adopted=\(result.adopted) skipped=\(result.skipped) failed=\(result.failed)")
+        for source in sources {
+            PerfLog.shared.write("credentials source=\(source) adopted=\(perSource[source] ?? 0)")
+        }
+        PerfLog.shared.write("credentials adopted=\(result.adopted) skipped=\(result.skipped) failed=\(result.failed) source=\(sources.first ?? "")")
         return result
     }
 

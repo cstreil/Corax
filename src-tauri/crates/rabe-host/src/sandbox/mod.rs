@@ -29,7 +29,7 @@ use rusqlite::{Connection, OptionalExtension, params};
 use crate::HostError;
 
 /// Identifier of the sandbox instance. Anything else is refused by the seeder.
-pub const SANDBOX_IDENTIFIER: &str = "de.streil.corax.sandbox";
+pub const SANDBOX_IDENTIFIER: &str = "com.coraxapp.corax.sandbox";
 
 /// Port an enabled MCP server in the sandbox would use; the native instance
 /// keeps 47833, so the two never fight over one port.

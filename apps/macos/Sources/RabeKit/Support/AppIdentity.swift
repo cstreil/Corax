@@ -8,30 +8,45 @@ import Foundation
 /// Schlüsselbund-Service, Mitteilungsnamen, Signposter, URL-Schema und
 /// `scripts/build-app.sh` (ein Test vergleicht beide Seiten).
 ///
-/// Die alten Kennungen bleiben als `legacyID`/`legacySandboxID` stehen — nur
-/// die Datenübernahme (`LegacyMigration`) und die Schlüsselbund-Übernahme
-/// (`CredentialAdoption`) lesen sie.
+/// Die alten Kennungen stehen als geordnete Liste darunter — nur die
+/// Datenübernahme (`LegacyMigration`) und die Schlüsselbund-Übernahme
+/// (`CredentialAdoption`) lesen sie, und zwar **eine** Quelle: die erste, die
+/// Daten hat.
 public enum AppIdentity {
     public static let displayName = "Corax"
-    public static let bundleID = "de.streil.corax"
-    public static let sandboxID = "de.streil.corax.sandbox"
+
+    /// M3.5: die finale Kennung (Domain `coraxapp.com`).
+    public static let bundleID = "com.coraxapp.corax"
+    public static let sandboxID = "com.coraxapp.corax.sandbox"
 
     /// Die Tauri-App (Vorgängerin, gleicht dieselben Konten ab) — wird nur
     /// abgefragt, nie angefasst.
     public static let tauriID = "de.streil.rabe"
 
-    /// Bis M2.18o: `Rabe Native.app` mit dieser Kennung.
-    public static let legacyID = "de.streil.rabe.native"
-    public static let legacySandboxID = "de.streil.rabe.native.sandbox"
+    /// Die bisherigen Kennungen, **neueste zuerst**:
+    /// M3.1–M3.4 lief unter `de.streil.corax`, davor `Rabe Native.app` unter
+    /// `de.streil.rabe.native`.
+    public static let legacyIDs = ["de.streil.corax", "de.streil.rabe.native"]
+    public static let legacySandboxIDs = ["de.streil.corax.sandbox", "de.streil.rabe.native.sandbox"]
+
+    /// Die jüngste Altkennung — bequem für Anzeige und Tests; die Übernahme
+    /// arbeitet mit der ganzen Liste.
+    public static var legacyID: String { legacyIDs[0] }
+    public static var legacySandboxID: String { legacySandboxIDs[0] }
 
     /// Kennung für die gewählte Instanz.
     public static func identifier(sandbox: Bool) -> String {
         sandbox ? sandboxID : bundleID
     }
 
-    /// Alte Kennung derselben Instanz (Quelle der Übernahme).
+    /// Alte Kennungen derselben Instanz, neueste zuerst (Quellen der Übernahme).
+    public static func legacyIdentifiers(sandbox: Bool) -> [String] {
+        sandbox ? legacySandboxIDs : legacyIDs
+    }
+
+    /// Alte Kennung derselben Instanz (die jüngste; Quelle der Übernahme).
     public static func legacyIdentifier(sandbox: Bool) -> String {
-        sandbox ? legacySandboxID : legacyID
+        legacyIdentifiers(sandbox: sandbox)[0]
     }
 
     /// Die Kennung dieses Prozesses.
