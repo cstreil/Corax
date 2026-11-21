@@ -63,6 +63,33 @@ final class M32UpdaterTests: XCTestCase {
         XCTAssertEqual(decide(feed: "ftp://example.test/appcast.xml"), .disabled(reason: "no_feed"))
     }
 
+    /// A1: Der Release-Feed geht nur über `https`. Über `http` ließen sich
+    /// Updates unterdrücken und manipulierte Release-Notes einschleusen.
+    func testTheReleaseFeedMustBeEncrypted() {
+        XCTAssertEqual(decide(feed: "http://example.test/appcast.xml"),
+                       .disabled(reason: "insecure_feed"))
+        XCTAssertEqual(decide(feed: "HTTP://example.test/appcast.xml"),
+                       .disabled(reason: "insecure_feed"))
+        guard case .enabled(let url, let test) = decide(feed: "https://example.test/appcast.xml") else {
+            return XCTFail("https muss den Updater starten")
+        }
+        XCTAssertEqual(url.scheme, "https")
+        XCTAssertFalse(test)
+        // Eine Adresse ohne Host ist so gut wie leer.
+        XCTAssertEqual(decide(feed: "https://"), .disabled(reason: "no_feed"))
+        XCTAssertEqual(decide(feed: "   "), .disabled(reason: "no_feed"))
+    }
+
+    /// Die Regel gilt nur für den Release-Feed: Der lokale Testfeed bleibt
+    /// `http`, weil er den Rechner nicht verlässt.
+    func testTheLoopbackTestFeedStaysHttp() {
+        let env = [UpdaterPolicy.testFeedVariable: "http://127.0.0.1:8123/appcast.xml"]
+        guard case .enabled(_, let test) = decide(bundle: "com.coraxapp.corax.sandbox", env: env) else {
+            return XCTFail("Loopback-Testfeed muss erlaubt bleiben")
+        }
+        XCTAssertTrue(test)
+    }
+
     /// Der Kippschalter für Tests gewinnt gegen alles.
     func testTheKillSwitchWins() {
         let env = [UpdaterPolicy.disableVariable: "1"]

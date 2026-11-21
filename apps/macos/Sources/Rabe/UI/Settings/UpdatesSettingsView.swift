@@ -59,6 +59,7 @@ extension Updater {
         case "test_feed_not_local": "Der Test-Feed ist nicht lokal — das ist in Sandbox und Hook-Builds nicht erlaubt."
         case "no_feed": "Im Bundle fehlt die Update-Adresse (SUFeedURL)."
         case "no_public_key": "Im Bundle fehlt der Update-Schlüssel (SUPublicEDKey)."
+        case "insecure_feed": "Die Update-Adresse ist nicht verschlüsselt — der Updater lädt nur über https."
         case "switch_off": "Der Updater wurde über CORAX_UPDATER_DISABLE abgeschaltet."
         case "start_failed": "Sparkle konnte nicht starten."
         default: "Grund: \(reason)"

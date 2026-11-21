@@ -9,6 +9,12 @@ import Foundation
 ///   schaltet sie frei.
 /// - Das Release-Bundle braucht `SUFeedURL` und `SUPublicEDKey`; fehlt eines,
 ///   bleibt der Updater aus und das Log nennt den Grund.
+/// - Der Release-Feed muss über `https` laufen (Audit M3, Auflage A1): Über
+///   einen unverschlüsselten Feed ließen sich Updates unterdrücken und
+///   manipulierte Release-Notes einschleusen. Die Update-Datei selbst schützt
+///   zwar die EdDSA-Signatur, die Anzeige vor dem Update aber nicht.
+///   Der Loopback-Testfeed bleibt `http` erlaubt — er verlässt den Rechner
+///   nicht.
 public enum UpdaterPolicy {
     /// Umgebungsvariable, die in Sandbox/Hook-Builds einen lokalen Test-Feed
     /// freigibt. Nur `127.0.0.1`, `localhost` oder `::1`.
@@ -50,10 +56,18 @@ public enum UpdaterPolicy {
 
         let raw = feedURL?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         guard !raw.isEmpty, let feed = URL(string: raw),
-              let scheme = feed.scheme?.lowercased(), scheme == "https" || scheme == "http" else {
+              let host = feed.host, !host.isEmpty else {
             return .disabled(reason: "no_feed")
         }
-        return .enabled(feedURL: feed, testFeed: false)
+        switch feed.scheme?.lowercased() {
+        case "https":
+            return .enabled(feedURL: feed, testFeed: false)
+        case "http":
+            // A1: unverschlüsselte Feeds lehnt der Release-Build ab.
+            return .disabled(reason: "insecure_feed")
+        default:
+            return .disabled(reason: "no_feed")
+        }
     }
 
     /// Nur der eigene Rechner zählt als Testgeber.
