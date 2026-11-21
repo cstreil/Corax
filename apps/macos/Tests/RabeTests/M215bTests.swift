@@ -31,7 +31,7 @@ final class M215bTests: XCTestCase {
                            enabled: true, isDefault: id == 2, lastSyncedAt: nil)
     }
 
-    private let me: Set<String> = ["cstreil@me.com"]
+    private let me: Set<String> = ["ich@example.com"]
     private let day: Int64 = 1_800_000_000_000
     private var calendars: [CalendarCollection] { [collection(1), collection(2)] }
 
@@ -58,14 +58,14 @@ final class M215bTests: XCTestCase {
 
     /// Eigene Termine aus Apple Kalender tragen den Nutzer als Organisator.
     func testPulledEventWithOwnOrganizerIsEditable() {
-        let own = event(11, starts: day, organizer: "MAILTO:CSTREIL@me.com")
+        let own = event(11, starts: day, organizer: "MAILTO:ICH@example.com")
         XCTAssertTrue(CalendarPermissions.canEdit(own, calendars: calendars, ownEmails: me))
     }
 
     /// Einladungen anderer bleiben Anzeige — aber nicht ohne Antwortmöglichkeit.
     func testEventOrganizedBySomeoneElseIsViewOnlyButAnswerable() {
         let invite = event(12, starts: day, organizer: "chef@example.test",
-                           attendees: [EventAttendee(email: "cstreil@me.com")])
+                           attendees: [EventAttendee(email: "ich@example.com")])
         XCTAssertFalse(CalendarPermissions.canEdit(invite, calendars: calendars, ownEmails: me))
         XCTAssertTrue(CalendarPermissions.canRSVP(invite, ownEmails: me))
     }
@@ -80,7 +80,7 @@ final class M215bTests: XCTestCase {
 
     func testCancelledEventsAreNotEditableAndNotAnswerable() {
         let cancelled = event(14, starts: day, organizer: "chef@example.test",
-                              attendees: [EventAttendee(email: "cstreil@me.com")],
+                              attendees: [EventAttendee(email: "ich@example.com")],
                               status: "CANCELLED")
         XCTAssertFalse(CalendarPermissions.canEdit(cancelled, calendars: calendars, ownEmails: me))
         XCTAssertFalse(CalendarPermissions.canRSVP(cancelled, ownEmails: me))
@@ -99,11 +99,11 @@ final class M215bTests: XCTestCase {
         XCTAssertFalse(CalendarPermissions.canRSVP(plain, ownEmails: me))
         // Organisator ist jemand anderes, der Nutzer ist Teilnehmer.
         let invite = event(17, starts: day, organizer: "chef@example.test",
-                           attendees: [EventAttendee(email: "CSTREIL@me.com")])
+                           attendees: [EventAttendee(email: "ICH@example.com")])
         XCTAssertTrue(CalendarPermissions.canRSVP(invite, ownEmails: me))
         // Selbst organisiert: keine Antwort auf die eigene Einladung.
-        let own = event(18, starts: day, organizer: "cstreil@me.com",
-                        attendees: [EventAttendee(email: "cstreil@me.com")])
+        let own = event(18, starts: day, organizer: "ich@example.com",
+                        attendees: [EventAttendee(email: "ich@example.com")])
         XCTAssertFalse(CalendarPermissions.canRSVP(own, ownEmails: me))
     }
 
@@ -222,7 +222,7 @@ final class M215bTests: XCTestCase {
         let today = math.startOfDay(day)
         let invite = event(41, starts: today + 10 * 3_600_000,
                            organizer: "chef@example.test",
-                           attendees: [EventAttendee(email: "cstreil@me.com")], calendarId: 2)
+                           attendees: [EventAttendee(email: "ich@example.com")], calendarId: 2)
         let store = CalendarStore(toasts: ToastCenter(), anchor: today)
         store.client = FixedEvents(events: [invite])
         store.ownEmails = me
