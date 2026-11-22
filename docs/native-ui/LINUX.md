@@ -23,31 +23,48 @@ Ausschlaggebend: Hauptkriterium des Nutzers ist ruckelfreie Darstellung (Frames 
 
 ```
 apps/linux-gpui/            eigener Cargo-Workspace (Tauri-Workspace bleibt unberührt)
-  Cargo.toml                gpui =0.2.2, blitz-* =0.3.0-beta.4 (exakt gepinnt), corax-host per Pfad
+  Cargo.toml                gpui =0.2.2, blitz-* =0.3.0-beta.4, reqwest =0.12.28 (exakt wie der Kern)
   vendor/xattr              Patch ENOATTR→ENODATA (glibc)        [patch.crates-io]
   vendor/serde_fmt          Patch From<Error> for fmt::Error      [patch.crates-io]
-  src/main.rs               App-Start, Fenster (app_id com.coraxapp.corax, set_window_title)
-  src/mailcore.rs           corax-host im Prozess, eigener Tokio-Thread, Kanäle zur UI
+  src/main.rs               App-Start, Fenster (app_id com.coraxapp.corax), ohne --sandbox Exit 2
+  src/core/host.rs          corax-host im Prozess, eigener Tokio-Thread, typisierte Anfragen, Kanäle
+  src/core/models.rs        Rust-Typen der Kern-Antworten (serde), damit die UI nichts parst
+  src/state/app.rs          Zustand: Liste, Auswahl, Karte, Suche, Bildabruf, Messläufe
+  src/ui/sidebar.rs         Konten, Ansichten, Labels, Zähler
+  src/ui/list.rs            Threadliste (gpui::list, variable Höhen), Splits/Datumsgruppen/Paging
+  src/ui/thread.rs          Karte inline: Nachrichten, Blitz-Körper, Anhänge, Bildhinweis
+  src/ui/toolbar.rs         Kopfzeile: Titel, Suche, Status
+  src/input/textfield.rs    eigenes Textfeld (EntityInputHandler, Dead Keys mit Zurückhalten)
+  src/html/mod.rs           Schnittstelle der HTML-Schicht
+  src/html/view.rs          Blitz → vello_cpu-Bitmap → gpui img, Bild-Anbieter, Höhenmessung
+  src/html/sanitize.rs      Sanitizer und Anzeige-Policy (Remote-Bilder blocken)
+  src/html/resources.rs     Bild-Speicher: Anhänge, data:, nachgeladene Remote-Bilder
+  src/html/fetch.rs         Bildabruf: SSRF-/Rebinding-Schutz, Grenzen, Signaturprüfung
+  src/keys.rs               Tastatur: getipptes Zeichen, Einzeltasten + Strg-Kombinationen
+  src/mailtext.rs           Textkörper → Rich-Text mit Hervorhebungen
   src/theme.rs              Omarchy-Theme aus ~/.local/state/omarchy/current/theme/colors.toml, live
-  src/blitzview.rs          Mail-Körper: Blitz → vello_cpu-Bitmap → gpui img, Scrollen, Links
-  src/textfield.rs          Textfeld (EntityInputHandler, Dead Keys mit Zurückhalten)
+  src/perf.rs               Frame-Messung (§4.11 des Briefings)
+  src/hooks.rs              Test-Hooks (Befehlsdatei) — nur mit Feature test-hooks im Binary
+  tests/html_sanitize.rs    Integrationstests Sanitizer (Korpus + bösartige Fälle)
+  tests/html_resources.rs   Integrationstests Bild-Speicher
+  tests/html_fetch.rs       Integrationstests Bildabruf (lokaler Testserver, keine echten Ziele)
 ```
 
 Festlegungen:
-- **L-E1 Kern:** `corax-host` direkt im Prozess (kein JSON-Dispatcher, kein FFI). UI-Thread ruft den Host nie blockierend; Aufrufe über Kanäle, Ergebnisse als Ereignisse in eine Zustandsschicht (Gegenstück zu den Stores der Mac-App).
+- **L-E1 Kern:** `corax-host` direkt im Prozess, angesprochen über `Host::dispatch(cmd, json)` — JSON-Schnittstelle wie auf macOS, **kein FFI**. Der UI-Thread ruft nie blockierend; Anfragen gehen über Kanäle an einen eigenen Kern-Thread, Antworten und Ereignisse (`mail:new`, `sync:status` …) kommen als typisierte Werte in die Zustandsschicht (Gegenstück zu den Stores der Mac-App).
 - **L-E2 Listen:** `uniform_list`/`list` mit Range-Callback; Daten seitenweise vom Kern.
-- **L-E3 HTML:** Blitz für alle HTML-Körper; Netz nur über eigenen Datei-/Cache-Anbieter, Remote-Bilder standardmäßig aus (wie macOS `rabe-block-remote`-Regel), Freigabe je Absender. Sanitizer vor Blitz (Skripte, Formulare, Tracking-Pixel).
-- **L-E4 Editor:** zuerst `gpui-component` `Input` prüfen (L2); nur wenn untauglich, eigenes Feld ausbauen.
+- **L-E3 HTML:** Blitz für alle HTML-Körper; der Renderer bekommt **keinen** Netzzugriff, sondern fragt einen eigenen Anbieter. Remote-Bilder sind standardmäßig aus (wie die `block-remote`-Regel auf macOS); „Laden“ gibt sie **für genau diese Mail** frei, der Abruf läuft über die Laufzeit des Kerns mit SSRF-/Rebinding-Schutz (`html/fetch.rs`), Treffer landen im Bild-Speicher. Sanitizer läuft vor Blitz (Skripte, Formulare, Tracking-Pixel). Merken je Absender und eine Obergrenze des Speichers folgen in L4.
+- **L-E4 Editor (festgelegt nach der Prüfung, L2):** `gpui-component =0.5.1` — die letzte Fassung mit `gpui ^0.2.2` — und daraus **nur** das mehrzeilige `Input`, hinter einer eigenen Fassade `ComposeEditor`, damit ein späterer Austausch eine Datei kostet. Auswahl, Zwischenablage, Dead Keys, Umlaute und Undo/Redo sind damit fertig (Tipp-Latenz p95 3,5 ms); Redo bekommt zusätzlich `Strg+Shift+Z` (Vorgabe der Bibliothek ist `Strg+Y`). Fett und Kursiv bauen wir selbst — `src/text/` der Bibliothek ist reine Anzeige, kein Rich-Text-Modell. Grundlage: `BERICHT-L2-EDITOR-EVAL.md`.
 - **L-E5 Look:** Mock-up `Work/Tasks/2026-11-18-mail-app-mockup/linux.html` (Omarchy-Teil) mit den Funktionen und Elementen der macOS-App; Farben/Schrift aus dem aktiven Omarchy-Theme.
-- **L-E6 Tastatur:** Belegung wie `TASTATUR.md` (Einzeltasten + Strg-Kombinationen statt ⌘), über GPUI-Actions/Keymap.
-- **L-E7 Abhängigkeiten:** Versionen exakt pinnen, Patches im Repo, `cargo update` nur gezielt mit Bau auf Tarantino.
+- **L-E6 Tastatur:** Belegung wie `TASTATUR.md` (Einzeltasten + Strg-Kombinationen statt ⌘). Ausgewertet wird das **getippte Zeichen** (`Keystroke::key_char`), nicht die GPUI-Keymap: `bind_keys` vergleicht die Tastenbelegung, damit gingen `/ ? # ! + -` und `\` auf der deutschen Tastatur verloren (Briefing §4.7). Einzeltasten wirken nur ohne Textfeldfokus.
+- **L-E7 Abhängigkeiten:** Exakt gepinnt wird, was uns allein gehört: `gpui`, `blitz-*`, `gpui-component` und `reqwest` (in der Fassung des Kerns). `tokio`, `serde`, `serde_json` und `chrono` teilen wir mit dem Kern — dort hält das Lockfile die Fassung, gebaut wird mit `--locked`; exakte Pins würden bei jedem Kern-Update Konflikte in der Auflösung erzeugen. Patches im Repo, `cargo update` nur gezielt mit Bau auf Tarantino. Lizenz des Pakets: `AGPL-3.0-only` wie `src-tauri` und die Kern-Crates.
 
 ## 3. Meilensteine
 
 | | Inhalt | Abnahme (auf Tarantino, Sandbox) |
 |---|---|---|
 | **L1 Gerüst + Lesen** | Projektstruktur aus dem Spike, Zustandsschicht, Sidebar (Konten, Ansichten, Labels, Zähler), Threadliste mit Splits/Datumsgruppen/Paging, Thread inline aufklappen mit Blitz-Körper, Anhänge öffnen, Suche, Kürzel j/k/Enter/Esc//, Theme live | 10 000 Zeilen 60 fps, 0 Frames > 33 ms beim Scrollen und Öffnen; Korpus 5/5 korrekt |
-| **L2 Aktionen + Verfassen** | gelesen/Stern/Erledigt/Papierkorb/Snooze, Rückgängig-Toast; Verfassen-Panel (unten rechts, minimierbar), Antworten/Allen/Weiterleiten, Kontaktvorschläge, Entwurf, Senden mit Undo; Editor (L-E4) inkl. Auswahl, Undo, Dead Keys, fett/kursiv | Tipp-Latenz p95 < 16 ms; Senden über Sandbox |
+| **L2 Aktionen + Verfassen** | gelesen/Stern/Erledigt/Papierkorb/Snooze, Rückgängig-Toast; Verfassen-Panel (unten rechts, minimierbar), Antworten/Allen/Weiterleiten, Kontaktvorschläge, Entwurf, Senden mit Undo; Editor (L-E4) inkl. Auswahl, Undo, Dead Keys, fett/kursiv. **Anhänge: gefährliche Typen sperren oder vorher fragen (AUDIT-L1 A2)** — `xdg-open` startet unter Linux sonst `.desktop`, `.jar`, `.sh` ohne Rückfrage | Tipp-Latenz p95 < 16 ms; Senden über Sandbox |
 | **L3 Kalender** | Tag/Woche/Monat/Jahr/Liste, Termine inline aufklappen (Woche als Karte), anlegen/bearbeiten, Serien-Abfrage | Verhalten wie macOS laut Gruppengedächtnis |
 | **L4 Einstellungen, KI, MCP** | Konten (App-Passwort + Verbindungstest), Splits, Signaturen, Snippets, KI-Panel (`I`, `⇧I`), MCP-Einstellungen, Befehlspalette (`:`) | Funktionsliste macOS abgehakt |
 | **L5 Paket + Alltag** | PKGBUILD/Omarchy-Installation, `.desktop`, `mailto:`, Benachrichtigungen, Secret Service, Instanz-Lock, Updater-Weg | Installation auf Tarantino aus Paket, Alltagstest Nutzer |
@@ -58,6 +75,7 @@ Jeder Meilenstein: Briefing → Umsetzung → Beleg auf Tarantino → Audit an d
 
 1. Blitz ist Beta (0.3.0-beta.4), Stylo/Vello-Kette: Pinnen, Patches im Repo, bei Bruch Rückfall `gpui-component` `TextView::html` (Lesemodus).
 2. GPUI vor 1.0, API-Änderungen: exakt pinnen, Updates nur als eigenes Paket.
-3. Editor-Reife (Auswahl, Undo, IME jenseits Dead Keys): L2 beginnt mit Prüfung von `gpui-component` `Input`.
+3. Editor-Reife: geklärt (L-E4). Offen bleibt IME jenseits Dead Keys; das prüft L2 am eigenen Feld.
 4. HiDPI ungeprüft (Tarantino 1×): in L1 mit `GPUI_SCALE`/zweitem Monitor gegenprüfen, sonst in L5.
 5. Bauzeit 15 min kalt / Binary 110 MB: für die Entwicklung inkrementell (~40 s) unkritisch; Release-Profil in L5 optimieren.
+6. `gpui` auf crates.io endet bei **0.2.2**; Longbridge arbeitet ab `gpui-component` 0.6 mit einem eigenen Fork (`gpui-base` 0.10) weiter. Wir bleiben bewusst auf 0.2.2 — ein Umstieg hieße Fremd-Fork statt Upstream und eine Neubewertung von `view.rs`, Theme, Keys und Patches.
