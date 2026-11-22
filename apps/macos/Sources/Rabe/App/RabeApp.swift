@@ -32,6 +32,8 @@ struct RabeApp: App {
         }
         .defaultSize(width: 1100, height: 780)
         .windowResizability(.contentMinSize)
+        // Spike B: Ampel und Werkzeug-Items in einer Zeile, ohne Titel.
+        .windowToolbarStyle(.unified(showsTitle: false))
         .commands { RabeCommands() }
 
         WindowGroup("Neue E-Mail", id: "compose", for: UUID.self) { $id in

@@ -12,19 +12,13 @@ struct MainView: View {
 
     var body: some View {
         let theme = model.theme
-        // M2.15 1.1: Die Titelbar liegt über dem Inhalt und schluckt dort
-        // jeden Klick (`hittest` → `NSTitlebarView`). Das Band beginnt deshalb
-        // **unter** ihr; der Streifen darüber bleibt Titelbar (Ampel).
+        // Teil B: die Höhe, die Werkzeugleiste und Titelbar über dem Inhalt
+        // belegen. Der Inhalt beginnt darunter, die Leiste malt AppKit.
         let titleInset = ChromeMetrics.shared.topInset
         ZStack(alignment: .bottom) {
-            // M2.9: Seitenleiste als eigene Spalte, daneben eine gemeinsame
-            // 52-pt-Zeile für Mail und Kalender, darunter der Inhalt.
+            // M2.9: Seitenleiste als eigene Spalte, daneben der Inhalt mit der
+            // Werkzeugleiste in der Titelleiste (Teil B), darunter der Inhalt.
             GeometryReader { geo in
-                // Das Band liegt **über** dem Inhalt (ZStack), nicht davor:
-                // ein Hintergrund im Inhalt dehnt sich in die Safe Area und
-                // deckte das Band sonst zu (im Sandbox-Lauf: Kalender statt
-                // Werkzeugleiste). Der Inhalt ist um die Bandhöhe eingerückt,
-                // damit nichts Wichtiges darunter liegt.
                 ZStack(alignment: .top) {
                     HStack(spacing: 0) {
                         if model.sidebar.isVisible {
@@ -40,12 +34,7 @@ struct MainView: View {
                             HintBar()
                         }
                     }
-                    .padding(.top, titleInset + WindowChromeRow.height)
-                    WindowChromeRow()
-                        .padding(.top, titleInset)
-                        // Färbt auch den Titelbar-Streifen, damit Band und
-                        // Ampelzone eine Fläche sind.
-                        .background(theme.bar.color)
+                    .padding(.top, titleInset)
                     // M2.9 Stufe B: das Verfassen-Panel liegt **vor** Toast,
                     // Palette und Pickern in diesem ZStack und damit unter
                     // ihnen (§3.6.4).
@@ -73,6 +62,8 @@ struct MainView: View {
         .preferredColorScheme(theme.isDark ? .dark : .light)
         .ignoresSafeArea(.container, edges: .top)
         .frame(minWidth: 760, minHeight: 480)
+        // Teil B: echte Werkzeugleiste in der Titelleiste (statt eigener 52-pt-Zeile).
+        .toolbar { MainToolbar() }
         .sheet(isPresented: Binding(get: { model.accountSheetOpen }, set: { model.accountSheetOpen = $0 })) {
             AccountSheet().environment(\.theme, theme)
         }
@@ -363,7 +354,7 @@ final class ChromeMetrics: @unchecked Sendable {
 }
 
 /// Window setup: transparent title bar over the content, appearance and
-/// opacity per theme. Bewusst **ohne** `NSToolbar` — siehe `configure`.
+/// opacity per theme. Die Werkzeugleiste gehört SwiftUI (`.toolbar`).
 struct WindowConfigurator: NSViewRepresentable {
     let theme: Theme
     func makeNSView(context: Context) -> NSView {
@@ -376,14 +367,11 @@ struct WindowConfigurator: NSViewRepresentable {
     }
     private func configure(_ window: NSWindow?) {
         guard let window else { return }
-        // M2.15 1.1: **keine** `NSToolbar`. Eine leere Werkzeugleiste liegt als
-        // `NSToolbarView` über dem 52-pt-Band und schluckt jeden Klick — im
-        // Sandbox-Lauf kam an jedem Knopf `NSToolbarView<NSTitlebarView<…` als
-        // Treffer, ein AX-Press ging daran vorbei und „funktionierte“ deshalb.
-        // Auch ohne Werkzeugleiste bleibt ein 32-pt-Titelbarstreifen, der
-        // Treffer abfängt (`NSTitlebarView`). Deshalb beginnt das Band unter
-        // der Titelbar; die Ampel bleibt in ihrem Streifen.
-        if window.toolbar != nil { window.toolbar = nil }
+        // Teil B: Die Werkzeugleiste setzt SwiftUI (`.toolbar` + `.windowToolbarStyle`).
+        // Sie wird hier **nicht** mehr entfernt — vorher stand hier
+        // `window.toolbar = nil`, weil eine leere `NSToolbar` über dem eigenen
+        // 52-pt-Band jeden Klick schluckte (M2.15). Mit echten Items trifft der
+        // Klick den Knopf (Beleg im Bericht).
         window.titlebarAppearsTransparent = true
         window.titleVisibility = .hidden
         window.styleMask.insert(.fullSizeContentView)
@@ -392,18 +380,7 @@ struct WindowConfigurator: NSViewRepresentable {
         window.setFrameAutosaveName("RabeMain")
         ChromeMetrics.shared.update(window)
         window.appearance = NSAppearance(named: theme.isDark ? .darkAqua : .aqua)
-        window.isOpaque = !theme.usesGlass
-        window.backgroundColor = theme.usesGlass ? .clear : theme.win.ns
+        window.isOpaque = true
+        window.backgroundColor = theme.win.ns
     }
-}
-
-/// Lets the toolbar row move the window like a title bar.
-struct WindowDragArea: NSViewRepresentable {
-    final class DragView: NSView {
-        override func mouseDown(with event: NSEvent) {
-            if event.clickCount == 2 { window?.performZoom(nil) } else { window?.performDrag(with: event) }
-        }
-    }
-    func makeNSView(context: Context) -> NSView { DragView() }
-    func updateNSView(_ nsView: NSView, context: Context) {}
 }

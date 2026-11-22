@@ -27,7 +27,7 @@ struct ComposeDockOverlay: View {
     @ViewBuilder private var content: some View {
         let inset = model.sidebar.isVisible ? SidebarState.width : 0
         let contentWidth = max(0, windowSize.width - inset)
-        let contentHeight = max(0, windowSize.height - topInset - WindowChromeRow.height - ComposeDock.hintBarHeight)
+        let contentHeight = max(0, windowSize.height - topInset - ComposeDock.hintBarHeight)
         if let id = dock.openId, let draft = model.composeDrafts[id], dock.isMaximized {
             maximized(draft: draft, contentWidth: contentWidth, contentHeight: contentHeight, inset: inset)
         } else {
@@ -71,13 +71,13 @@ struct ComposeDockOverlay: View {
             Rectangle()
                 .fill(Color.black.opacity(0.2))
                 .allowsHitTesting(false)
-                .padding(.top, topInset + WindowChromeRow.height)
+                .padding(.top, topInset)
                 .padding(.bottom, ComposeDock.hintBarHeight)
                 .padding(.leading, inset)
             ComposePanelView(draft: draft, width: max(ComposeDock.minimumWidth, contentWidth - 48),
                              height: max(ComposeDock.minimumHeight, contentHeight - 48))
                 .padding(.bottom, ComposeDock.hintBarHeight + 24)
-                .padding(.top, topInset + WindowChromeRow.height + 24)
+                .padding(.top, topInset + 24)
                 .padding(.leading, inset + 24)
                 .padding(.trailing, 24)
         }
