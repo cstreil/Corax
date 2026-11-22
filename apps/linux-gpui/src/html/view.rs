@@ -123,20 +123,27 @@ pub fn rendere_html(
 }
 
 /// Einfacher Textkörper (Mails ohne HTML-Teil) in ein schlichtes Dokument.
-pub fn rendere_text(text: &str, breite: u32) -> Result<Koerper, String> {
-    let html = text_dokument(text);
+/// `schrift` ist die aufgelöste Familie der App (nie ein fontconfig-Alias —
+/// sonst bliebe Fett auch hier unsichtbar).
+pub fn rendere_text(text: &str, breite: u32, schrift: &str) -> Result<Koerper, String> {
+    let html = text_dokument(text, schrift);
     rendere_dokument(&html, breite, Arc::new(Resources::from_attachments(Vec::new())), None)
 }
 
 /// Dokument für einen reinen Textkörper: gleiche Schrift wie die Liste,
 /// Zeilenumbrüche bleiben stehen.
-fn text_dokument(text: &str) -> String {
+fn text_dokument(text: &str, schrift: &str) -> String {
     let escaped = escape_html(text);
+    let familie = if schrift.contains(' ') {
+        format!("\"{schrift}\"")
+    } else {
+        schrift.to_string()
+    };
     format!(
         "<!doctype html><html><head><meta charset=\"utf-8\"><style>\
          html,body{{margin:0;padding:0;background:#ffffff;}}\
          pre{{white-space:pre-wrap;word-wrap:break-word;margin:0;\
-         font:13px/1.55 ui-monospace,monospace;color:#1b1b1b;}}\
+         font:13px/1.55 {familie},sans-serif;color:#1b1b1b;}}\
          </style></head><body><pre>{escaped}</pre></body></html>"
     )
 }

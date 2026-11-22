@@ -146,6 +146,24 @@ async fn weiterleitung_auf_loopback_wird_abgewiesen() {
     griff.abort();
 }
 
+#[test]
+fn https_auf_http_wird_abgewiesen() {
+    // K4: eine verschlüsselte Adresse darf nicht auf unverschlüsseltes http
+    // weiterleiten. (Ein echter https-Server im Testprozess wäre dafür nötig;
+    // geprüft wird die Entscheidung selbst, die der Abruf je Sprung nutzt.)
+    let von = reqwest::Url::parse("https://beispiel.test/bild.png").unwrap();
+    assert!(matches!(
+        html::weiterleitungsziel(&von, "http://beispiel.test/bild.png"),
+        Err(FetchError::Downgrade(_))
+    ));
+    assert!(matches!(
+        html::weiterleitungsziel(&von, "//beispiel.test/bild.png"),
+        Ok(_)
+    ));
+    let von_http = reqwest::Url::parse("http://beispiel.test/bild.png").unwrap();
+    assert!(html::weiterleitungsziel(&von_http, "http://beispiel.test/anders.png").is_ok());
+}
+
 #[tokio::test]
 async fn zu_viele_weiterleitungen() {
     let (adresse, griff) = starte_server().await;

@@ -43,6 +43,36 @@ pub enum Action {
     Seitenleiste,
     /// `G` gefolgt von `I S D T E H # ! A`
     GeheZu(crate::core::models::MailView),
+    /// `E` — Erledigt (archivieren)
+    Erledigt,
+    /// `⇧E` — zurück in den Posteingang
+    ZurueckInEingang,
+    /// `#` — Papierkorb
+    Papierkorb,
+    /// `S` — Stern an/aus
+    Stern,
+    /// `U` — gelesen/ungelesen umschalten
+    Gelesen,
+    /// `!` — Spam / kein Spam
+    Spam,
+    /// `H` — später (morgen 8:00)
+    Spaeter,
+    /// `⇧H` — „Später"-Auswahl mit Presets und eigenem Datum
+    SpaeterAuswahl,
+    /// `V` — verschieben (Ordner-Auswahl)
+    Verschieben,
+    /// `L` — Label setzen/entfernen
+    Label,
+    /// `Z` — letzte Aktion zurücknehmen
+    Rueckgaengig,
+    /// `C` — neue Nachricht
+    Verfassen,
+    /// `R` — antworten
+    Antworten,
+    /// `⇧R` — allen antworten
+    AllenAntworten,
+    /// `F` — weiterleiten
+    Weiterleiten,
 }
 
 /// In welchem Zustand die Taste ankommt.
@@ -131,14 +161,40 @@ pub fn auswerten(event: &KeyDownEvent, ctx: Kontext) -> Ergebnis {
         }
     }
 
+    // Umschalt-Taste unterscheidet `⇧E` (zurückholen) von `E` (ablegen);
+    // `klein` ist bereits kleingeschrieben, deshalb hier das getippte Zeichen.
+    if zeichen == 'E' {
+        return Ergebnis::Aktion(Action::ZurueckInEingang);
+    }
+    // `⇧H` öffnet die Auswahl, `H` stellt auf morgen 8:00 zurück.
+    if zeichen == 'H' {
+        return Ergebnis::Aktion(Action::SpaeterAuswahl);
+    }
+    // `⇧R` antwortet allen, `R` nur dem Absender (TASTATUR.md).
+    if zeichen == 'R' {
+        return Ergebnis::Aktion(Action::AllenAntworten);
+    }
+
     match klein {
         'j' => Ergebnis::Aktion(Action::Weiter),
         'k' => Ergebnis::Aktion(Action::Zurueck),
-        'o' | 'l' => Ergebnis::Aktion(Action::Oeffnen),
+        'o' => Ergebnis::Aktion(Action::Oeffnen),
         '/' => Ergebnis::Aktion(Action::Suche),
         '?' => Ergebnis::Aktion(Action::Hilfe),
         '\\' => Ergebnis::Aktion(Action::Seitenleiste),
         'g' => Ergebnis::GeheZuBeginn,
+        'e' => Ergebnis::Aktion(Action::Erledigt),
+        '#' => Ergebnis::Aktion(Action::Papierkorb),
+        's' => Ergebnis::Aktion(Action::Stern),
+        'u' => Ergebnis::Aktion(Action::Gelesen),
+        '!' => Ergebnis::Aktion(Action::Spam),
+        'h' => Ergebnis::Aktion(Action::Spaeter),
+        'c' => Ergebnis::Aktion(Action::Verfassen),
+        'r' => Ergebnis::Aktion(Action::Antworten),
+        'f' => Ergebnis::Aktion(Action::Weiterleiten),
+        'v' => Ergebnis::Aktion(Action::Verschieben),
+        'l' => Ergebnis::Aktion(Action::Label),
+        'z' => Ergebnis::Aktion(Action::Rueckgaengig),
         _ => Ergebnis::Nichts,
     }
 }
@@ -176,6 +232,15 @@ pub const HILFE: &[(&str, &str)] = &[
     ("G #", "Papierkorb"),
     ("G !", "Spam"),
     ("G A", "Alle"),
+    ("E / ⇧E", "erledigt / zurück in den Posteingang"),
+    ("#", "Papierkorb"),
+    ("S", "Stern an/aus"),
+    ("U", "gelesen / ungelesen"),
+    ("!", "Spam / kein Spam"),
+    ("H / ⇧H", "später (morgen 8:00) / Auswahl"),
+    ("C / R / ⇧R / F", "neu / antworten / allen antworten / weiterleiten"),
+    ("V / L", "verschieben / Label"),
+    ("Z", "rückgängig"),
     ("\\", "Seitenleiste ein/aus"),
     ("?", "diese Übersicht"),
 ];
@@ -260,6 +325,38 @@ mod tests {
             Ergebnis::Aktion(Action::GeheZu(crate::core::models::MailView::Sent))
         );
         assert_eq!(auswerten(&taste("x", Some("x")), ctx), Ergebnis::Nichts);
+    }
+
+    #[test]
+    fn aktionstasten_der_liste() {
+        assert_eq!(aktion(&taste("e", Some("e"))), Ergebnis::Aktion(Action::Erledigt));
+        // ⇧E kommt als großes E an.
+        assert_eq!(
+            aktion(&taste("E", Some("E"))),
+            Ergebnis::Aktion(Action::ZurueckInEingang)
+        );
+        assert_eq!(aktion(&taste("3", Some("#"))), Ergebnis::Aktion(Action::Papierkorb));
+        assert_eq!(aktion(&taste("s", Some("s"))), Ergebnis::Aktion(Action::Stern));
+        assert_eq!(aktion(&taste("u", Some("u"))), Ergebnis::Aktion(Action::Gelesen));
+        assert_eq!(aktion(&taste("1", Some("!"))), Ergebnis::Aktion(Action::Spam));
+        assert_eq!(aktion(&taste("h", Some("h"))), Ergebnis::Aktion(Action::Spaeter));
+        // ⇧H kommt als großes H an: Auswahl statt „morgen 8:00".
+        assert_eq!(
+            aktion(&taste("H", Some("H"))),
+            Ergebnis::Aktion(Action::SpaeterAuswahl)
+        );
+        assert_eq!(aktion(&taste("v", Some("v"))), Ergebnis::Aktion(Action::Verschieben));
+        assert_eq!(aktion(&taste("l", Some("l"))), Ergebnis::Aktion(Action::Label));
+        // `o` öffnet weiterhin; `l` gehört jetzt dem Label.
+        assert_eq!(aktion(&taste("o", Some("o"))), Ergebnis::Aktion(Action::Oeffnen));
+        assert_eq!(aktion(&taste("c", Some("c"))), Ergebnis::Aktion(Action::Verfassen));
+        assert_eq!(aktion(&taste("r", Some("r"))), Ergebnis::Aktion(Action::Antworten));
+        assert_eq!(
+            aktion(&taste("R", Some("R"))),
+            Ergebnis::Aktion(Action::AllenAntworten)
+        );
+        assert_eq!(aktion(&taste("f", Some("f"))), Ergebnis::Aktion(Action::Weiterleiten));
+        assert_eq!(aktion(&taste("z", Some("z"))), Ergebnis::Aktion(Action::Rueckgaengig));
     }
 
     #[test]

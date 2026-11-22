@@ -113,6 +113,77 @@ fn befehl(state: &mut AppState, zeile: &str, cx: &mut Context<AppState>) {
         }
         return;
     }
+    if let Some(modus) = zeile.strip_prefix("verfassen:") {
+        let modus = match modus.trim() {
+            "antwort" => crate::state::compose::Modus::Antwort,
+            "allen" => crate::state::compose::Modus::AllenAntworten,
+            "weiter" => crate::state::compose::Modus::Weiterleiten,
+            _ => crate::state::compose::Modus::Neu,
+        };
+        if let Some(compose) = state.verfassen_auftrag(modus) {
+            eprintln!("L2-VERFASSEN modus={:?} fenster={}", modus, compose.id);
+            // Der Render löst es ein und füllt Felder und Editor.
+            state.pending_dock = Some(compose);
+            cx.notify();
+        }
+        return;
+    }
+    if let Some(n) = zeile.strip_prefix("wahl:") {
+        let index: usize = n.trim().parse().unwrap_or(0);
+        eprintln!("L2-WAHL index={index}");
+        state.auswahl_nehmen(index, cx);
+        return;
+    }
+    if let Some(text) = zeile.strip_prefix("text:") {
+        state.pending_editor_text = Some(text.to_string());
+        cx.notify();
+        return;
+    }
+    if let Some(view) = zeile.strip_prefix("gehe-zu:") {
+        let view = match view.trim() {
+            "entwuerfe" | "drafts" => crate::core::models::MailView::Drafts,
+            "gesendet" | "sent" => crate::core::models::MailView::Sent,
+            "papierkorb" | "trash" => crate::core::models::MailView::Trash,
+            "erledigt" | "done" => crate::core::models::MailView::Done,
+            "spaeter" | "snoozed" => crate::core::models::MailView::Snoozed,
+            _ => crate::core::models::MailView::Inbox,
+        };
+        state.gehe_zu(view, cx);
+        return;
+    }
+    // Entfernen-Knopf: es gibt kein Zeigerwerkzeug auf Tarantino, deshalb
+    // löst der Beleg-Hook denselben Weg aus wie der Klick auf ✕.
+    if let Some(index) = zeile.strip_prefix("anhang-weg:") {
+        let index: usize = index.trim().parse().unwrap_or(0);
+        eprintln!("L2-ANHANG-WEG index={index}");
+        state.anhang_entfernen(index, cx);
+        return;
+    }
+    if let Some(pfad) = zeile.strip_prefix("anhang:") {
+        let pfad = std::path::PathBuf::from(pfad.trim());
+        let name = pfad
+            .file_name()
+            .map(|name| name.to_string_lossy().to_string())
+            .unwrap_or_else(|| "anhang".into());
+        let groesse = std::fs::metadata(&pfad).map(|meta| meta.len()).unwrap_or(0);
+        let mime = crate::core::host::mime_aus_name(&name);
+        state.compose_anhang_setzen(pfad, name, groesse, mime, cx);
+        return;
+    }
+    if let Some(text) = zeile.strip_prefix("datum:") {
+        state.auswahl_eigenes_feld(cx);
+        state.datumfeld.update(cx, |field, cx| {
+            field.type_text(text);
+            cx.notify();
+        });
+        state.auswahl_datum_uebernehmen(cx);
+        return;
+    }
+    if let Some(n) = zeile.strip_prefix("menue:") {
+        let index: usize = n.trim().parse().unwrap_or(0);
+        state.kontextmenue_nehmen(index, cx);
+        return;
+    }
     if let Some(text) = zeile.strip_prefix("type:") {
         state.suchfeld.update(cx, |field, cx| {
             field.type_text(text);
@@ -128,6 +199,35 @@ fn befehl(state: &mut AppState, zeile: &str, cx: &mut Context<AppState>) {
         "search" => state.suche_starten(cx),
         "search-aus" => state.suche_ausfuehren(cx),
         "search-zu" => state.suche_beenden(cx),
+        "snooze" => {
+            eprintln!("L2-SNOOZE-AUSWAHL");
+            state.spaeter_auswahl_oeffnen(cx);
+        }
+        "move" => state.verschieben_auswahl_oeffnen(cx),
+        "label" => state.label_auswahl_oeffnen(cx),
+        "menu" => {
+            let id = state.selected.unwrap_or(0);
+            eprintln!("L2-MENUE thread={id}");
+            state.kontextmenue_oeffnen(id, 620.0, 240.0, cx);
+        }
+        "snooze-zu" => state.auswahl_schliessen(cx),
+        "undo" => state.rueckgaengig(cx),
+        // Der Knopf im Toast (bei „Wird gesendet" ist das `cancel_send`,
+        // nicht das allgemeine Rückgängig): so wie ein Klick darauf.
+        "toast" => {
+            eprintln!("L2-TOAST-AKTION");
+            state.toast_aktion(cx);
+        }
+        "senden" => {
+            eprintln!("L2-SENDEN");
+            state.senden(cx);
+        }
+        "senden-spaeter" => state.spaeter_senden(cx),
+        "dock-min" => state.compose_minimieren(cx),
+        "dock-zu" => state.compose_schliessen(true, cx),
+        "anhaenge" => state.anhaenge_waehlen(cx),
+        "vorschlaege" => state.vorschlaege_anfragen(cx),
+        "vorschlag" => state.vorschlag_nehmen(0, cx),
         "help" => {
             state.hilfe = !state.hilfe;
             cx.notify();
@@ -161,14 +261,34 @@ fn dump(state: &AppState) {
         .and_then(|id| state.karten.get(&id).map(|karte| (id, karte.hoehe)))
         .map(|(id, hoehe)| format!("{id}:{hoehe:.0}"))
         .unwrap_or_else(|| "-".into());
+    let compose = state
+        .compose_aktiv
+        .and_then(|id| state.compose.iter().find(|compose| compose.id == id))
+        .map(|compose| {
+            format!(
+                "{}:an={}:betreff={:?}:anhaenge={}:minimiert={}",
+                compose.id,
+                compose.an,
+                compose.betreff,
+                compose.anhaenge.len(),
+                compose.minimiert
+            )
+        })
+        .unwrap_or_else(|| "-".into());
     eprintln!(
-        "L1-DUMP threads={} rows={} auswahl={:?} offen={} suche={:?} theme={} ansicht={}",
+        "L2-DUMP compose={compose} fenster={} minimiert={}",
+        state.compose.len(),
+        state.compose.iter().filter(|compose| compose.minimiert).count()
+    );
+    eprintln!(
+        "L1-DUMP threads={} rows={} auswahl={:?} offen={} suche={:?} theme={} schrift={} ansicht={}",
         state.threads.len(),
         state.rows.len(),
         state.selected,
         offen,
         state.suche,
         state.theme.name,
+        state.theme.font(),
         state.view.name()
     );
 }

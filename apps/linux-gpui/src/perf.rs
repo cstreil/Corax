@@ -62,6 +62,7 @@ pub fn frame_mark() {
 }
 
 /// Ein Schritt von Anfang bis zum nächsten gezeichneten Frame (Öffnen, Suchen …).
+#[allow(dead_code)] // Messhilfe: je nach Build (mit/ohne `test-hooks`) ungenutzt
 pub fn log_marke(name: &str, extra: &str, dauer: std::time::Duration) {
     if extra.is_empty() {
         eprintln!("L1-{name} ms={:.1}", dauer.as_secs_f64() * 1000.0);
@@ -126,18 +127,22 @@ pub fn frame_stats() -> FrameStats {
 }
 
 /// Ein einzelner Messpunkt mit Namen, für Durchsatz und Latenz.
+#[allow(dead_code)] // Messhilfe: je nach Build (mit/ohne `test-hooks`) ungenutzt
 #[derive(Clone, Debug)]
 pub struct Messpunkt {
     pub name: String,
     pub ms: f64,
 }
 
+#[allow(dead_code)] // Messhilfe: je nach Build (mit/ohne `test-hooks`) ungenutzt
 static MESSPUNKTE: Mutex<Vec<Messpunkt>> = Mutex::new(Vec::new());
 
+#[allow(dead_code)] // Messhilfe: je nach Build (mit/ohne `test-hooks`) ungenutzt
 pub fn note(name: impl Into<String>, ms: f64) {
     MESSPUNKTE.lock().unwrap().push(Messpunkt { name: name.into(), ms });
 }
 
+#[allow(dead_code)] // Messhilfe: je nach Build (mit/ohne `test-hooks`) ungenutzt
 pub fn note_zeilen() -> Vec<String> {
     MESSPUNKTE
         .lock()

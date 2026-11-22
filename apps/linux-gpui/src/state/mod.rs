@@ -2,5 +2,6 @@
 //! Gegenstück zu den Stores der Mac-App (`MailboxStore`, `SidebarState`).
 
 pub mod app;
+pub mod compose;
 
 pub use app::{AppState, Tab};

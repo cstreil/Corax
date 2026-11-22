@@ -1,1 +1,3 @@
 /target
+# Cargo-Vendor: die Markierungsdatei gehört keinem Commit an.
+vendor/gpui-component/.cargo-ok

@@ -54,6 +54,8 @@ pub enum FetchError {
     PrivateAddress(String),
     Resolve(String),
     InvalidRedirect,
+    /// Eine https-Adresse leitete auf unverschlüsseltes http um.
+    Downgrade(String),
     TooManyRedirects(usize),
     Timeout,
     TooLarge(usize),
@@ -71,6 +73,7 @@ impl fmt::Display for FetchError {
             Self::PrivateAddress(ziel) => write!(f, "nicht-öffentliche Adresse: {ziel}"),
             Self::Resolve(fehler) => write!(f, "Name nicht auflösbar: {fehler}"),
             Self::InvalidRedirect => write!(f, "Weiterleitung ohne brauchbares Ziel"),
+            Self::Downgrade(ziel) => write!(f, "Weiterleitung von https auf http: {ziel}"),
             Self::TooManyRedirects(grenze) => write!(f, "mehr als {grenze} Weiterleitungen"),
             Self::Timeout => write!(f, "Zeitlimit überschritten"),
             Self::TooLarge(grenze) => write!(f, "größer als {grenze} Bytes"),
@@ -113,7 +116,7 @@ pub async fn fetch_image(url: &str, limits: &FetchLimits) -> Result<(String, Vec
                 .get(LOCATION)
                 .and_then(|wert| wert.to_str().ok())
                 .ok_or(FetchError::InvalidRedirect)?;
-            current = current.join(ziel).map_err(|_| FetchError::InvalidRedirect)?;
+            current = weiterleitungsziel(&current, ziel)?;
             urspruenge += 1;
             continue;
         }
@@ -136,6 +139,20 @@ pub async fn fetch_image(url: &str, limits: &FetchLimits) -> Result<(String, Vec
         let mime = sniff_image(&bytes).ok_or(FetchError::UnsupportedImage)?;
         return Ok((mime.to_string(), bytes));
     }
+}
+
+/// Löst ein `Location`-Ziel auf und verhindert das Herabstufen auf `http`.
+///
+/// Was über https angefordert wurde, wird nicht über eine unverschlüsselte
+/// Weiterleitung nachgeladen — sonst könnte jemand im Netz den Inhalt
+/// austauschen, obwohl die Mail ihn verschlüsselt angefordert hat. Andere
+/// Schemata (`file:`, `data:`) weist danach [`check_scheme`] ab.
+pub fn weiterleitungsziel(von: &Url, location: &str) -> Result<Url, FetchError> {
+    let ziel = von.join(location).map_err(|_| FetchError::InvalidRedirect)?;
+    if von.scheme() == "https" && ziel.scheme() == "http" {
+        return Err(FetchError::Downgrade(ziel.to_string()));
+    }
+    Ok(ziel)
 }
 
 /// MIME-Typ aus der Dateisignatur.
@@ -369,6 +386,22 @@ mod tests {
                 "{adresse}"
             );
         }
+    }
+
+    #[test]
+    fn kein_abstieg_von_https_auf_http() {
+        let https = Url::parse("https://beispiel.test/bild.png").unwrap();
+        let http = Url::parse("http://beispiel.test/bild.png").unwrap();
+        assert!(matches!(
+            weiterleitungsziel(&https, &http.to_string()),
+            Err(FetchError::Downgrade(_))
+        ));
+        // Relativ bleibt es bei https, absolut mit https ist es erlaubt.
+        assert!(weiterleitungsziel(&https, "/bild.png").is_ok());
+        assert!(weiterleitungsziel(&https, "https://beispiel.test/anders.png").is_ok());
+        // Von http aus ist auch http in Ordnung.
+        assert!(weiterleitungsziel(&http, "http://beispiel.test/anders.png").is_ok());
+        assert!(weiterleitungsziel(&http, "https://beispiel.test/anders.png").is_ok());
     }
 
     #[test]

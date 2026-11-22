@@ -11,8 +11,8 @@ use std::sync::mpsc::{Receiver, Sender, channel};
 use corax_host::{Host, HostConfig, HostDelegate, UiEvent};
 
 use super::models::{
-    Account, Label, ListThreadsArgs, SplitRule, ThreadDetail, ThreadPage, ThreadSummary,
-    UnreadCounts,
+    Account, ContactVorschlag, FolderInfo, Label, ListThreadsArgs, SplitRule, ThreadDetail,
+    ThreadPage, ThreadSummary, UnreadCounts,
 };
 
 pub const SANDBOX_IDENTIFIER: &str = "com.coraxapp.corax.sandbox";
@@ -39,6 +39,33 @@ pub enum Request {
     Bilder { thread: i64, urls: Vec<String> },
     /// Nach der ersten Liste: der Kern muss nicht mehr auf die UI warten.
     UiReady,
+    /// Eine Aktion auf Threads (`perform_action` im Kern): `kind` ist der
+    /// Name aus `ActionKind` (`mark_read`, `star`, `archive`, `trash`,
+    /// `spam`, `snooze`, `move`, `add_label` …). `params` trägt die Zugabe:
+    /// `wakeAt` (Snooze), `targetFolderId` (Verschieben), `labelId` (Label).
+    Action {
+        kind: &'static str,
+        thread_ids: Vec<i64>,
+        params: Option<serde_json::Value>,
+    },
+    /// Ordner des Kontos für „Verschieben …" (`list_folders`); ohne ID alle.
+    Folders { account_id: Option<i64> },
+    /// Entwurf speichern (`save_draft`); `args` sind die Felder des Kerns.
+    SaveDraft { args: serde_json::Value },
+    /// Senden einreihen (`queue_send`): `send_at` leer heißt sofort.
+    QueueSend { draft_id: i64, send_at: Option<i64> },
+    /// Senden im Rückgängig-Fenster abbrechen (`cancel_send`).
+    CancelSend { action_id: i64 },
+    /// Kontaktvorschläge fürs An-Feld (`suggest_contacts`).
+    SuggestContacts { prefix: String },
+    /// Entwurf löschen (`delete_draft`).
+    DeleteDraft { draft_id: i64 },
+    /// Entwurf laden (`get_draft`) — für „Entwürfe" im Dock.
+    GetDraft { draft_id: i64 },
+    /// Datei-Dialog für Anhänge (xdg-desktop-portal); läuft auf der Kern-Runtime.
+    AnhaengeWaehlen,
+    /// Letzte Aktion zurücknehmen (`undo_last`, 30-s-Fenster im Kern).
+    Undo,
 }
 
 /// Eine Antwort oder ein Ereignis aus dem Kern.
@@ -53,6 +80,28 @@ pub enum Reply {
     Thread { generation: u64, detail: Box<ThreadDetail> },
     /// Ergebnis eines Bildabrufs: je Adresse `(mime, bytes)` oder der Grund.
     Bilder { thread: i64, ergebnisse: Vec<(String, Result<(String, Vec<u8>), crate::html::FetchError>)> },
+    /// Ordner des Kontos für „Verschieben …".
+    Folders(Vec<FolderInfo>),
+    /// Entwurf gespeichert; `id` ist die Entwurfs-ID des Kerns.
+    Draft { id: i64 },
+    /// Senden eingereiht; `action_id` nimmt `cancel_send` zurück.
+    Queued { action_id: i64, dispatch_at: i64 },
+    /// Ergebnis von `cancel_send`: die Kennung und ob abgebrochen wurde.
+    Cancelled { action_id: i64, cancelled: bool },
+    /// `delete_draft` ist durch (keine Nutzlast nötig).
+    DraftDeleted,
+    /// Kontaktvorschläge.
+    Contacts(Vec<ContactVorschlag>),
+    /// Geladener Entwurf (`get_draft` liefert die Felder von `save_draft`).
+    DraftLoaded(Box<EntwurfInhalt>),
+    /// Gewählte Anhänge: (Pfad, Name, Größe, MIME).
+    Anhaenge(Vec<(std::path::PathBuf, String, u64, String)>),
+    /// Anhang soll geöffnet werden; `aktion` ist das Ergebnis der A2-Prüfung.
+    Anhang { pfad: String, aktion: AnhangAktion },
+    /// Aktion ausgeführt.
+    Action { kind: &'static str, thread_ids: Vec<i64>, action_ids: Vec<i64> },
+    /// Rückgängig: `false`, wenn im 30-s-Fenster nichts mehr lag.
+    Undo { undone: bool },
     Event(CoreEvent),
     Status(String),
     Error(String),
@@ -97,7 +146,10 @@ impl HostDelegate for Delegate {
     }
 
     fn open_path(&self, path: String) {
-        let _ = std::process::Command::new("xdg-open").arg(&path).spawn();
+        // A2: erst prüfen, dann öffnen. Die Prüfung liest den Dateikopf und
+        // läuft hier (Kern-Thread), entschieden und gezeigt wird in der Oberfläche.
+        let aktion = anhang_aktion(&path);
+        let _ = self.tx.send(Reply::Anhang { pfad: path, aktion });
     }
 
     fn on_event(&self, event: UiEvent) {
@@ -190,6 +242,28 @@ impl MailCore {
                     // Bilder nebenher holen: die Anfrage geht an die Laufzeit
                     // des Kerns, der Thread nimmt derweil die nächste an.
                     let request = match request {
+                        Request::AnhaengeWaehlen => {
+                            let antwort = rep_tx.clone();
+                            host.runtime().spawn(async move {
+                                let dateien = rfd::AsyncFileDialog::new()
+                                    .set_title("Anhang wählen")
+                                    .pick_files()
+                                    .await
+                                    .unwrap_or_default();
+                                let mut out = Vec::with_capacity(dateien.len());
+                                for datei in dateien {
+                                    let pfad = datei.path().to_path_buf();
+                                    let name = datei.file_name();
+                                    let groesse = std::fs::metadata(&pfad)
+                                        .map(|meta| meta.len())
+                                        .unwrap_or(0);
+                                    let mime = mime_aus_name(&name);
+                                    out.push((pfad, name, groesse, mime));
+                                }
+                                let _ = antwort.send(Reply::Anhaenge(out));
+                            });
+                            continue;
+                        }
                         Request::Bilder { thread, urls } => {
                             let antwort = rep_tx.clone();
                             host.runtime().spawn(async move {
@@ -269,8 +343,47 @@ fn command_for(request: &Request) -> Option<(&'static str, String)> {
             "open_attachment",
             args(serde_json::json!({ "attachmentId": id })),
         )),
-        // Bilder holt die Laufzeit, nicht `dispatch` (siehe Schleife oben).
-        Request::Bilder { .. } => None,
+        Request::Action { kind, thread_ids, params } => {
+            let mut auftrag = serde_json::json!({ "kind": kind, "threadIds": thread_ids });
+            if let Some(params) = params {
+                auftrag["params"] = params.clone();
+            }
+            Some(("perform_action", args(serde_json::json!({ "args": auftrag }))))
+        }
+        Request::Folders { account_id } => Some((
+            "list_folders",
+            args(serde_json::json!({ "accountId": account_id })),
+        )),
+        Request::SaveDraft { args: felder } => Some((
+            "save_draft",
+            serde_json::to_string(&serde_json::json!({ "args": felder }))
+                .unwrap_or_else(|_| "{}".into()),
+        )),
+        Request::QueueSend { draft_id, send_at } => Some((
+            "queue_send",
+            args(serde_json::json!({
+                "args": { "draftId": draft_id, "sendAt": send_at }
+            })),
+        )),
+        Request::CancelSend { action_id } => Some((
+            "cancel_send",
+            args(serde_json::json!({ "actionId": action_id })),
+        )),
+        Request::GetDraft { draft_id } => Some((
+            "get_draft",
+            args(serde_json::json!({ "draftId": draft_id })),
+        )),
+        Request::DeleteDraft { draft_id } => Some((
+            "delete_draft",
+            args(serde_json::json!({ "draftId": draft_id })),
+        )),
+        Request::SuggestContacts { prefix } => Some((
+            "suggest_contacts",
+            args(serde_json::json!({ "query": prefix, "limit": 6 })),
+        )),
+        Request::Undo => Some(("undo_last", "{}".into())),
+        // Bilder und der Datei-Dialog laufen auf der Laufzeit (siehe Schleife oben).
+        Request::Bilder { .. } | Request::AnhaengeWaehlen => None,
         Request::UiReady => None,
     }
 }
@@ -313,8 +426,53 @@ fn parse_reply(request: Request, json: &str) -> Reply {
             Err(reply) => reply,
         },
         Request::OpenAttachment(_) => Reply::Status("Anhang geöffnet".into()),
+        Request::Folders { .. } => match decode::<Vec<FolderInfo>>(json, "list_folders") {
+            Ok(items) => Reply::Folders(items),
+            Err(reply) => reply,
+        },
+        Request::SaveDraft { .. } => match decode::<DraftId>(json, "save_draft") {
+            Ok(draft) => Reply::Draft { id: draft.draft_id },
+            Err(reply) => reply,
+        },
+        Request::QueueSend { .. } => match decode::<QueueResult>(json, "queue_send") {
+            Ok(queued) => Reply::Queued {
+                action_id: queued.action_id,
+                dispatch_at: queued.dispatch_at,
+            },
+            Err(reply) => reply,
+        },
+        Request::CancelSend { action_id } => match decode::<CancelledResult>(json, "cancel_send") {
+            Ok(ergebnis) => Reply::Cancelled {
+                action_id,
+                cancelled: ergebnis.cancelled,
+            },
+            Err(reply) => reply,
+        },
+        Request::DeleteDraft { .. } => Reply::DraftDeleted,
+        Request::GetDraft { .. } => match decode::<EntwurfInhalt>(json, "get_draft") {
+            Ok(inhalt) => Reply::DraftLoaded(Box::new(inhalt)),
+            Err(reply) => reply,
+        },
+        Request::SuggestContacts { .. } => {
+            match decode::<Vec<ContactVorschlag>>(json, "suggest_contacts") {
+                Ok(items) => Reply::Contacts(items),
+                Err(reply) => reply,
+            }
+        }
+        Request::Action { kind, thread_ids, .. } => {
+            match decode::<ActionResult>(json, "perform_action") {
+                Ok(result) => Reply::Action { kind, thread_ids, action_ids: result.action_ids },
+                Err(reply) => reply,
+            }
+        }
+        Request::Undo => match decode::<UndoResult>(json, "undo_last") {
+            Ok(result) => Reply::Undo { undone: result.undone },
+            Err(reply) => reply,
+        },
         // Kommt hier nie an: Bilder beantwortet die Laufzeit selbst.
-        Request::Bilder { .. } => Reply::Error("Bilder laufen nicht über dispatch".into()),
+        Request::Bilder { .. } | Request::AnhaengeWaehlen => {
+            Reply::Error("läuft nicht über dispatch".into())
+        }
         Request::UiReady => Reply::Status("UI bereit".into()),
     }
 }
@@ -329,5 +487,253 @@ mod corax_host_types {
     pub struct SearchResults {
         #[serde(default)]
         pub threads: Vec<ThreadSummary>,
+    }
+}
+
+/// Antwort von `perform_action`: die angelegten Aktionen (für „Rückgängig").
+#[derive(Debug, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ActionResult {
+    #[serde(default)]
+    pub action_ids: Vec<i64>,
+}
+
+/// Ein Entwurf, wie ihn `get_draft` liefert: dieselben Felder wie `save_draft`.
+#[derive(Clone, Debug, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EntwurfInhalt {
+    #[serde(default)]
+    pub draft_id: Option<i64>,
+    #[serde(default)]
+    pub account_id: i64,
+    #[serde(default)]
+    pub to: Vec<super::models::Address>,
+    #[serde(default)]
+    pub cc: Vec<super::models::Address>,
+    #[serde(default)]
+    pub bcc: Vec<super::models::Address>,
+    #[serde(default)]
+    pub subject: String,
+    #[serde(default)]
+    pub body_text: String,
+    #[serde(default)]
+    pub body_html: Option<String>,
+    #[serde(default)]
+    pub mode: String,
+    #[serde(default)]
+    pub in_reply_to_message_id: Option<i64>,
+    /// Anhänge des Entwurfs (`draft_attachments` im Kern, Pfad + Name).
+    #[serde(default)]
+    pub attachments: Vec<DraftAnhang>,
+}
+
+/// Ein gespeicherter Anhang eines Entwurfs.
+#[derive(Clone, Debug, Default, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DraftAnhang {
+    pub file_path: String,
+    pub filename: String,
+}
+
+/// Grober MIME-Typ aus der Endung — genug für die Anzeige und `save_draft`.
+pub fn mime_aus_name(name: &str) -> String {
+    let endung = name.rsplit_once('.').map(|(_, endung)| endung.to_lowercase());
+    match endung.as_deref() {
+        Some("pdf") => "application/pdf",
+        Some("png") => "image/png",
+        Some("jpg") | Some("jpeg") => "image/jpeg",
+        Some("gif") => "image/gif",
+        Some("webp") => "image/webp",
+        Some("txt") | Some("md") => "text/plain",
+        Some("csv") => "text/csv",
+        Some("html") | Some("htm") => "text/html",
+        Some("zip") => "application/zip",
+        Some("doc") => "application/msword",
+        Some("docx") => {
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        }
+        Some("xls") => "application/vnd.ms-excel",
+        Some("xlsx") => "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        Some("ics") => "text/calendar",
+        _ => "application/octet-stream",
+    }
+    .to_string()
+}
+
+/// Antwort von `save_draft`.
+#[derive(Debug, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DraftId {
+    pub draft_id: i64,
+}
+
+/// Antwort von `queue_send`.
+#[derive(Debug, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct QueueResult {
+    pub action_id: i64,
+    pub dispatch_at: i64,
+}
+
+/// Antwort von `cancel_send`.
+#[derive(Debug, serde::Deserialize)]
+pub struct CancelledResult {
+    pub cancelled: bool,
+}
+
+/// Antwort von `undo_last`.
+#[derive(Debug, serde::Deserialize)]
+pub struct UndoResult {
+    pub undone: bool,
+}
+
+/// Was die Oberfläche mit einem geprüften Anhang tut.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum AnhangAktion {
+    /// Harmlos: sofort öffnen.
+    Oeffnen,
+    /// Nicht öffnen; `Blockiert` trägt den Grund.
+    Blockiert(String),
+    /// Rückfrage „Trotzdem öffnen?" mit Grund.
+    Fragen(String),
+}
+
+impl AnhangAktion {
+    /// Text für Toast bzw. Rückfrage (`None`, wenn einfach geöffnet wird).
+    pub fn text(&self) -> Option<String> {
+        match self {
+            Self::Oeffnen => None,
+            Self::Blockiert(grund) => Some(format!("Anhang blockiert: {grund}")),
+            Self::Fragen(grund) => Some(format!("Trotzdem öffnen? {grund}")),
+        }
+    }
+}
+
+/// Übersetzt die Prüfentscheidung in einen der drei Wege.
+pub fn anhang_aktion_aus(entscheidung: &crate::safety::attachments::OpenDecision) -> AnhangAktion {
+    use crate::safety::attachments::OpenDecision;
+    match entscheidung {
+        OpenDecision::Open => AnhangAktion::Oeffnen,
+        OpenDecision::Block { reason } => AnhangAktion::Blockiert(reason.clone()),
+        OpenDecision::Ask { reason } => AnhangAktion::Fragen(reason.clone()),
+    }
+}
+
+/// A2-Prüfung für einen Pfad: Name, MIME aus der Endung und die ersten Bytes.
+pub fn anhang_aktion(pfad: &str) -> AnhangAktion {
+    let mime = mime_aus_name(pfad);
+    let kopf = kopf_lesen(pfad);
+    anhang_aktion_aus(&crate::safety::attachments::check_attachment(pfad, &mime, &kopf))
+}
+
+/// Die ersten Bytes einer Datei — genug für ELF, PE und `#!`.
+fn kopf_lesen(pfad: &str) -> Vec<u8> {
+    use std::io::Read;
+    let Ok(mut datei) = std::fs::File::open(pfad) else {
+        return Vec::new();
+    };
+    let mut kopf = vec![0u8; 64];
+    match datei.read(&mut kopf) {
+        Ok(gelesen) => {
+            kopf.truncate(gelesen);
+            kopf
+        }
+        Err(_) => Vec::new(),
+    }
+}
+
+/// Der Öffner des Systems: im Release immer `xdg-open`.
+///
+/// Nur der Messbuild lässt ihn über `CORAX_OEFFNER` ersetzen (Tests, fremde
+/// Desktops) — im ausgelieferten Binary soll keine Umgebungsvariable
+/// bestimmen, womit ein Anhang geöffnet wird.
+pub fn oeffner() -> String {
+    #[cfg(feature = "test-hooks")]
+    if let Ok(befehl) = std::env::var("CORAX_OEFFNER") {
+        return befehl;
+    }
+    "xdg-open".into()
+}
+
+/// Startet `befehl` mit dem Pfad als einzigem Argument.
+pub fn oeffnen_mit(befehl: &str, pfad: &str) -> std::io::Result<()> {
+    std::process::Command::new(befehl)
+        .arg(pfad)
+        .spawn()
+        .map(|_| ())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{anhang_aktion_aus, mime_aus_name, oeffnen_mit};
+
+    /// Ein `.desktop`-Anhang wird nicht geöffnet (A2, Kriterium 10).
+    #[test]
+    fn desktop_anhang_wird_blockiert() {
+        let entscheidung = crate::safety::attachments::check_attachment("start.desktop", "", b"");
+        let aktion = anhang_aktion_aus(&entscheidung);
+        assert!(matches!(aktion, super::AnhangAktion::Blockiert(_)), "{aktion:?}");
+        let text = aktion.text().unwrap_or_default();
+        assert!(text.starts_with("Anhang blockiert: "), "{text}");
+        assert!(text.contains(".desktop"), "{text}");
+    }
+
+    /// Doppelte Endung (`rechnung.sh.pdf`) löst die Rückfrage aus.
+    #[test]
+    fn doppelte_endung_fragt_nach() {
+        let entscheidung =
+            crate::safety::attachments::check_attachment("rechnung.sh.pdf", "application/pdf", b"%PDF-1.7");
+        let aktion = anhang_aktion_aus(&entscheidung);
+        assert!(matches!(aktion, super::AnhangAktion::Fragen(_)), "{aktion:?}");
+        let text = aktion.text().unwrap_or_default();
+        assert!(text.starts_with("Trotzdem öffnen? "), "{text}");
+    }
+
+    /// Ein harmloses PDF wird geöffnet, ohne Rückfrage.
+    #[test]
+    fn pdf_wird_geoeffnet() {
+        let entscheidung =
+            crate::safety::attachments::check_attachment("rechnung.pdf", "application/pdf", b"%PDF-1.7");
+        let aktion = anhang_aktion_aus(&entscheidung);
+        assert_eq!(aktion, super::AnhangAktion::Oeffnen);
+        assert!(aktion.text().is_none());
+    }
+
+    /// Der Prüfweg nimmt den Dateiinhalt mit: ein ELF mit harmlosem Namen
+    /// wird blockiert, auch wenn es `rechnung.pdf` heißt.
+    #[test]
+    fn elf_mit_harmlosem_namen_wird_blockiert() {
+        let mut datei = std::fs::File::create("/tmp/corax-test-elF.pdf").expect("Datei");
+        use std::io::Write;
+        datei.write_all(b"\x7fELF\x02\x01\x01\x00").expect("schreiben");
+        drop(datei);
+        let aktion = super::anhang_aktion("/tmp/corax-test-elF.pdf");
+        assert!(matches!(aktion, super::AnhangAktion::Blockiert(_)), "{aktion:?}");
+        let _ = std::fs::remove_file("/tmp/corax-test-elF.pdf");
+    }
+
+    /// Der Öffner lässt sich ersetzen — hier ein Fake, der nichts tut.
+    #[test]
+    fn oeffner_laesst_sich_ersetzen() {
+        // `/usr/bin/true` gibt es auf Linux und macOS; `/bin/true` nur auf Linux.
+        let fake = if std::path::Path::new("/usr/bin/true").exists() {
+            "/usr/bin/true"
+        } else {
+            "/bin/true"
+        };
+        assert!(oeffnen_mit(fake, "/tmp/rechnung.pdf").is_ok());
+    }
+
+    #[test]
+    fn mime_aus_der_endung() {
+        assert_eq!(mime_aus_name("Rechnung.PDF"), "application/pdf");
+        assert_eq!(mime_aus_name("bild.jpeg"), "image/jpeg");
+        assert_eq!(
+            mime_aus_name("brief.docx"),
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        );
+        // Unbekannt und ohne Endung: der neutrale Typ.
+        assert_eq!(mime_aus_name("ohne_endung"), "application/octet-stream");
+        assert_eq!(mime_aus_name("datei.xyz"), "application/octet-stream");
     }
 }

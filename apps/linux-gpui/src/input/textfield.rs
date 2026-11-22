@@ -86,6 +86,7 @@ impl TextField {
             Some((c, t)) if t.elapsed() > std::time::Duration::from_millis(700) => {
                 self.pending_dead = None;
                 self.insert_raw(&c.to_string());
+                #[cfg(feature = "test-hooks")]
                 eprintln!("DEADKEY allein eingefuegt {:?}", c);
                 cx.notify();
                 true
@@ -100,6 +101,7 @@ impl TextField {
         // Folgezeichen mehr kommt (sonst entsteht „´é" statt „é").
         if let Some((tot, t)) = self.pending_dead.take() {
             if t.elapsed() <= std::time::Duration::from_millis(700) {
+                #[cfg(feature = "test-hooks")]
                 eprintln!("DEADKEY verworfen {:?} vor {:?}", tot, value);
             } else {
                 self.insert_raw(&tot.to_string());
@@ -110,6 +112,7 @@ impl TextField {
             let c = value.chars().next().unwrap();
             if Self::TOT.contains(c) {
                 self.pending_dead = Some((c, std::time::Instant::now()));
+                #[cfg(feature = "test-hooks")]
                 eprintln!("DEADKEY zurueckgehalten {:?}", c);
                 return;
             }
@@ -118,6 +121,7 @@ impl TextField {
     }
 
     fn insert_raw(&mut self, value: &str) {
+        #[cfg(feature = "test-hooks")]
         eprintln!("TEXTEINGANG label={:?} value={:?}", self.label, value);
         let at = self.byte_index(self.cursor);
         self.text.insert_str(at, value);
@@ -166,6 +170,7 @@ impl TextField {
     }
 
     fn replace(&mut self, range: Option<Range<usize>>, value: &str) {
+        #[cfg(feature = "test-hooks")]
         eprintln!("REPLACE range={:?} value={:?}", range, value);
         match range {
             Some(range) => {
@@ -284,6 +289,7 @@ impl Render for TextField {
             .track_focus(&self.focus)
             .on_key_down(cx.listener(|this: &mut TextField, event: &KeyDownEvent, _window, cx| {
                 let key = event.keystroke.key.as_str();
+                #[cfg(feature = "test-hooks")]
                 eprintln!("FELD-KEY key={:?} key_char={:?}", key, event.keystroke.key_char);
                 match key {
                     "backspace" => this.backspace(),

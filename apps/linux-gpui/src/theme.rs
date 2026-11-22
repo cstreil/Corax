@@ -10,8 +10,9 @@
 //! Omarchy 4 schreibt `current` unter `~/.local/state`, Omarchy 3 unter
 //! `~/.config`; gelesen wird zuerst der Zustands-Pfad.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
+use std::sync::OnceLock;
 use std::time::SystemTime;
 
 #[derive(Clone, Debug, Default)]
@@ -29,6 +30,82 @@ fn home() -> PathBuf {
 
 pub fn theme_dir() -> PathBuf {
     home().join(".local/state/omarchy/current/theme")
+}
+
+/// Fontconfig-Aliasse. Sie sind keine echten Familiennamen: fontique löst sie
+/// auf den Fallback-Stapel auf, und dabei geht das Schriftgewicht verloren —
+/// Fett bleibt dann in der ganzen App unsichtbar (Befund Coder 2, L2).
+const SCHRIFT_ALIASSE: [&str; 7] = [
+    "monospace",
+    "mono",
+    "sans-serif",
+    "sans",
+    "serif",
+    "system-ui",
+    "ui-monospace",
+];
+
+/// Kette ohne brauchbare Angabe in `shell.toml` (Entscheidung Architect, L2):
+/// genommen wird die erste Familie, die fontconfig wirklich kennt.
+pub const SCHRIFT_KETTE: [&str; 3] = ["Geist", "Noto Sans", "DejaVu Sans"];
+
+/// Letzter Rückfall in [`Theme::font`], falls gar kein Kandidat vorhanden ist:
+/// ein echter Familienname, kein Alias.
+const SCHRIFT_RUECKFALL: &str = "DejaVu Sans";
+
+/// Ist der Name ein fontconfig-Alias statt einer Familie?
+pub fn ist_alias(name: &str) -> bool {
+    SCHRIFT_ALIASSE.contains(&name.trim().to_lowercase().as_str())
+}
+
+/// Die Familien, die fontconfig kennt — einmal je Prozess gefragt (`fc-list`
+/// braucht rund 11 ms) und danach aus dem Zwischenspeicher.
+fn fontconfig_familien() -> Option<&'static HashSet<String>> {
+    static FAMILIEN: OnceLock<Option<HashSet<String>>> = OnceLock::new();
+    FAMILIEN
+        .get_or_init(|| {
+            let ausgabe = std::process::Command::new("fc-list")
+                .args(["--format=%{family}\n"])
+                .output()
+                .ok()?;
+            if !ausgabe.status.success() {
+                return None;
+            }
+            let text = String::from_utf8_lossy(&ausgabe.stdout);
+            let mut namen = HashSet::new();
+            for zeile in text.lines() {
+                for name in zeile.split(',') {
+                    let name = name.trim();
+                    if !name.is_empty() {
+                        namen.insert(name.to_lowercase());
+                    }
+                }
+            }
+            Some(namen)
+        })
+        .as_ref()
+}
+
+/// Die Schriftfamilie wählen: was `shell.toml` nennt (sofern es kein Alias
+/// ist), sonst die Kette [`SCHRIFT_KETTE`]. Ohne fontconfig bleibt es offen;
+/// [`Theme::font`] setzt dann den Rückfall ein.
+fn schrift_waehlen(aus_shell: Option<&str>) -> Option<String> {
+    let mut kandidaten: Vec<&str> = Vec::with_capacity(4);
+    if let Some(name) = aus_shell.map(str::trim).filter(|name| !name.is_empty()) {
+        if !ist_alias(name) {
+            kandidaten.push(name);
+        }
+    }
+    for name in SCHRIFT_KETTE {
+        if !kandidaten.iter().any(|vorhanden| vorhanden.eq_ignore_ascii_case(name)) {
+            kandidaten.push(name);
+        }
+    }
+    let bekannt = fontconfig_familien()?;
+    kandidaten
+        .into_iter()
+        .find(|name| bekannt.contains(&name.to_lowercase()))
+        .map(str::to_string)
 }
 
 impl Theme {
@@ -88,7 +165,7 @@ impl Theme {
             }
         }
 
-        let font_family = std::fs::read_to_string(dir.join("shell.toml"))
+        let aus_shell = std::fs::read_to_string(dir.join("shell.toml"))
             .ok()
             .and_then(|shell| {
                 let mut in_font = false;
@@ -107,6 +184,7 @@ impl Theme {
                 None
             });
 
+        let font_family = schrift_waehlen(aus_shell.as_deref());
         let stamp = stamp_of(dir);
 
         Theme {
@@ -203,13 +281,60 @@ impl Theme {
     pub fn red(&self) -> u32 {
         self.color("red", 0xd20f39)
     }
-    /// Die Schriftart aus `shell.toml` (Terminalschrift der Sitzung).
+    /// Die Schriftart: die erste vorhandene Familie aus `shell.toml` bzw. der
+    /// Kette — nie ein fontconfig-Alias (sonst geht Fett verloren).
     pub fn font(&self) -> gpui::SharedString {
-        self.font_family
-            .clone()
-            .map(gpui::SharedString::from)
-            .unwrap_or_else(|| gpui::SharedString::from("monospace"))
+        match self.font_family.as_deref() {
+            Some(name) if !ist_alias(name) => gpui::SharedString::from(name.to_string()),
+            _ => gpui::SharedString::from(SCHRIFT_RUECKFALL),
+        }
     }
+}
+
+/// Schriftfarbe auf `hintergrund`: dunkel auf heller Fläche, hell auf dunkler
+/// (einfache Luminanz, kein Farbmanagement).
+fn auf_farbe(hintergrund: u32) -> u32 {
+    let kanal = |shift: u32| ((hintergrund >> shift) & 0xff) as f32 / 255.0;
+    let helligkeit = 0.2126 * kanal(16) + 0.7152 * kanal(8) + 0.0722 * kanal(0);
+    if helligkeit > 0.55 {
+        0x101010
+    } else {
+        0xffffff
+    }
+}
+
+/// gpui-components' eigenes Theme an Corax angleichen.
+///
+/// Zwei Gründe: `gpui_component::Root` muss die Fensterwurzel sein (das
+/// Eingabefeld panikt sonst in `window.root::<Root>()`), und `Root` setzt
+/// Hintergrund, Schrift und Textfarbe aus *diesem* Theme. Ohne Abgleich zeichnete
+/// das Fenster in den Vorgabefarben und mit `.SystemUIFont` — einem
+/// fontconfig-Alias, unter dem Fett nicht ankommt (Befund Coder 2, L2).
+pub fn an_gpui_component(theme: &Theme, cx: &mut gpui::App) {
+    use gpui::{rgb, rgba, Hsla};
+
+    let zu = |wert: u32| -> Hsla { rgb(wert).into() };
+    let auf_accent = auf_farbe(theme.accent());
+
+    let gpui_theme = gpui_component::Theme::global_mut(cx);
+    gpui_theme.mode = if theme.is_dark() {
+        gpui_component::ThemeMode::Dark
+    } else {
+        gpui_component::ThemeMode::Light
+    };
+    gpui_theme.font_family = theme.font();
+    gpui_theme.colors.background = zu(theme.bg());
+    gpui_theme.colors.foreground = zu(theme.ink1());
+    gpui_theme.colors.border = zu(theme.line());
+    gpui_theme.colors.input = zu(theme.surface());
+    gpui_theme.colors.muted = zu(theme.surface());
+    gpui_theme.colors.muted_foreground = zu(theme.ink3());
+    gpui_theme.colors.caret = zu(theme.accent());
+    gpui_theme.colors.selection = rgba((theme.accent() << 8) | 0x50).into();
+    gpui_theme.colors.accent = zu(theme.accent());
+    gpui_theme.colors.accent_foreground = zu(auf_accent);
+    gpui_theme.colors.primary = zu(theme.accent());
+    gpui_theme.colors.primary_foreground = zu(auf_accent);
 }
 
 fn stamp_of(dir: &std::path::Path) -> Option<(u64, u64)> {
@@ -228,4 +353,43 @@ pub fn mix(a: u32, b: u32, t: f32) -> u32 {
         ((x * t + y * (1.0 - t)).round() as u32) & 0xff
     };
     (ch(16) << 16) | (ch(8) << 8) | ch(0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn aliasse_werden_erkannt() {
+        for name in ["monospace", "Monospace", "sans-serif", "system-ui", "ui-monospace"] {
+            assert!(ist_alias(name), "{name}");
+        }
+        for name in ["Geist", "Noto Sans", "DejaVu Sans", "JetBrains Mono"] {
+            assert!(!ist_alias(name), "{name}");
+        }
+    }
+
+    #[test]
+    fn font_ist_nie_ein_alias() {
+        // Ohne Angabe: der Rückfall ist ein echter Familienname.
+        let theme = Theme::fallback();
+        assert_eq!(theme.font().as_ref(), SCHRIFT_RUECKFALL);
+        assert!(!ist_alias(theme.font().as_ref()));
+
+        // Ein Alias aus einer alten shell.toml darf nicht durchkommen.
+        let theme = Theme { font_family: Some("monospace".into()), ..Theme::fallback() };
+        assert!(!ist_alias(theme.font().as_ref()));
+
+        // Eine echte Familie bleibt erhalten.
+        let theme = Theme { font_family: Some("Geist".into()), ..Theme::fallback() };
+        assert_eq!(theme.font().as_ref(), "Geist");
+    }
+
+    #[test]
+    fn kette_beginnt_mit_geist() {
+        assert_eq!(SCHRIFT_KETTE, ["Geist", "Noto Sans", "DejaVu Sans"]);
+        // Ohne fontconfig (z. B. auf dem Mac im Test) bleibt die Wahl offen;
+        // mit fontconfig kommt nur eine echte Familie zurück.
+        assert!(schrift_waehlen(Some("monospace")).is_none_or(|name| !ist_alias(&name)));
+    }
 }

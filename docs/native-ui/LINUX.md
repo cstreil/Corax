@@ -57,7 +57,34 @@ Festlegungen:
 - **L-E4 Editor (festgelegt nach der Prüfung, L2):** `gpui-component =0.5.1` — die letzte Fassung mit `gpui ^0.2.2` — und daraus **nur** das mehrzeilige `Input`, hinter einer eigenen Fassade `ComposeEditor`, damit ein späterer Austausch eine Datei kostet. Auswahl, Zwischenablage, Dead Keys, Umlaute und Undo/Redo sind damit fertig (Tipp-Latenz p95 3,5 ms); Redo bekommt zusätzlich `Strg+Shift+Z` (Vorgabe der Bibliothek ist `Strg+Y`). Fett und Kursiv bauen wir selbst — `src/text/` der Bibliothek ist reine Anzeige, kein Rich-Text-Modell. Grundlage: `BERICHT-L2-EDITOR-EVAL.md`.
 - **L-E5 Look:** Mock-up `Work/Tasks/2026-11-18-mail-app-mockup/linux.html` (Omarchy-Teil) mit den Funktionen und Elementen der macOS-App; Farben/Schrift aus dem aktiven Omarchy-Theme.
 - **L-E6 Tastatur:** Belegung wie `TASTATUR.md` (Einzeltasten + Strg-Kombinationen statt ⌘). Ausgewertet wird das **getippte Zeichen** (`Keystroke::key_char`), nicht die GPUI-Keymap: `bind_keys` vergleicht die Tastenbelegung, damit gingen `/ ? # ! + -` und `\` auf der deutschen Tastatur verloren (Briefing §4.7). Einzeltasten wirken nur ohne Textfeldfokus.
-- **L-E7 Abhängigkeiten:** Exakt gepinnt wird, was uns allein gehört: `gpui`, `blitz-*`, `gpui-component` und `reqwest` (in der Fassung des Kerns). `tokio`, `serde`, `serde_json` und `chrono` teilen wir mit dem Kern — dort hält das Lockfile die Fassung, gebaut wird mit `--locked`; exakte Pins würden bei jedem Kern-Update Konflikte in der Auflösung erzeugen. Patches im Repo, `cargo update` nur gezielt mit Bau auf Tarantino. Lizenz des Pakets: `AGPL-3.0-only` wie `src-tauri` und die Kern-Crates.
+- **L-E7 Abhängigkeiten:** Exakt gepinnt wird, was uns allein gehört: `gpui`, `blitz-*`, `gpui-component`, `reqwest` (in der Fassung des Kerns) und `rfd` (Datei-Dialog, s. u.). `tokio`, `serde`, `serde_json` und `chrono` teilen wir mit dem Kern — dort hält das Lockfile die Fassung, gebaut wird mit `--locked`; exakte Pins würden bei jedem Kern-Update Konflikte in der Auflösung erzeugen. Patches im Repo, `cargo update` nur gezielt mit Bau auf Tarantino. Lizenz des Pakets: `AGPL-3.0-only` wie `src-tauri` und die Kern-Crates.
+
+  **`rfd =0.16.0`** (MIT) ist der Datei-Dialog für Anhänge und seit L2 im Baum. Grund für die
+  direkte Abhängigkeit: Portale statt GTK. Gebaut werden nur die Features `xdg-portal` und
+  **`async-std`**, also `org.freedesktop.portal.Desktop` (FileChooser); `gtk3`, `gtk4` und
+  `wayland` bleiben aus.
+
+  `async-std` statt `tokio` ist kein Geschmack, sondern nötig: `rfd` und `gpui` teilen sich
+  **ein** ashpd 0.11.1, und `desktop/secret.rs` dort deklariert je Laufzeit-Feature ein
+  `let mut x1` (`#[cfg(feature = "tokio")]` und `#[cfg(feature = "async-std")]`). Mit beiden
+  Features bricht der Bau auf Linux (E0252/E0061/E0277, gesehen am 2026-11-22). `gpui` schaltet
+  am selben ashpd `async-std` ein, also fährt `rfd` dieselbe Laufzeit; der Kern selbst bleibt
+  bei tokio, der Dialog läuft dort als Future ohne eigene Runtime. Auf macOS ist ashpd gar
+  nicht im Baum (nur Linux-Abhängigkeit), dort fällt der Konflikt nicht auf.
+
+  Nachgeprüft am 2026-11-22:
+
+  ```
+  cargo tree -i rfd --target x86_64-unknown-linux-gnu
+    rfd v0.16.0 ← corax-linux
+  cargo tree -i ashpd@0.11.1 --target x86_64-unknown-linux-gnu
+    ashpd v0.11.1 ← rfd v0.16.0, ← gpui v0.2.2        (keine neue ashpd-Kante)
+  cargo tree --target x86_64-unknown-linux-gnu | grep -cE "gtk|gdk"   → 0
+  ```
+
+  Der Dialog läuft wie der Bildabruf auf der Laufzeit des Kerns (`Request::AnhaengeWaehlen`),
+  die Oberfläche blockiert dabei nicht. Fehlt das Portal auf einem System, kommt eine leere
+  Auswahl zurück; die App meldet dann „kein Anhang gewählt", statt etwas anderes zu starten.
 
 ## 3. Meilensteine
 
@@ -79,3 +106,4 @@ Jeder Meilenstein: Briefing → Umsetzung → Beleg auf Tarantino → Audit an d
 4. HiDPI ungeprüft (Tarantino 1×): in L1 mit `GPUI_SCALE`/zweitem Monitor gegenprüfen, sonst in L5.
 5. Bauzeit 15 min kalt / Binary 110 MB: für die Entwicklung inkrementell (~40 s) unkritisch; Release-Profil in L5 optimieren.
 6. `gpui` auf crates.io endet bei **0.2.2**; Longbridge arbeitet ab `gpui-component` 0.6 mit einem eigenen Fork (`gpui-base` 0.10) weiter. Wir bleiben bewusst auf 0.2.2 — ein Umstieg hieße Fremd-Fork statt Upstream und eine Neubewertung von `view.rs`, Theme, Keys und Patches.
+7. `gpui` 0.2.2, `TextSystem::layout_line` verschmilzt aufeinanderfolgende Textläufe gleicher Dekoration zu einem und vergleicht dabei die Schrift des vorigen Laufs mit sich selbst (`Some(font_run.font_id) == last_font`, immer wahr): die ganze Zeile nimmt die Schrift des **ersten** Laufs, Teilstellen mit anderem Gewicht oder Schnitt werden nicht gezeichnet (Foto `belege-l2/l2-55-anfang.png`). Workaround in `apps/linux-gpui/vendor/gpui-component/src/input/element.rs`: je Lauf ein unsichtbarer Unterstrich (Dicke 0) mit eigener Farbe je Schrift erzwingt die Laufgrenze, `gpui` selbst bleibt ungepatcht. Der Eingriff fällt bei einem Upgrade weg, das `layout_line` korrigiert (siehe `vendor/gpui-component/PATCH.md`).

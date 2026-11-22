@@ -26,6 +26,10 @@ pub const KARTE_RAND: f32 = 8.0;
 /// Innenabstand der Karte.
 pub const KARTE_PAD: f32 = 12.0;
 const KOPF_HOEHE: f32 = 46.0;
+/// Aktionsleiste unter dem Kopf (Erledigt, Später, Markieren …).
+const AKTION_HOEHE: f32 = 30.0;
+/// Höhe einer Zeile im Kontextmenü.
+const MENUE_ZEILE: f32 = 26.0;
 const MSG_GAP: f32 = 10.0;
 const MSG_KOPF: f32 = 26.0;
 const HINWEIS_HOEHE: f32 = 18.0;
@@ -93,7 +97,7 @@ pub fn karte_bauen(
     bilder: Arc<Resources>,
     laedt: bool,
     fehler_anzahl: usize,
-    _theme: &Theme,
+    theme: &Theme,
 ) -> Karte {
     let start = Instant::now();
     let b = breite as f32;
@@ -101,9 +105,10 @@ pub fn karte_bauen(
     let mut bilder_anzahl = 0usize;
     let mut alle_fern: Vec<String> = Vec::new();
 
+    let schrift = theme.font().to_string();
     for message in &detail.messages {
         let (koerper, blockiert, fern) =
-            koerper_bauen(message, breite, remote, basis, Arc::clone(&bilder));
+            koerper_bauen(message, breite, remote, basis, Arc::clone(&bilder), &schrift);
         if matches!(koerper, Koerper::Bild { .. }) {
             bilder_anzahl += 1;
         }
@@ -139,7 +144,7 @@ pub fn karte_bauen(
 
 /// Höhe der Karte aus ihren Teilen — dieselben Zahlen, die [`karte`] setzt.
 fn karten_hoehe(nachrichten: &[KarteNachricht]) -> f32 {
-    let mut hoehe = KARTE_PAD + KOPF_HOEHE;
+    let mut hoehe = KARTE_PAD + KOPF_HOEHE + AKTION_HOEHE;
     for nachricht in nachrichten {
         hoehe += MSG_GAP + MSG_KOPF + nachricht.koerper.hoehe();
         if nachricht.blockiert > 0 || nachricht.laedt || nachricht.fehler > 0 {
@@ -156,6 +161,7 @@ fn koerper_bauen(
     remote: RemoteImages,
     basis: Option<&Path>,
     bilder: Arc<Resources>,
+    schrift: &str,
 ) -> (Koerper, usize, Vec<String>) {
     // `cid:`-Bilder sind kein Thema mehr: der Kern schreibt sie vor der
     // Auslieferung in `data:`-URIs um, die [`Resources`] selbst dekodiert.
@@ -188,7 +194,7 @@ fn koerper_bauen(
     }
     // Textkörper gehen denselben Weg wie HTML (Blitz), damit Zeilenumbrüche
     // und Schrift stimmen.
-    match html_view::rendere_text(&text, breite) {
+    match html_view::rendere_text(&text, breite, schrift) {
         Ok(koerper) => {
             let art = Koerper::Bild {
                 bild: koerper.bild,
@@ -299,6 +305,8 @@ pub fn karte(
         nachrichten.push(nachricht_block(state, id, nachricht, breite, &theme, &basis_stil, cx));
     }
 
+    let leiste = aktionsleiste(id, &theme, cx);
+
     div()
         .id(ElementId::Name(format!("karte-{id}").into()))
         .h(px(hoehe))
@@ -312,14 +320,194 @@ pub fn karte(
         .border_color(rgb(mix(theme.accent(), theme.line(), 0.35)))
         .rounded_md()
         .on_mouse_down(MouseButton::Left, cx.listener(|_state, _event, _window, _cx| {}))
+        .on_mouse_down(
+            MouseButton::Right,
+            cx.listener(move |state: &mut AppState, event: &MouseDownEvent, _window, cx| {
+                cx.stop_propagation();
+                state.kontextmenue_oeffnen(
+                    id,
+                    f32::from(event.position.x),
+                    f32::from(event.position.y),
+                    cx,
+                );
+            }),
+        )
         .child(
             div()
                 .mx(px(KARTE_RAND))
                 .flex()
                 .flex_col()
                 .child(kopf)
+                .child(leiste)
                 .children(nachrichten),
         )
+        .into_any_element()
+}
+
+/// Ein Befehl aus Kontextmenü oder Aktionsleiste — dieselben Verben wie die
+/// Tasten (TASTATUR.md), damit nichts zweimal zu merken ist.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Menuebefehl {
+    Oeffnen,
+    Gelesen,
+    Stern,
+    Erledigt,
+    Zurueck,
+    Spaeter,
+    SpaeterAuswahl,
+    Verschieben,
+    Label,
+    Papierkorb,
+    Spam,
+}
+
+/// Ein offenes Kontextmenü. `x`/`y` sind Fensterpunkte des Rechtsklicks.
+#[derive(Clone, Debug)]
+pub struct Kontextmenue {
+    pub id: i64,
+    pub x: f32,
+    pub y: f32,
+    pub index: usize,
+    pub eintraege: Vec<(Menuebefehl, SharedString, &'static str)>,
+}
+
+/// Die Knöpfe der Aktionsleiste: Beschriftung, Taste, Befehl.
+const AKTIONSKNOPF: [(&str, &str, Menuebefehl); 7] = [
+    ("Erledigt", "E", Menuebefehl::Erledigt),
+    ("Später", "H", Menuebefehl::Spaeter),
+    ("Markieren", "S", Menuebefehl::Stern),
+    ("Gelesen", "U", Menuebefehl::Gelesen),
+    ("Verschieben", "V", Menuebefehl::Verschieben),
+    ("Label", "L", Menuebefehl::Label),
+    ("Papierkorb", "#", Menuebefehl::Papierkorb),
+];
+
+/// Aktionsleiste im aufgeklappten Thread: dieselben Aktionen wie die Tasten,
+/// als Knopf mit Tastenhinweis.
+fn aktionsleiste(id: i64, theme: &Theme, cx: &mut Context<AppState>) -> AnyElement {
+    let mut knoepfe: Vec<AnyElement> = Vec::with_capacity(AKTIONSKNOPF.len());
+    for (beschriftung, taste, befehl) in AKTIONSKNOPF {
+        knoepfe.push(
+            div()
+                .id(ElementId::Name(format!("aktion-{beschriftung}").into()))
+                .px_2()
+                .py(px(3.))
+                .rounded_sm()
+                .border_1()
+                .border_color(rgb(theme.line()))
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap_1()
+                .text_xs()
+                .text_color(rgb(theme.ink2()))
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(
+                        move |state: &mut AppState, _event: &MouseDownEvent, _window, cx| {
+                            cx.stop_propagation();
+                            state.befehl_ausfuehren(id, befehl, cx);
+                        },
+                    ),
+                )
+                .child(beschriftung.to_string())
+                .child(div().text_color(rgb(theme.ink3())).child(taste.to_string()))
+                .into_any_element(),
+        );
+    }
+    div()
+        .h(px(AKTION_HOEHE))
+        .w_full()
+        .flex()
+        .flex_row()
+        .items_center()
+        .gap_1()
+        .children(knoepfe)
+        .child(
+            div()
+                .flex_1()
+                .text_right()
+                .text_xs()
+                .text_color(rgb(theme.ink3()))
+                .child("Rechtsklick: Menü"),
+        )
+        .into_any_element()
+}
+
+/// Das Kontextmenü als Overlay. Es bleibt im Fenster, auch am rechten Rand.
+pub fn kontextmenue(state: &mut AppState, cx: &mut Context<AppState>) -> AnyElement {
+    let theme = state.theme.clone();
+    let Some(menue) = state.kontextmenue.clone() else {
+        return div().into_any_element();
+    };
+    let breite = 272.0;
+    let hoehe = menue.eintraege.len() as f32 * MENUE_ZEILE + 8.0;
+    let x = menue.x.min((state.fenster_breite - breite - 6.0).max(0.0)).max(6.0);
+    let y = menue.y.min((state.fenster_hoehe - hoehe - 6.0).max(0.0)).max(6.0);
+
+    let zeilen: Vec<AnyElement> = menue
+        .eintraege
+        .iter()
+        .enumerate()
+        .map(|(index, (_, name, taste))| {
+            let gewaehlt = index == menue.index;
+            div()
+                .id(ElementId::Name(format!("menue-{index}").into()))
+                .h(px(MENUE_ZEILE))
+                .px_2()
+                .rounded_sm()
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap_2()
+                .text_sm()
+                .when(gewaehlt, |this| {
+                    this.bg(rgb(mix(theme.accent(), theme.raised(), 0.22)))
+                        .text_color(rgb(theme.accent()))
+                })
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(
+                        move |state: &mut AppState, _event: &MouseDownEvent, _window, cx| {
+                            cx.stop_propagation();
+                            state.kontextmenue_nehmen(index, cx);
+                        },
+                    ),
+                )
+                .child(div().flex_1().min_w_0().truncate().child(name.clone()))
+                .child(
+                    div()
+                        .flex_shrink_0()
+                        .text_xs()
+                        .text_color(rgb(theme.ink3()))
+                        .child(taste.to_string()),
+                )
+                .into_any_element()
+        })
+        .collect();
+
+    div()
+        .id("kontextmenue")
+        .absolute()
+        .left(px(x))
+        .top(px(y))
+        .w(px(breite))
+        .px_1()
+        .py_1()
+        .rounded_md()
+        .bg(rgb(theme.raised()))
+        .border_1()
+        .border_color(rgb(mix(theme.accent(), theme.line(), 0.5)))
+        .shadow_lg()
+        .flex()
+        .flex_col()
+        .on_mouse_down(
+            MouseButton::Left,
+            cx.listener(|_state: &mut AppState, _event: &MouseDownEvent, _window, cx| {
+                cx.stop_propagation();
+            }),
+        )
+        .children(zeilen)
         .into_any_element()
 }
 

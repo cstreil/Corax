@@ -12,12 +12,14 @@ mod html;
 // nur `sanitize` und `resources`, deshalb wird die Datei hier eingebunden.
 #[path = "html/view.rs"]
 mod html_view;
+mod editor;
 #[cfg(feature = "test-hooks")]
 mod hooks;
 mod input;
 mod keys;
 mod mailtext;
 mod perf;
+mod safety;
 mod state;
 mod theme;
 mod ui;
@@ -57,6 +59,11 @@ fn main() {
     }
 
     Application::new().run(move |cx: &mut App| {
+        // gpui-components braucht seinen Zustand (Theme, Tastenkarte), bevor das
+        // erste Eingabefeld gezeichnet wird; sein Theme wird auf Corax gezogen.
+        gpui_component::init(cx);
+        theme::an_gpui_component(&theme::Theme::load(), cx);
+
         let bounds = Bounds::centered(None, size(px(1180.), px(780.)), cx);
         cx.open_window(
             WindowOptions {
@@ -76,8 +83,48 @@ fn main() {
                 // Ohne Fokus kommt keine Taste an: `on_key_down` hängt am
                 // Wurzelelement (`track_focus`).
                 let focus = view.read(cx).focus.clone();
+                // `Strg+↵` sendet, auch wenn der Textkörper den Fokus hat:
+                // gpui-components' Feld bindet `secondary-enter` (= `Strg+↵`)
+                // selbst und macht daraus einen Zeilenumbruch; Tastenbelegungen
+                // laufen vor jedem Element-Handler. Der Interceptor läuft davor.
+                let schwach = view.downgrade();
+                cx.intercept_keystrokes(move |event: &KeystrokeEvent, _window, cx| {
+                    let taste = event.keystroke.key.as_str();
+                    let ctrl = event.keystroke.modifiers.control;
+                    let Some(state) = schwach.upgrade() else { return };
+                    let im_dock = || {
+                        state.read(cx).compose_aktiv.is_some() && state.read(cx).compose_fokus
+                    };
+                    if ctrl && matches!(taste, "enter" | "return") {
+                        if !im_dock() {
+                            return;
+                        }
+                        cx.stop_propagation();
+                        state.update(cx, |state, cx| state.senden(cx));
+                        return;
+                    }
+                    // `Tab` führt im Dock zu den Anhängen: das Eingabefeld bindet
+                    // `tab` selbst (Einzug), deshalb hier davor.
+                    if taste == "tab" {
+                        if !im_dock() {
+                            return;
+                        }
+                        let rueckwaerts = event.keystroke.modifiers.shift;
+                        let mut griff = false;
+                        state.update(cx, |state, cx| griff = state.verfassen_tab(rueckwaerts, cx));
+                        if griff {
+                            cx.stop_propagation();
+                        }
+                    }
+                })
+                .detach();
+                // Das Eingabefeld (Verfassen) verlangt ein `Root` als
+                // Fensterwurzel (`window.root::<Root>()` in gpui-component);
+                // ohne stürzt schon sein erster Render ab. Die App-Wurzel
+                // darunter behält Tastatur und Fokus-Handle.
+                let root = cx.new(|cx| gpui_component::Root::new(view, window, cx));
                 window.focus(&focus);
-                view
+                root
             },
         )
         .expect("Fenster");

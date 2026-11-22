@@ -229,6 +229,18 @@ fn thread_zeile(state: &mut AppState, id: i64, cx: &mut Context<AppState>) -> An
                 cx.notify();
             }),
         )
+        .on_mouse_down(
+            MouseButton::Right,
+            cx.listener(move |state: &mut AppState, event: &MouseDownEvent, _window, cx| {
+                cx.stop_propagation();
+                state.kontextmenue_oeffnen(
+                    id,
+                    f32::from(event.position.x),
+                    f32::from(event.position.y),
+                    cx,
+                );
+            }),
+        )
         .child(
             div()
                 .w_full()

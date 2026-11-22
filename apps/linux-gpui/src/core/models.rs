@@ -298,6 +298,67 @@ pub struct ThreadDetail {
     pub messages: Vec<MessageDetail>,
 }
 
+/// Ein IMAP-Ordner (`list_folders`) für die Verschieben-Auswahl.
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FolderInfo {
+    pub id: i64,
+    #[serde(default)]
+    pub account_id: i64,
+    #[serde(default)]
+    pub imap_name: String,
+    /// Trennzeichen der Hierarchie (`/` oder `.`), wenn der Server eines nennt.
+    #[serde(default)]
+    pub delimiter: Option<String>,
+    /// `INBOX`, `ARCHIVE`, `SENT`, `DRAFTS`, `TRASH`, `SPAM` …
+    #[serde(default)]
+    pub role: Option<String>,
+}
+
+impl FolderInfo {
+    /// Anzeigename wie in der Mac-App (`Pickers.folderName`): ohne den
+    /// Gmail-Präfix und nur das letzte Stück einer Hierarchie.
+    pub fn display_name(&self) -> String {
+        let mut name = self.imap_name.as_str();
+        for prefix in ["[Gmail]/", "[Google Mail]/"] {
+            if let Some(rest) = name.strip_prefix(prefix) {
+                name = rest;
+            }
+        }
+        if let Some(delimiter) = self.delimiter.as_deref().filter(|d| !d.is_empty()) {
+            name = name.rsplit(delimiter).next().unwrap_or(name);
+        }
+        if name.is_empty() { self.imap_name.clone() } else { name.to_string() }
+    }
+
+    /// Ordner, die beim Verschieben nichts zu suchen haben (der Zielordner
+    /// ist immer ein anderer als der, in dem die Mail liegt).
+    pub fn is_waehlbar(&self) -> bool {
+        !matches!(self.role.as_deref(), Some("drafts") | Some("sent"))
+    }
+}
+
+/// Kontaktvorschlag für das An-Feld (`suggest_contacts`).
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ContactVorschlag {
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default)]
+    pub email: String,
+    #[serde(default)]
+    pub interactions: i64,
+}
+
+impl ContactVorschlag {
+    pub fn anzeige(&self) -> String {
+        match self.name.as_deref().map(str::trim).filter(|name| !name.is_empty()) {
+            Some(name) => format!("{name} <{}>", self.email),
+            None => self.email.clone(),
+        }
+    }
+}
+
 #[derive(Clone, Debug, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Label {

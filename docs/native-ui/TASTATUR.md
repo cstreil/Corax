@@ -32,6 +32,7 @@ Zwei Schichten:
 | zurück in den Posteingang | `⇧E` | `⇧⌃⌘A` |
 | Papierkorb | `#` | `⌫` / `⌘⌫` |
 | Später (morgen 8:00) | `H` | `⌃⌘H` |
+| Später … (Auswahl: Presets, eigenes Datum) | `⇧H` | `⇧⌃⌘H` |
 | Stern | `S` | `⇧⌘L` |
 | gelesen / ungelesen | `U` | `⇧⌘U` |
 | Spam / kein Spam | `!` | `⇧⌘J` |

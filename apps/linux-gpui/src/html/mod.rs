@@ -17,7 +17,7 @@ mod sanitize;
 // `allow(unused_imports)`: Die Integrationstests binden diese Datei per
 // `#[path]` ein; dort wird nicht jeder Re-Export gebraucht.
 #[allow(unused_imports)]
-pub use fetch::{FetchError, FetchLimits, fetch_image};
+pub use fetch::{FetchError, FetchLimits, fetch_image, weiterleitungsziel};
 #[allow(unused_imports)]
 pub use resources::Resources;
 #[allow(unused_imports)]

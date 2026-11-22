@@ -47,6 +47,15 @@ fontique = { version = "=0.12.0", features = ["fontconfig-dlopen"] }
 # Features wie im Kern (comail-core), damit kein zweites TLS-Paket dazukommt.
 # reqwest 0.13 im Baum kommt allein über hf-hub und bleibt davon unberührt.
 reqwest = { version = "=0.12.28", default-features = false, features = ["rustls-tls-webpki-roots", "http2"] }
+# Editor (src/editor/): Eingabefeld mit Textspannen für Fett/Kursiv.
+gpui-component = "=0.5.1"
+# Datei-Dialog für Anhänge über xdg-desktop-portal (kein GTK im Prozess).
+# `async-std` statt `tokio`, obwohl der Kern auf tokio läuft: gpui schaltet am
+# gemeinsamen ashpd 0.11.1 `async-std` ein, und ashpd deklariert in
+# `desktop/secret.rs` zwei `let mut x1` — eins je Laufzeit-Feature. Mit beiden
+# Features bricht der Build (E0252/E0061 auf Linux, auf macOS ist ashpd gar
+# nicht im Baum). Mit `async-std` gibt es nur eine der beiden Zeilen.
+rfd = { version = "=0.16.0", default-features = false, features = ["xdg-portal", "async-std"] }
 tokio = { version = "1", features = ["rt", "time", "net"] }
 
 [dev-dependencies]
@@ -55,5 +64,7 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 
 [patch.crates-io]
 xattr = { path = "vendor/xattr" }
+# gpui-component 0.5.1 mit Spannen für Fett/Kursiv (vendor/gpui-component/PATCH.md).
+gpui-component = { path = "vendor/gpui-component" }
 # serde_fmt 1.1.0: störende `From<Error> for fmt::Error` entfernt (siehe vendor/serde_fmt).
 serde_fmt = { path = "vendor/serde_fmt" }

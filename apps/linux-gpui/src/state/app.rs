@@ -20,14 +20,20 @@ use gpui::*;
 
 use crate::core::host::{CoreEvent, MailCore, Reply, Request};
 use crate::core::models::{
-    Account, Label, ListThreadsArgs, MailView, SplitRule, ThreadDetail, ThreadSummary, UnreadCounts,
+    Account, ContactVorschlag, FolderInfo, Label, ListThreadsArgs, MailView, SplitRule,
+    ThreadDetail, ThreadSummary, UnreadCounts,
 };
+use crate::editor::ComposeEditor;
+use crate::state::compose::{adressen_parsen, ungueltige, Compose, Modus};
 use crate::html::RemoteImages;
 use crate::input::TextField;
 use crate::keys::{self, Action, Ergebnis, Kontext};
 use crate::perf;
 use crate::theme::Theme;
+use crate::ui::auswahl::{Auswahl, Auswahlart, Eintrag};
+use crate::ui::dialog::{self, Antwort};
 use crate::ui::list::{self, Row};
+use crate::ui::snooze;
 use crate::ui::thread::{self, Karte};
 
 /// Wie viele Threads je Seite geholt werden (Mac-App: 100).
@@ -42,6 +48,12 @@ const GEHEZU_FENSTER: Duration = Duration::from_millis(2000);
 pub enum Fokus {
     Suche,
     Liste,
+    /// Eingabefeld für ein eigenes Snooze-Datum.
+    Datum,
+    /// Textkörper im Verfassen-Dock (der Editor, nicht die Felder).
+    Verfassen,
+    /// Ein Anhang im Verfassen-Dock (Index); `Entf` entfernt ihn.
+    Anhaenge(usize),
 }
 
 /// Ein Tab des Posteingangs (eigene Splits). Ohne eigene Splits gibt es keinen
@@ -56,13 +68,43 @@ pub struct Tab {
 
 /// Ein Lauf für die Abnahme (§4.11): Frames während des Scrollens.
 /// Nur der Messbuild startet ihn.
-#[cfg_attr(not(feature = "test-hooks"), allow(dead_code))]
+#[allow(dead_code)] // nur der Messbuild startet und liest einen Messlauf
 #[derive(Debug, Default)]
 pub struct Messlauf {
     pub schritte: usize,
     pub rest: usize,
     pub name: String,
     pub start: Option<Instant>,
+}
+
+/// Was nach dem Speichern des Entwurfs passieren soll.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SendeAbsicht {
+    Nichts,
+    /// Sofort in die Warteschlange.
+    Jetzt,
+    /// Zu diesem Zeitpunkt (Millisekunden).
+    Um(i64),
+}
+
+/// Eine Rückfrage, die eine bewusste Bestätigung verlangt. In L2 gibt es nur
+/// „endgültig löschen"; die Vorgabe ist immer „Abbrechen".
+#[derive(Clone, Debug)]
+pub struct Bestaetigung {
+    pub text: SharedString,
+    pub knopf: SharedString,
+    /// Ist der gefährliche Knopf gewählt? Vorgabe: nein.
+    pub loeschen: bool,
+    /// Kleingedruckte unter den Knöpfen (je Frage unterschiedlich).
+    pub hinweis: SharedString,
+    pub ziel: BestaetigungZiel,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum BestaetigungZiel {
+    EndgueltigLoeschen(i64),
+    /// Nach A2-Rückfrage trotzdem öffnen (Pfad des Anhangs).
+    AnhangOeffnen(String),
 }
 
 pub struct AppState {
@@ -107,7 +149,7 @@ pub struct AppState {
     pub sichtbar: Arc<AtomicUsize>,
     pub sichtbar_ende: Arc<AtomicUsize>,
     /// Nur Messbuild: Dauer der letzten Listenantwort.
-    #[cfg_attr(not(feature = "test-hooks"), allow(dead_code))]
+    #[allow(dead_code)] // im Messbuild geschrieben, nur dort ausgewertet
     pub letzte_liste_ms: f64,
 
     // ---- Suche ----
@@ -119,9 +161,67 @@ pub struct AppState {
     pub hilfe: bool,
     pub seitenleiste: bool,
     pub fenster_breite: f32,
+    pub fenster_hoehe: f32,
     pub list_breite: f32,
     pub status: SharedString,
     pub hint: SharedString,
+    /// Toast der letzten Aktion („Erledigt · Rückgängig").
+    pub toast: Option<crate::ui::toast::Toast>,
+    /// Offene Auswahl (Später, Verschieben, Label).
+    pub auswahl: Option<Auswahl>,
+    /// Eigenes Datum in der „Später"-Auswahl.
+    pub datumfeld: Entity<TextField>,
+    /// Ordner für „Verschieben …", vom Kern geholt.
+    pub folders: Vec<FolderInfo>,
+    /// Thread, für den die Ordnerliste gerade unterwegs ist.
+    pub ordner_erwartet: Option<i64>,
+    /// Offenes Kontextmenü.
+    pub kontextmenue: Option<thread::Kontextmenue>,
+    /// Offene Rückfrage (endgültig löschen).
+    pub bestaetigung: Option<Bestaetigung>,
+
+    // ---- Verfassen ----
+    /// Offene Verfassen-Fenster (Dock unten rechts); höchstens eines ist aktiv.
+    pub compose: Vec<Compose>,
+    /// Welches Fenster die Felder und den Editor gerade hält.
+    pub compose_aktiv: Option<u64>,
+    /// Der Editor (eine Instanz; beim Wechsel wird der Inhalt getauscht).
+    pub editor: Option<Entity<ComposeEditor>>,
+    pub feld_an: Entity<TextField>,
+    pub feld_cc: Entity<TextField>,
+    pub feld_bcc: Entity<TextField>,
+    pub feld_betreff: Entity<TextField>,
+    /// Cc/Bcc-Zeilen eingeblendet?
+    pub cc_bcc: bool,
+    /// Kontaktvorschläge zum An-Feld.
+    pub vorschlaege: Vec<ContactVorschlag>,
+    pub vorschlag_index: usize,
+    /// Laeuft gerade eine Vorschlagsanfrage?
+    pub vorschlag_laeuft: bool,
+    /// Letzter beobachteter Inhalt (An/…/Text): Grundlage fürs Autosave.
+    pub compose_stand: Option<String>,
+    /// Seit wann der Inhalt unverändert so steht.
+    pub compose_stand_seit: Option<Instant>,
+    /// Ein Entwurf ist unterwegs: (Fenster, was danach passiert).
+    speichert: Option<(u64, SendeAbsicht)>,
+    pub naechste_compose_id: u64,
+    /// Beim Klick zuletzt im Dock: Einzeltasten bleiben aus.
+    pub compose_fokus: bool,
+    /// Der Datei-Dialog für Anhänge läuft.
+    pub anhaenge_laeuft: bool,
+    /// Thread, dessen Entwurf ins Dock geladen werden soll (Ansicht „Entwürfe").
+    pub entwurf_wartet: Option<i64>,
+    /// Dock soll mit diesem Entwurf geöffnet werden (kommt ohne Fenster an).
+    pub pending_dock: Option<Compose>,
+    /// Text, der beim nächsten Zeichnen in den Editor soll (Beleg-Hooks).
+    pub pending_editor_text: Option<String>,
+    /// Letzte Sendung für `cancel_send`: (action_id, Fensterinhalt).
+    pub letzte_sendung: Option<(i64, Compose)>,
+    /// Absicht der laufenden Einreihung: „jetzt" oder „später"; der Toast
+    /// danach richtet sich danach, nicht nach dem Rückgängig-Fenster.
+    send_absicht: Option<SendeAbsicht>,
+    /// Markierter Anhang im Dock (Tastaturweg: `Tab` hin, `Entf` löscht).
+    pub anhang_fokus: Option<usize>,
     pub gehezu_seit: Option<Instant>,
     pub pending_focus: Option<Fokus>,
     /// Nach einem Kernereignis neu laden (entprellt).
@@ -155,6 +255,12 @@ impl AppState {
         let theme = Theme::load();
         let kern = MailCore::start(ident);
         let suchfeld = cx.new(|cx| TextField::new("Suche", false, "Suchen …", theme.clone(), cx));
+        let datumfeld =
+            cx.new(|cx| TextField::new("Eigenes Datum", false, "morgen 9:00", theme.clone(), cx));
+        let feld_an = cx.new(|cx| TextField::new("An", false, "name@example.com", theme.clone(), cx));
+        let feld_cc = cx.new(|cx| TextField::new("Cc", false, "Cc", theme.clone(), cx));
+        let feld_bcc = cx.new(|cx| TextField::new("Bcc", false, "Bcc", theme.clone(), cx));
+        let feld_betreff = cx.new(|cx| TextField::new("Betreff", false, "Betreff", theme.clone(), cx));
         let focus = cx.focus_handle();
         let sichtbar = Arc::new(AtomicUsize::new(0));
         let sichtbar_ende = Arc::new(AtomicUsize::new(0));
@@ -196,9 +302,40 @@ impl AppState {
             hilfe: false,
             seitenleiste: true,
             fenster_breite: 1180.0,
+            fenster_hoehe: 820.0,
             list_breite: 800.0,
             status: "bereit".into(),
             hint: SharedString::default(),
+            toast: None,
+            auswahl: None,
+            datumfeld,
+            folders: Vec::new(),
+            ordner_erwartet: None,
+            kontextmenue: None,
+            bestaetigung: None,
+            compose: Vec::new(),
+            compose_aktiv: None,
+            editor: None,
+            feld_an,
+            feld_cc,
+            feld_bcc,
+            feld_betreff,
+            cc_bcc: false,
+            vorschlaege: Vec::new(),
+            vorschlag_index: 0,
+            vorschlag_laeuft: false,
+            compose_stand: None,
+            compose_stand_seit: None,
+            speichert: None,
+            naechste_compose_id: 1,
+            compose_fokus: false,
+            anhaenge_laeuft: false,
+            entwurf_wartet: None,
+            pending_dock: None,
+            pending_editor_text: None,
+            letzte_sendung: None,
+            send_absicht: None,
+            anhang_fokus: None,
             gehezu_seit: None,
             pending_focus: None,
             neu_laden_um: None,
@@ -265,11 +402,20 @@ impl AppState {
         for reply in self.kern.poll() {
             neu_zeichnen |= self.antwort(reply, cx);
         }
+        self.autosave_pruefen(cx);
 
         // Dead Key, der kein Folgezeichen bekommen hat, nach kurzer Zeit einsetzen
         let dead = self.suchfeld.update(cx, |field, cx| field.flush_dead(cx));
         if dead {
             neu_zeichnen = true;
+        }
+
+        // Toast abgelaufen?
+        if let Some(toast) = &self.toast {
+            if Instant::now() >= toast.bis {
+                self.toast = None;
+                neu_zeichnen = true;
+            }
         }
 
         // Theme-Wechsel live übernehmen (wie im Spike, aber nur ein `stat`).
@@ -336,6 +482,14 @@ impl AppState {
             Reply::Labels(labels) => {
                 self.in_flight = self.in_flight.saturating_sub(1);
                 self.labels = labels;
+                true
+            }
+            Reply::Folders(folders) => {
+                self.in_flight = self.in_flight.saturating_sub(1);
+                self.folders = folders;
+                if let Some(id) = self.ordner_erwartet.take() {
+                    self.auswahl_fuer_ordner(id, cx);
+                }
                 true
             }
             Reply::Unread(counts) => {
@@ -450,6 +604,172 @@ impl AppState {
                 self.karte_neu(thread, false, cx);
                 true
             }
+            Reply::Action { kind, thread_ids, action_ids } => {
+                self.in_flight = self.in_flight.saturating_sub(1);
+                eprintln!(
+                    "L1-AKTION kind={kind} threads={:?} aktionen={}",
+                    thread_ids.len(),
+                    action_ids.len()
+                );
+                // Die Zähler der Seitenleiste stimmen nach der Aktion neu.
+                self.kern.request(Request::Unread);
+                self.in_flight += 1;
+                false
+            }
+            Reply::Undo { undone } => {
+                self.in_flight = self.in_flight.saturating_sub(1);
+                if undone {
+                    self.toast = Some(crate::ui::toast::Toast::neu(
+                        "Rückgängig gemacht",
+                        std::time::Duration::from_secs(3),
+                    ));
+                    // Die Liste kommt vom Kern zurück (die Zeile war optimistisch weg).
+                    self.aktualisieren(cx);
+                } else {
+                    self.toast = Some(crate::ui::toast::Toast::neu(
+                        "Nichts zum Rückgängigmachen",
+                        std::time::Duration::from_secs(3),
+                    ));
+                }
+                true
+            }
+            Reply::Draft { id } => {
+                self.in_flight = self.in_flight.saturating_sub(1);
+                self.entwurf_gespeichert(id, cx);
+                true
+            }
+            Reply::Queued { action_id, dispatch_at } => {
+                self.in_flight = self.in_flight.saturating_sub(1);
+                self.gesendet(action_id, dispatch_at, cx);
+                true
+            }
+            Reply::Cancelled { action_id, cancelled } => {
+                self.in_flight = self.in_flight.saturating_sub(1);
+                if cancelled {
+                    // Der Entwurf kommt zurück ins Dock, wo er war.
+                    if let Some((aid, compose)) = self.letzte_sendung.take() {
+                        if aid == action_id {
+                            self.pending_dock = Some(compose);
+                        }
+                    }
+                    self.toast = Some(crate::ui::toast::Toast::neu(
+                        "Senden abgebrochen",
+                        Duration::from_secs(4),
+                    ));
+                } else {
+                    self.toast = Some(crate::ui::toast::Toast::neu(
+                        "Zu spät: die Mail ist schon raus",
+                        Duration::from_secs(5),
+                    ));
+                }
+                true
+            }
+            Reply::Anhang { pfad, aktion } => {
+                // A2: blockiert → Toast, gefragt → Rückfrage, sonst öffnen.
+                let text = aktion.text();
+                match aktion {
+                    crate::core::host::AnhangAktion::Oeffnen => {
+                        if let Err(fehler) =
+                            crate::core::host::oeffnen_mit(&crate::core::host::oeffner(), &pfad)
+                        {
+                            self.toast = Some(crate::ui::toast::Toast::neu(
+                                format!("Öffnen fehlgeschlagen: {fehler}"),
+                                Duration::from_secs(5),
+                            ));
+                        }
+                    }
+                    crate::core::host::AnhangAktion::Blockiert(_) => {
+                        self.toast = Some(crate::ui::toast::Toast::neu(
+                            text.unwrap_or_default(),
+                            Duration::from_secs(7),
+                        ));
+                    }
+                    crate::core::host::AnhangAktion::Fragen(_) => {
+                        self.bestaetigung = Some(anhang_frage(text.unwrap_or_default(), pfad));
+                    }
+                }
+                true
+            }
+            Reply::Anhaenge(dateien) => {
+                self.in_flight = self.in_flight.saturating_sub(1);
+                self.anhaenge_laeuft = false;
+                self.compose_einlesen(cx);
+                let mut anzahl = 0usize;
+                if let Some(id) = self.compose_aktiv {
+                    if let Some(compose) = self.compose.iter_mut().find(|compose| compose.id == id) {
+                        for (pfad, name, groesse, mime) in dateien {
+                            compose.anhaenge.push(crate::state::compose::Anhang {
+                                pfad,
+                                name,
+                                groesse,
+                                mime,
+                            });
+                            anzahl += 1;
+                        }
+                    }
+                }
+                eprintln!("L2-ANHANG gewaehlt={anzahl}");
+                if anzahl == 0 {
+                    self.toast = Some(crate::ui::toast::Toast::neu(
+                        "Kein Anhang gewählt",
+                        Duration::from_secs(3),
+                    ));
+                }
+                true
+            }
+            Reply::DraftLoaded(inhalt) => {
+                self.in_flight = self.in_flight.saturating_sub(1);
+                let modus = match inhalt.mode.as_str() {
+                    "reply" => Modus::Antwort,
+                    "reply_all" => Modus::AllenAntworten,
+                    "forward" => Modus::Weiterleiten,
+                    _ => Modus::Neu,
+                };
+                let mut compose = Compose::neu(self.naechste_compose_id, modus, inhalt.account_id);
+                self.naechste_compose_id += 1;
+                compose.draft_id = inhalt.draft_id;
+                compose.an = inhalt.to.iter().map(adresse_text).collect::<Vec<_>>().join(", ");
+                compose.cc = inhalt.cc.iter().map(adresse_text).collect::<Vec<_>>().join(", ");
+                compose.bcc = inhalt.bcc.iter().map(adresse_text).collect::<Vec<_>>().join(", ");
+                compose.betreff = inhalt.subject;
+                compose.antwort_auf = inhalt.in_reply_to_message_id;
+                compose.doc = Some(match inhalt.body_html.as_deref() {
+                    Some(html) if !html.trim().is_empty() && !inhalt.body_text.trim().is_empty() => {
+                        crate::editor::EditorDoc::from_plain(inhalt.body_text.clone())
+                    }
+                    _ => crate::editor::EditorDoc::from_plain(inhalt.body_text.clone()),
+                });
+                compose.anhaenge = inhalt
+                    .attachments
+                    .iter()
+                    .map(|anhang| {
+                        let pfad = std::path::PathBuf::from(&anhang.file_path);
+                        let groesse = std::fs::metadata(&pfad).map(|meta| meta.len()).unwrap_or(0);
+                        let name = if anhang.filename.trim().is_empty() {
+                            pfad.file_name()
+                                .map(|name| name.to_string_lossy().to_string())
+                                .unwrap_or_else(|| "anhang".into())
+                        } else {
+                            anhang.filename.clone()
+                        };
+                        let mime = crate::core::host::mime_aus_name(&name);
+                        crate::state::compose::Anhang { pfad, name, groesse, mime }
+                    })
+                    .collect();
+                self.pending_dock = Some(compose);
+                true
+            }
+            Reply::DraftDeleted => {
+                self.in_flight = self.in_flight.saturating_sub(1);
+                true
+            }
+            Reply::Contacts(items) => {
+                self.in_flight = self.in_flight.saturating_sub(1);
+                self.vorschlag_laeuft = false;
+                self.vorschlaege = items;
+                self.vorschlag_index = 0;
+                true
+            }
             Reply::Event(event) => self.kernereignis(event, cx),
             Reply::Status(text) => {
                 self.kern_status = text.into();
@@ -459,7 +779,16 @@ impl AppState {
                 self.in_flight = self.in_flight.saturating_sub(1);
                 self.loading = false;
                 eprintln!("L1-FEHLER {text}");
-                self.fehler = Some(text.into());
+                self.fehler = Some(text.clone().into());
+                // Eine Aktion ist am Kern gescheitert: die optimistische
+                // Änderung ist nicht passiert — Liste neu holen und sagen.
+                if text.starts_with("perform_action") {
+                    self.toast = Some(crate::ui::toast::Toast::neu(
+                        "Aktion nicht ausgeführt",
+                        Duration::from_secs(4),
+                    ));
+                    self.aktualisieren(cx);
+                }
                 true
             }
         }
@@ -847,6 +1176,10 @@ impl AppState {
             self.schliessen(cx);
         }
         self.selected = Some(id);
+        // In „Entwürfe" öffnet ein Klick das Verfassen-Fenster, nicht die Mail.
+        if self.view == MailView::Drafts {
+            self.entwurf_wartet = Some(id);
+        }
         if let Some(karte) = self.karten.get(&id).cloned() {
             self.karte_einsetzen(id, karte, cx);
             return;
@@ -881,6 +1214,14 @@ impl AppState {
 
     /// Thread-Antwort: Karte bauen (Blitz) und einsetzen.
     fn thread_empfangen(&mut self, detail: ThreadDetail, cx: &mut Context<Self>) {
+        if self.view == MailView::Drafts && self.entwurf_wartet == Some(detail.thread.id) {
+            self.entwurf_wartet = None;
+            if let Some(nachricht) = detail.messages.last() {
+                self.in_flight += 1;
+                self.kern.request(Request::GetDraft { draft_id: nachricht.id });
+            }
+            self.schliessen(cx);
+        }
         let id = detail.thread.id;
         self.details.insert(id, detail);
         self.karte_neu(id, true, cx);
@@ -954,6 +1295,9 @@ impl AppState {
     /// Theme übernehmen und an die Textfelder weitergeben (die halten eine Kopie).
     pub fn theme_setzen(&mut self, theme: Theme, cx: &mut Context<Self>) {
         self.theme = theme.clone();
+        // Das Fenster hängt in `gpui_component::Root`; dessen Theme muss
+        // mitziehen, sonst bleibt Hintergrund/Schrift beim alten Stand.
+        crate::theme::an_gpui_component(&theme, cx);
         self.suchfeld.update(cx, |field, cx| {
             field.theme = theme;
             cx.notify();
@@ -1015,21 +1359,114 @@ impl AppState {
     // ---------------------------------------------------------- Tastatur
 
     pub fn tasten(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
-        let textfeld = self.suchfeld.read(cx).is_focused(window);
+        #[cfg(feature = "test-hooks")]
+        eprintln!(
+            "L2-TASTE key={} char={:?} shift={} ctrl={} alt={}",
+            event.keystroke.key,
+            event.keystroke.key_char,
+            event.keystroke.modifiers.shift,
+            event.keystroke.modifiers.control,
+            event.keystroke.modifiers.alt
+        );
+
+        // Im Verfassen-Fenster: Strg+↵ sendet, Esc minimiert (Entwurf gesichert),
+        // ↑↓ wählen einen Kontaktvorschlag.
+        if self.compose_aktiv.is_some() {
+            let key = event.keystroke.key.as_str();
+            let ctrl = event.keystroke.modifiers.control;
+            if ctrl && matches!(key, "enter" | "return") {
+                self.senden(cx);
+                return;
+            }
+            if key == "escape" {
+                self.compose_minimieren(cx);
+                return;
+            }
+            // Markierter Anhang (Tastaturweg): `Entf` oder `Backspace` löscht ihn.
+            if let Some(index) = self.anhang_fokus {
+                if crate::state::compose::entfernen_taste(key) {
+                    self.anhang_entfernen(index, cx);
+                    let laenge = self
+                        .compose_aktiv
+                        .and_then(|id| self.compose.iter().find(|compose| compose.id == id))
+                        .map_or(0, |compose| compose.anhaenge.len());
+                    self.pending_focus =
+                        Some(match crate::state::compose::auswahl_nach_loeschen(index, laenge) {
+                            Some(naechster) => Fokus::Anhaenge(naechster),
+                            None => Fokus::Verfassen,
+                        });
+                    cx.stop_propagation();
+                    return;
+                }
+            }
+            if !self.vorschlaege.is_empty() && self.feld_an.read(cx).is_focused(window) {
+                match key {
+                    "down" => {
+                        self.vorschlag_bewegen(1, cx);
+                        return;
+                    }
+                    "up" => {
+                        self.vorschlag_bewegen(-1, cx);
+                        return;
+                    }
+                    "tab" | "enter" | "return" => {
+                        let index = self.vorschlag_index;
+                        self.vorschlag_nehmen(index, cx);
+                        return;
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        // Ein offenes Overlay nimmt die Tasten zuerst; dahinter wirkt nichts.
+        if self.bestaetigung.is_some() {
+            self.bestaetigung_tasten(event, cx);
+            return;
+        }
+        if self.auswahl.is_some() {
+            self.auswahl_tasten(event, window, cx);
+            return;
+        }
+        if self.kontextmenue.is_some() {
+            self.kontextmenue_tasten(event, cx);
+            return;
+        }
+
+        let textfeld = self.suchfeld.read(cx).is_focused(window)
+            || self.datumfeld.read(cx).is_focused(window)
+            || self.compose_felder_fokussiert(window, cx)
+            || (self.compose_aktiv.is_some() && self.compose_fokus);
         // Enter im Suchfeld sucht; alles andere im Feld gehört dem Feld.
+        let im_verfassen = self.compose_aktiv.is_some()
+            && (self.compose_fokus || self.compose_felder_fokussiert(window, cx));
         if textfeld {
             match event.keystroke.key.as_str() {
                 "enter" | "return" => {
+                    // Im Verfassen ist ↵ ein Zeilenumbruch; gesendet wird mit
+                    // `Strg+↵`, das der Editor selbst abfängt.
+                    if im_verfassen {
+                        return;
+                    }
                     self.suche_ausfuehren(cx);
                     return;
                 }
                 "escape" => {
+                    // `Esc` minimiert das Dock (und sichert den Entwurf).
+                    if im_verfassen {
+                        self.compose_minimieren(cx);
+                        return;
+                    }
                     self.suche_beenden(cx);
                     return;
                 }
                 _ => {}
             }
         }
+        if self.compose_aktiv.is_some() && self.feld_an.read(cx).is_focused(window) {
+            self.vorschlaege_anfragen(cx);
+        }
+
         let ergebnis = keys::auswerten(
             event,
             Kontext { textfeld, g_prefix: self.gehezu_seit.is_some() },
@@ -1047,6 +1484,60 @@ impl AppState {
         }
     }
 
+    /// Tasten im „Später/Verschieben/Label"-Overlay. Im Datumsfeld gehört die
+    /// Eingabe dem Feld; nur `↵` und `Esc` wertet die Auswahl aus.
+    fn auswahl_tasten(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+        let im_feld = self.datumfeld.read(cx).is_focused(window);
+        let taste = event.keystroke.key.as_str();
+        if im_feld {
+            match taste {
+                "enter" | "return" => self.auswahl_datum_uebernehmen(cx),
+                "escape" => self.auswahl_schliessen(cx),
+                _ => {}
+            }
+            return;
+        }
+        match taste {
+            "escape" => self.auswahl_schliessen(cx),
+            "up" | "k" => self.auswahl_bewegen(-1, cx),
+            "down" | "j" => self.auswahl_bewegen(1, cx),
+            "tab" => self.auswahl_eigenes_feld(cx),
+            "enter" | "return" => {
+                if let Some(index) = self.auswahl.as_ref().map(|auswahl| auswahl.index) {
+                    self.auswahl_nehmen(index, cx);
+                }
+            }
+            _ => {
+                // Ziffer wählt die Zeile direkt.
+                let mut zeichen = taste.chars();
+                if let (Some(ziffer), None) = (zeichen.next(), zeichen.next()) {
+                    if let Some(zahl) = ziffer.to_digit(10).filter(|zahl| *zahl > 0) {
+                        let index = zahl as usize - 1;
+                        if self.auswahl.as_ref().is_some_and(|auswahl| index < auswahl.zeilen())
+                        {
+                            self.auswahl_nehmen(index, cx);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Tasten im Kontextmenü: wie ein Menü der Plattform.
+    fn kontextmenue_tasten(&mut self, event: &KeyDownEvent, cx: &mut Context<Self>) {
+        match event.keystroke.key.as_str() {
+            "escape" => self.kontextmenue_schliessen(cx),
+            "up" | "k" => self.kontextmenue_bewegen(-1, cx),
+            "down" | "j" => self.kontextmenue_bewegen(1, cx),
+            "enter" | "return" => {
+                if let Some(index) = self.kontextmenue.as_ref().map(|menue| menue.index) {
+                    self.kontextmenue_nehmen(index, cx);
+                }
+            }
+            _ => {}
+        }
+    }
+
     fn aktion(&mut self, action: Action, window: &mut Window, cx: &mut Context<Self>) {
         if action != Action::Schliessen {
             self.gehezu_seit = None;
@@ -1060,7 +1551,11 @@ impl AppState {
             Action::Ende => self.an_den_rand(false, cx),
             Action::Oeffnen => self.oeffnen_oder_schliessen(cx),
             Action::Schliessen => {
-                if self.hilfe {
+                if self.auswahl.is_some() {
+                    self.auswahl_schliessen(cx);
+                } else if self.kontextmenue.is_some() {
+                    self.kontextmenue_schliessen(cx);
+                } else if self.hilfe {
                     self.hilfe = false;
                 } else if self.suchfeld.read(cx).is_focused(window) {
                     self.suche_beenden(cx);
@@ -1086,6 +1581,28 @@ impl AppState {
                 self.hint = SharedString::default();
                 self.gehe_zu(view, cx);
             }
+            Action::Gelesen => {
+                let ungelesen = self
+                    .selected
+                    .and_then(|id| self.thread(id).map(|thread| thread.unread_count > 0))
+                    .unwrap_or(false);
+                let art = if ungelesen { Aktionsart::Gelesen } else { Aktionsart::Ungelesen };
+                self.aktion_auf_auswahl(art, cx);
+            }
+            Action::Stern => self.aktion_auf_auswahl(Aktionsart::Stern, cx),
+            Action::Erledigt => self.aktion_auf_auswahl(Aktionsart::Erledigt, cx),
+            Action::ZurueckInEingang => self.aktion_auf_auswahl(Aktionsart::Zurueck, cx),
+            Action::Papierkorb => self.aktion_auf_auswahl(Aktionsart::Papierkorb, cx),
+            Action::Spam => self.aktion_auf_auswahl(Aktionsart::Spam, cx),
+            Action::Spaeter => self.aktion_auf_auswahl(Aktionsart::Spaeter, cx),
+            Action::SpaeterAuswahl => self.spaeter_auswahl_oeffnen(cx),
+            Action::Verschieben => self.verschieben_auswahl_oeffnen(cx),
+            Action::Label => self.label_auswahl_oeffnen(cx),
+            Action::Verfassen => self.verfassen(Modus::Neu, window, cx),
+            Action::Antworten => self.verfassen(Modus::Antwort, window, cx),
+            Action::AllenAntworten => self.verfassen(Modus::AllenAntworten, window, cx),
+            Action::Weiterleiten => self.verfassen(Modus::Weiterleiten, window, cx),
+            Action::Rueckgaengig => self.rueckgaengig(cx),
         }
     }
 
@@ -1101,8 +1618,52 @@ impl AppState {
                 window.focus(&focus);
                 cx.notify();
             }
+            Some(Fokus::Datum) => {
+                window.focus(&self.datumfeld.read(cx).focus_handle());
+                cx.notify();
+            }
+            Some(Fokus::Verfassen) => {
+                self.anhang_fokus = None;
+                if let Some(editor) = self.editor.clone() {
+                    editor.update(cx, |editor, cx| editor.focus(window, cx));
+                }
+                cx.notify();
+            }
+            Some(Fokus::Anhaenge(index)) => {
+                // Der Anhang ist markiert, nicht das Feld: der Fokus geht an das
+                // Wurzelelement, damit `Entf` nicht im Text landet.
+                self.anhang_fokus = Some(index);
+                let focus = self.focus.clone();
+                window.focus(&focus);
+                cx.notify();
+            }
             None => {}
         }
+    }
+
+    /// `Tab` im Dock: vom Körper zu den Anhängen, dort weiter, am Ende zurück
+    /// in den Körper (`⇧Tab` rückwärts). Ohne Anhänge bleibt `Tab` beim Feld
+    /// (dort fügt der Editor einzug ein), deshalb meldet die Funktion `false`.
+    pub fn verfassen_tab(&mut self, rueckwaerts: bool, cx: &mut Context<Self>) -> bool {
+        let laenge = self
+            .compose_aktiv
+            .and_then(|id| self.compose.iter().find(|compose| compose.id == id))
+            .map_or(0, |compose| compose.anhaenge.len());
+        if laenge == 0 {
+            return false;
+        }
+        let naechster = match (self.anhang_fokus, rueckwaerts) {
+            (None, false) => Some(Fokus::Anhaenge(0)),
+            (Some(index), false) if index + 1 < laenge => Some(Fokus::Anhaenge(index + 1)),
+            (Some(_), false) => Some(Fokus::Verfassen),
+            (Some(0), true) | (None, true) => Some(Fokus::Verfassen),
+            (Some(index), true) => Some(Fokus::Anhaenge(index - 1)),
+        };
+        if let Some(fokus) = naechster {
+            self.pending_focus = Some(fokus);
+            cx.notify();
+        }
+        true
     }
 
     // ------------------------------------------------------------ Status
@@ -1179,12 +1740,1177 @@ fn herbste(teile: &mut Vec<String>, teil: &str) {
     }
 }
 
+
+/// Was eine Taste auf der Auswahl auslöst (L2).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Aktionsart {
+    Gelesen,
+    Ungelesen,
+    Stern,
+    Erledigt,
+    Zurueck,
+    Papierkorb,
+    Spam,
+    Spaeter,
+}
+
+impl AppState {
+    /// Aktion auf die ausgewählte Mail: optimistisch in der Liste, Befehl an
+    /// den Kern, Toast mit „Rückgängig", wo der Kern es kann (`undo_last`
+    /// kennt archive, trash, snooze, spam und move — nicht unarchive/not_spam).
+    pub fn aktion_auf_auswahl(&mut self, art: Aktionsart, cx: &mut Context<Self>) {
+        let Some(id) = self.selected else {
+            self.hinweis_keine_auswahl(cx);
+            return;
+        };
+        let Some(thread) = self.thread(id).cloned() else { return };
+
+        // Im Papierkorb löscht `#` endgültig — nur nach Rückfrage, ohne Undo.
+        if art == Aktionsart::Papierkorb && self.view == MailView::Trash {
+            self.bestaetigung = Some(Bestaetigung {
+                text: "Endgültig löschen? Die Mail lässt sich danach nicht wiederherstellen.".into(),
+                knopf: "Endgültig löschen".into(),
+                loeschen: false,
+                hinweis: "Tab wechselt · ↵ bestätigt die Auswahl · Esc bricht ab · kein Rückgängig"
+                    .into(),
+                ziel: BestaetigungZiel::EndgueltigLoeschen(id),
+            });
+            cx.notify();
+            return;
+        }
+
+        let (kind, params, text, verschwindet, undo) = match art {
+            Aktionsart::Gelesen => ("mark_read", None, "Gelesen", false, false),
+            Aktionsart::Ungelesen => ("mark_unread", None, "Ungelesen", false, false),
+            Aktionsart::Stern if thread.is_starred => {
+                ("unstar", None, "Markierung entfernt", false, false)
+            }
+            Aktionsart::Stern => ("star", None, "Markiert", false, false),
+            Aktionsart::Erledigt => ("archive", None, "Erledigt", true, true),
+            Aktionsart::Zurueck => ("unarchive", None, "Zurück im Posteingang", true, false),
+            Aktionsart::Papierkorb => ("trash", None, "In den Papierkorb", true, true),
+            Aktionsart::Spam if self.view == MailView::Spam => {
+                ("not_spam", None, "Kein Spam", true, false)
+            }
+            Aktionsart::Spam => ("spam", None, "Als Spam markiert", true, true),
+            Aktionsart::Spaeter => (
+                "snooze",
+                morgen_acht_uhr_ms().map(|at| serde_json::json!({ "wakeAt": at })),
+                "Zurückgestellt bis morgen, 8:00",
+                true,
+                true,
+            ),
+        };
+
+        // Optimistisch: die Liste zeigt das Ergebnis sofort, der Kern bestätigt.
+        if let Some(index) = self.threads.iter().position(|t| t.id == id) {
+            match art {
+                Aktionsart::Gelesen => self.threads[index].unread_count = 0,
+                Aktionsart::Ungelesen => self.threads[index].unread_count = 1,
+                Aktionsart::Stern => self.threads[index].is_starred = !thread.is_starred,
+                _ => {}
+            }
+        }
+        self.aktion_senden(id, kind, params, text.into(), verschwindet, undo, cx);
+    }
+
+    /// Schickt eine Aktion und zeigt den Toast dazu. `verschwindet` nimmt die
+    /// Zeile optimistisch aus der Liste, `undo` gibt dem Toast „Rückgängig".
+    fn aktion_senden(
+        &mut self,
+        id: i64,
+        kind: &'static str,
+        params: Option<serde_json::Value>,
+        text: SharedString,
+        verschwindet: bool,
+        undo: bool,
+        cx: &mut Context<Self>,
+    ) {
+        if verschwindet {
+            self.zeile_entfernen(id, cx);
+        }
+        self.toast = Some(if undo {
+            crate::ui::toast::Toast::mit_rueckgaengig(
+                format!("{text} · 1 Mail"),
+                crate::ui::toast::DAUER,
+            )
+        } else {
+            crate::ui::toast::Toast::neu(text, Duration::from_secs(4))
+        });
+        self.in_flight += 1;
+        self.kern.request(Request::Action {
+            kind,
+            thread_ids: vec![id],
+            params,
+        });
+        cx.notify();
+    }
+
+    /// Zeile optimistisch aus der Liste nehmen (Erledigt, Papierkorb, Später …).
+    fn zeile_entfernen(&mut self, id: i64, cx: &mut Context<Self>) {
+        let Some(index) = self.threads.iter().position(|t| t.id == id) else {
+            return;
+        };
+        self.threads.remove(index);
+        let alt = self.rows.len();
+        list::rows_bauen(self);
+        let neu = self.rows.len();
+        if alt == 0 || self.selected.is_none() {
+            self.list_state.reset(neu);
+        } else if neu != alt {
+            self.list_state.splice(0..alt, neu);
+        }
+        self.selected = self
+            .threads
+            .get(index.min(self.threads.len().saturating_sub(1)))
+            .map(|t| t.id);
+        if self.expanded == Some(id) {
+            self.schliessen(cx);
+        }
+    }
+
+    fn hinweis_keine_auswahl(&mut self, cx: &mut Context<Self>) {
+        self.toast = Some(crate::ui::toast::Toast::neu(
+            "Keine Mail ausgewählt",
+            Duration::from_secs(3),
+        ));
+        cx.notify();
+    }
+
+    /// „Rückgängig" im Toast: der Kern nimmt die letzte Aktion im 30-s-Fenster zurück.
+    pub fn rueckgaengig(&mut self, cx: &mut Context<Self>) {
+        self.toast = None;
+        self.in_flight += 1;
+        self.kern.request(Request::Undo);
+        cx.notify();
+    }
+
+    // ------------------------------------------------------- Später-Auswahl
+
+    /// `⇧H`: Vorschläge wie in der Mac-App und ein eigenes Datum.
+    pub fn spaeter_auswahl_oeffnen(&mut self, cx: &mut Context<Self>) {
+        if self.selected.is_none() {
+            self.hinweis_keine_auswahl(cx);
+            return;
+        }
+        let jetzt = chrono::Local::now().timestamp_millis();
+        let eintraege = snooze::presets(jetzt)
+            .into_iter()
+            .map(|preset| Eintrag {
+                key: preset.at,
+                name: preset.name.into(),
+                neben: snooze::zeit_text(preset.at, jetzt).into(),
+                marke: false,
+            })
+            .collect();
+        self.auswahl = Some(Auswahl {
+            art: Auswahlart::Spaeter,
+            titel: "Später".into(),
+            eintraege,
+            index: 0,
+            eigenes: true,
+            fehler: None,
+        });
+        self.datumfeld.update(cx, |feld, cx| {
+            feld.text.clear();
+            feld.cursor = 0;
+            cx.notify();
+        });
+        self.kontextmenue = None;
+        cx.notify();
+    }
+
+    /// „Später" auf einen festen Zeitpunkt (Millisekunden).
+    pub fn snooze_bis(&mut self, at: i64, cx: &mut Context<Self>) {
+        self.auswahl = None;
+        let Some(id) = self.selected else { return };
+        let text: SharedString = format!("Zurückgestellt bis {}", snooze::kurz(at)).into();
+        self.aktion_senden(
+            id,
+            "snooze",
+            Some(serde_json::json!({ "wakeAt": at })),
+            text,
+            true,
+            true,
+            cx,
+        );
+    }
+
+    /// Zeile „Eigenes Datum": Fokus ins Feld darunter.
+    pub fn auswahl_eigenes_feld(&mut self, cx: &mut Context<Self>) {
+        if let Some(auswahl) = self.auswahl.as_mut() {
+            auswahl.index = auswahl.eintraege.len();
+            auswahl.fehler = None;
+        }
+        self.pending_focus = Some(Fokus::Datum);
+        cx.notify();
+    }
+
+    /// `↵` im Feld „Eigenes Datum".
+    pub fn auswahl_datum_uebernehmen(&mut self, cx: &mut Context<Self>) {
+        let text = self.datumfeld.read(cx).text().to_string();
+        let jetzt = chrono::Local::now().timestamp_millis();
+        match snooze::parse(&text, jetzt) {
+            Some(at) => self.snooze_bis(at, cx),
+            None => {
+                if let Some(auswahl) = self.auswahl.as_mut() {
+                    auswahl.fehler = Some(
+                        "Nicht verstanden — z. B. „morgen 9:00“ oder „24.11. 18:00“".into(),
+                    );
+                }
+                cx.notify();
+            }
+        }
+    }
+
+    // ---------------------------------------------------- Verschieben/Labels
+
+    /// `V`: Ordner holen und die Auswahl öffnen.
+    pub fn verschieben_auswahl_oeffnen(&mut self, cx: &mut Context<Self>) {
+        let Some(id) = self.selected else {
+            self.hinweis_keine_auswahl(cx);
+            return;
+        };
+        let account_id = self.thread(id).map(|thread| thread.account_id);
+        self.kontextmenue = None;
+        self.ordner_erwartet = Some(id);
+        self.in_flight += 1;
+        self.kern.request(Request::Folders { account_id });
+        self.status = "Ordner werden geladen …".into();
+        cx.notify();
+    }
+
+    /// Ordner sind da: die Auswahl öffnen.
+    fn auswahl_fuer_ordner(&mut self, id: i64, cx: &mut Context<Self>) {
+        if self.selected != Some(id) {
+            return;
+        }
+        let mut folders: Vec<FolderInfo> =
+            self.folders.iter().filter(|folder| folder.is_waehlbar()).cloned().collect();
+        // Posteingang und Archiv zuerst, der Rest in der Reihenfolge des Kerns.
+        // Die Rollen schreibt der Kern klein (`roles::INBOX` = "inbox").
+        let rang = |folder: &FolderInfo| match folder.role.as_deref() {
+            Some("inbox") => 0,
+            Some("archive") => 1,
+            _ => 2,
+        };
+        folders.sort_by_key(rang);
+        let eintraege: Vec<Eintrag> = folders
+            .into_iter()
+            .map(|folder| Eintrag {
+                key: folder.id,
+                name: folder.display_name().into(),
+                neben: SharedString::default(),
+                marke: false,
+            })
+            .collect();
+        if eintraege.is_empty() {
+            self.toast = Some(crate::ui::toast::Toast::neu(
+                "Keine Ordner gefunden",
+                Duration::from_secs(3),
+            ));
+            cx.notify();
+            return;
+        }
+        self.status = "bereit".into();
+        self.auswahl = Some(Auswahl {
+            art: Auswahlart::Verschieben,
+            titel: "Verschieben nach …".into(),
+            eintraege,
+            index: 0,
+            eigenes: false,
+            fehler: None,
+        });
+        cx.notify();
+    }
+
+    /// `L`: Labels des Kontos, gesetzte mit Haken.
+    pub fn label_auswahl_oeffnen(&mut self, cx: &mut Context<Self>) {
+        let Some(id) = self.selected else {
+            self.hinweis_keine_auswahl(cx);
+            return;
+        };
+        let Some(thread) = self.thread(id).cloned() else { return };
+        let mut labels: Vec<&Label> = self.labels.iter().filter(|label| !label.is_auto).collect();
+        labels.sort_by_key(|label| label.position);
+        let eintraege: Vec<Eintrag> = labels
+            .into_iter()
+            .map(|label| Eintrag {
+                key: label.id,
+                name: label.name.clone().into(),
+                neben: SharedString::default(),
+                marke: thread.labels.contains(&label.id),
+            })
+            .collect();
+        if eintraege.is_empty() {
+            self.toast = Some(crate::ui::toast::Toast::neu(
+                "Keine Labels angelegt",
+                Duration::from_secs(3),
+            ));
+            cx.notify();
+            return;
+        }
+        self.kontextmenue = None;
+        self.auswahl = Some(Auswahl {
+            art: Auswahlart::Label,
+            titel: "Label".into(),
+            eintraege,
+            index: 0,
+            eigenes: false,
+            fehler: None,
+        });
+        cx.notify();
+    }
+
+    fn label_umschalten(
+        &mut self,
+        label_id: i64,
+        name: String,
+        an: bool,
+        cx: &mut Context<Self>,
+    ) {
+        self.auswahl = None;
+        let Some(id) = self.selected else { return };
+        if let Some(thread) = self.threads.iter_mut().find(|thread| thread.id == id) {
+            if an && !thread.labels.contains(&label_id) {
+                thread.labels.push(label_id);
+            } else if !an {
+                thread.labels.retain(|label| *label != label_id);
+            }
+        }
+        let kind = if an { "add_label" } else { "remove_label" };
+        let text: SharedString =
+            format!("Label {name} {}", if an { "gesetzt" } else { "entfernt" }).into();
+        self.aktion_senden(
+            id,
+            kind,
+            Some(serde_json::json!({ "labelId": label_id })),
+            text,
+            false,
+            false,
+            cx,
+        );
+    }
+
+    // ------------------------------------------------------------- Auswahl
+
+    pub fn auswahl_bewegen(&mut self, delta: isize, cx: &mut Context<Self>) {
+        let Some(auswahl) = self.auswahl.as_mut() else { return };
+        let anzahl = auswahl.zeilen();
+        if anzahl == 0 {
+            return;
+        }
+        let index = auswahl.index as isize + delta;
+        auswahl.index = index.rem_euclid(anzahl as isize) as usize;
+        cx.notify();
+    }
+
+    /// `↵` oder Klick auf eine Zeile der Auswahl.
+    pub fn auswahl_nehmen(&mut self, index: usize, cx: &mut Context<Self>) {
+        let Some(auswahl) = self.auswahl.clone() else { return };
+        match auswahl.art {
+            Auswahlart::Spaeter => match auswahl.eintraege.get(index) {
+                Some(eintrag) => self.snooze_bis(eintrag.key, cx),
+                None => self.auswahl_eigenes_feld(cx),
+            },
+            Auswahlart::Verschieben => {
+                let Some(eintrag) = auswahl.eintraege.get(index) else { return };
+                let Some(id) = self.selected else { return };
+                let (folder_id, name) = (eintrag.key, eintrag.name.to_string());
+                self.auswahl = None;
+                self.aktion_senden(
+                    id,
+                    "move",
+                    Some(serde_json::json!({ "targetFolderId": folder_id })),
+                    format!("Verschoben nach {name}").into(),
+                    true,
+                    true,
+                    cx,
+                );
+            }
+            Auswahlart::Senden => {
+                let Some(eintrag) = auswahl.eintraege.get(index) else { return };
+                let at = eintrag.key;
+                self.auswahl = None;
+                self.entwurf_speichern(SendeAbsicht::Um(at), cx);
+            }
+            Auswahlart::Label => {
+                let Some(eintrag) = auswahl.eintraege.get(index) else { return };
+                let (label_id, name, an) = (eintrag.key, eintrag.name.to_string(), !eintrag.marke);
+                self.label_umschalten(label_id, name, an, cx);
+            }
+        }
+    }
+
+    pub fn auswahl_schliessen(&mut self, cx: &mut Context<Self>) {
+        if self.auswahl.take().is_some() {
+            self.pending_focus = Some(Fokus::Liste);
+            cx.notify();
+        }
+    }
+
+    // ---------------------------------------------------------- Kontextmenü
+
+    /// Rechtsklick öffnet das Menü am Zeiger; es gilt für die Zeile darunter.
+    pub fn kontextmenue_oeffnen(&mut self, id: i64, x: f32, y: f32, cx: &mut Context<Self>) {
+        let Some(thread) = self.thread(id).cloned() else { return };
+        self.selected = Some(id);
+        self.auswahl = None;
+        let mut eintraege: Vec<(thread::Menuebefehl, SharedString, &'static str)> = Vec::new();
+        eintraege.push((
+            thread::Menuebefehl::Oeffnen,
+            if self.expanded == Some(id) { "Schließen" } else { "Öffnen" }.into(),
+            "↵",
+        ));
+        eintraege.push((
+            thread::Menuebefehl::Gelesen,
+            if thread.unread() { "Als gelesen markieren" } else { "Als ungelesen markieren" }
+                .into(),
+            "U",
+        ));
+        eintraege.push((
+            thread::Menuebefehl::Stern,
+            if thread.is_starred { "Markierung entfernen" } else { "Markieren" }.into(),
+            "S",
+        ));
+        if self.view == MailView::Done {
+            eintraege.push((
+                thread::Menuebefehl::Zurueck,
+                "Zurück in den Posteingang".into(),
+                "⇧E",
+            ));
+        } else {
+            eintraege.push((thread::Menuebefehl::Erledigt, "Erledigt".into(), "E"));
+        }
+        eintraege.push((thread::Menuebefehl::Spaeter, "Später (morgen 8:00)".into(), "H"));
+        eintraege.push((thread::Menuebefehl::SpaeterAuswahl, "Später …".into(), "⇧H"));
+        eintraege.push((thread::Menuebefehl::Verschieben, "Verschieben …".into(), "V"));
+        eintraege.push((thread::Menuebefehl::Label, "Label …".into(), "L"));
+        eintraege.push((
+            thread::Menuebefehl::Papierkorb,
+            if self.view == MailView::Trash {
+                "Endgültig löschen …"
+            } else {
+                "In den Papierkorb"
+            }
+            .into(),
+            "#",
+        ));
+        eintraege.push((
+            thread::Menuebefehl::Spam,
+            if self.view == MailView::Spam { "Kein Spam" } else { "Als Spam markieren" }.into(),
+            "!",
+        ));
+        self.kontextmenue = Some(thread::Kontextmenue {
+            id,
+            x,
+            y,
+            index: 0,
+            eintraege,
+        });
+        cx.notify();
+    }
+
+    pub fn kontextmenue_bewegen(&mut self, delta: isize, cx: &mut Context<Self>) {
+        let Some(menue) = self.kontextmenue.as_mut() else { return };
+        if menue.eintraege.is_empty() {
+            return;
+        }
+        let anzahl = menue.eintraege.len() as isize;
+        menue.index = (menue.index as isize + delta).rem_euclid(anzahl) as usize;
+        cx.notify();
+    }
+
+    pub fn kontextmenue_nehmen(&mut self, index: usize, cx: &mut Context<Self>) {
+        let Some(menue) = self.kontextmenue.take() else { return };
+        let Some((befehl, _, _)) = menue.eintraege.get(index).cloned() else { return };
+        self.befehl_ausfuehren(menue.id, befehl, cx);
+    }
+
+    /// Einen Befehl auf einen Thread anwenden — aus dem Kontextmenü oder aus
+    /// der Aktionsleiste; dieselben Wege wie die Tasten.
+    pub fn befehl_ausfuehren(&mut self, id: i64, befehl: thread::Menuebefehl, cx: &mut Context<Self>) {
+        self.selected = Some(id);
+        match befehl {
+            thread::Menuebefehl::Oeffnen => {
+                if self.expanded == Some(id) {
+                    self.schliessen(cx);
+                } else {
+                    self.oeffne(id, cx);
+                }
+            }
+            thread::Menuebefehl::Gelesen => {
+                let ungelesen = self
+                    .thread(id)
+                    .map(|thread| thread.unread_count > 0)
+                    .unwrap_or(false);
+                let art = if ungelesen { Aktionsart::Gelesen } else { Aktionsart::Ungelesen };
+                self.aktion_auf_auswahl(art, cx);
+            }
+            thread::Menuebefehl::Stern => self.aktion_auf_auswahl(Aktionsart::Stern, cx),
+            thread::Menuebefehl::Erledigt => self.aktion_auf_auswahl(Aktionsart::Erledigt, cx),
+            thread::Menuebefehl::Zurueck => self.aktion_auf_auswahl(Aktionsart::Zurueck, cx),
+            thread::Menuebefehl::Spaeter => self.aktion_auf_auswahl(Aktionsart::Spaeter, cx),
+            thread::Menuebefehl::SpaeterAuswahl => self.spaeter_auswahl_oeffnen(cx),
+            thread::Menuebefehl::Verschieben => self.verschieben_auswahl_oeffnen(cx),
+            thread::Menuebefehl::Label => self.label_auswahl_oeffnen(cx),
+            thread::Menuebefehl::Papierkorb => self.aktion_auf_auswahl(Aktionsart::Papierkorb, cx),
+            thread::Menuebefehl::Spam => self.aktion_auf_auswahl(Aktionsart::Spam, cx),
+        }
+        cx.notify();
+    }
+
+    /// Hat eines der Verfassen-Felder den Tastaturfokus?
+    fn compose_felder_fokussiert(&self, window: &Window, cx: &App) -> bool {
+        self.feld_an.read(cx).is_focused(window)
+            || self.feld_cc.read(cx).is_focused(window)
+            || self.feld_bcc.read(cx).is_focused(window)
+            || self.feld_betreff.read(cx).is_focused(window)
+    }
+
+    /// Inhalt der Felder und des Editors als Fingerabdruck fürs Autosave.
+    fn compose_stand_lesen(&self, cx: &App) -> String {
+        let text = self
+            .editor
+            .as_ref()
+            .map(|editor| editor.read(cx).content(cx).text)
+            .unwrap_or_default();
+        format!(
+            "{}\u{1}{}\u{1}{}\u{1}{}\u{1}{}",
+            self.feld_an.read(cx).text(),
+            self.feld_cc.read(cx).text(),
+            self.feld_bcc.read(cx).text(),
+            self.feld_betreff.read(cx).text(),
+            text
+        )
+    }
+
+    /// Nach Tipppause speichern, ohne dass der Nutzer etwas tun muss.
+    fn autosave_pruefen(&mut self, cx: &mut Context<Self>) {
+        if self.compose_aktiv.is_none() || self.speichert.is_some() {
+            return;
+        }
+        let stand = self.compose_stand_lesen(cx);
+        if self.compose_stand.as_deref() != Some(stand.as_str()) {
+            self.compose_stand = Some(stand);
+            self.compose_stand_seit = Some(Instant::now());
+            return;
+        }
+        let seit = self.compose_stand_seit;
+        if seit.is_some() && crate::state::compose::autosave_faellig(true, seit, Instant::now()) {
+            self.compose_stand_seit = None;
+            self.entwurf_speichern(SendeAbsicht::Nichts, cx);
+        }
+    }
+
+    // ------------------------------------------------------------- Verfassen
+
+    /// `c` neu, `r` antworten, `a` allen antworten, `f` weiterleiten.
+    pub fn verfassen(&mut self, modus: Modus, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(compose) = self.verfassen_auftrag(modus) {
+            let id = compose.id;
+            self.compose.retain(|vorhanden| vorhanden.id != id);
+            self.compose.push(compose);
+            self.compose_laden(id, window, cx);
+            self.compose_fokus = true;
+            cx.notify();
+        }
+    }
+
+    /// Baut den Auftrag ohne Fenster — für Hooks und den Weg über `pending_dock`
+    /// (die Antwort des Kerns kommt ohne `Window`, `set_content` braucht eines).
+    pub fn verfassen_auftrag(&mut self, modus: Modus) -> Option<Compose> {
+        let Some(konto) = self
+            .account_id
+            .or_else(|| self.threads.first().map(|thread| thread.account_id))
+        else {
+            self.toast = Some(crate::ui::toast::Toast::neu(
+                "Kein Konto geladen",
+                Duration::from_secs(3),
+            ));
+            return None;
+        };
+        let id = self.naechste_compose_id;
+        self.naechste_compose_id += 1;
+        let mut compose = Compose::neu(id, modus, konto);
+        compose.doc = Some(crate::editor::EditorDoc::default());
+
+        if modus != Modus::Neu {
+            let detail = self
+                .expanded
+                .and_then(|tid| self.details.get(&tid))
+                .or_else(|| self.selected.and_then(|tid| self.details.get(&tid)))
+                .cloned();
+            let Some(detail) = detail else {
+                self.toast = Some(crate::ui::toast::Toast::neu(
+                    "Mail zum Antworten erst öffnen",
+                    Duration::from_secs(3),
+                ));
+                return None;
+            };
+            compose.betreff = crate::state::compose::betreff(&detail.thread.subject, modus);
+            if let Some(nachricht) = detail.messages.last() {
+                let von = nachricht.from.display();
+                let datum = crate::ui::list::datum_lang(nachricht.date);
+                let original = nachricht.text_body.clone().unwrap_or_default();
+                match modus {
+                    Modus::Antwort | Modus::AllenAntworten => {
+                        compose.an = nachricht.from.email.clone();
+                        compose.antwort_auf = Some(detail.thread.id);
+                        compose.doc = Some(crate::editor::EditorDoc::from_plain(
+                            crate::state::compose::zitat(&original, &von, &datum),
+                        ));
+                        if modus == Modus::AllenAntworten {
+                            let mich = self
+                                .accounts
+                                .iter()
+                                .find(|account| account.id == konto)
+                                .map(|account| account.email.to_lowercase())
+                                .unwrap_or_default();
+                            let mut cc: Vec<String> = Vec::new();
+                            for adresse in nachricht.to.iter().chain(nachricht.cc.iter()) {
+                                let mail = adresse.email.to_lowercase();
+                                if mail == mich || mail == nachricht.from.email.to_lowercase() {
+                                    continue;
+                                }
+                                if !cc.iter().any(|vorhanden| vorhanden == &adresse.email) {
+                                    cc.push(adresse.email.clone());
+                                }
+                            }
+                            compose.cc = cc.join(", ");
+                        }
+                    }
+                    Modus::Weiterleiten => {
+                        let konto_mail = self
+                            .accounts
+                            .iter()
+                            .find(|account| account.id == konto)
+                            .map(|account| account.email.clone())
+                            .unwrap_or_default();
+                        compose.doc = Some(crate::editor::EditorDoc::from_plain(
+                            crate::state::compose::weiterleitung(
+                                &original,
+                                &von,
+                                &konto_mail,
+                                &datum,
+                                &detail.thread.subject,
+                            ),
+                        ));
+                    }
+                    Modus::Neu => {}
+                }
+            }
+        }
+
+        Some(compose)
+    }
+
+    /// Fenster in die Felder und den Editor laden (auch beim Wechsel).
+    fn compose_laden(&mut self, id: u64, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(compose) = self.compose.iter().find(|compose| compose.id == id).cloned() else {
+            return;
+        };
+        let betreff = compose.betreff.clone();
+        setze_feld(&self.feld_an, &compose.an, cx);
+        setze_feld(&self.feld_cc, &compose.cc, cx);
+        setze_feld(&self.feld_bcc, &compose.bcc, cx);
+        setze_feld(&self.feld_betreff, &betreff, cx);
+        self.cc_bcc = !compose.cc.trim().is_empty() || !compose.bcc.trim().is_empty();
+        self.compose_aktiv = Some(id);
+        self.compose_stand = None;
+        self.compose_stand_seit = None;
+        self.vorschlaege.clear();
+        self.vorschlag_index = 0;
+
+        let doc = compose.doc.clone().unwrap_or_default();
+        let editor = self
+            .editor
+            .get_or_insert_with(|| cx.new(|cx| ComposeEditor::new(window, cx)))
+            .clone();
+        editor.update(cx, |editor, cx| editor.set_content(&doc, window, cx));
+        // Der Körper nimmt die Tasten: ohne echten Fokus gingen Buchstaben in
+        // die Einzeltasten-Kürzel der Liste statt in den Entwurf.
+        self.compose_fokus = true;
+        self.pending_focus = Some(Fokus::Verfassen);
+        cx.notify();
+    }
+
+    /// Felder und Editor in den Zustand zurückschreiben (vor Wechsel/Schließen).
+    fn compose_einlesen(&mut self, cx: &mut Context<Self>) {
+        let Some(id) = self.compose_aktiv else { return };
+        let an = self.feld_an.read(cx).text().to_string();
+        let cc = self.feld_cc.read(cx).text().to_string();
+        let bcc = self.feld_bcc.read(cx).text().to_string();
+        let betreff = self.feld_betreff.read(cx).text().to_string();
+        let doc = self.editor.as_ref().map(|editor| editor.read(cx).content(cx));
+        if let Some(compose) = self.compose.iter_mut().find(|compose| compose.id == id) {
+            compose.an = an;
+            compose.cc = cc;
+            compose.bcc = bcc;
+            compose.betreff = betreff;
+            if let Some(doc) = doc {
+                compose.doc = Some(doc);
+            }
+        }
+    }
+
+    /// Anderes Fenster nach vorn holen.
+    pub fn compose_wechseln(&mut self, id: u64, window: &mut Window, cx: &mut Context<Self>) {
+        if self.compose_aktiv == Some(id) {
+            return;
+        }
+        self.compose_einlesen(cx);
+        if let Some(compose) = self.compose.iter_mut().find(|compose| compose.id == id) {
+            compose.minimiert = false;
+        }
+        self.compose_laden(id, window, cx);
+    }
+
+    /// Minimieren (bleibt im Dock) — speichert vorher den Entwurf.
+    pub fn compose_minimieren(&mut self, cx: &mut Context<Self>) {
+        let Some(id) = self.compose_aktiv else { return };
+        self.compose_einlesen(cx);
+        self.compose_aktiv = None;
+        self.compose_fokus = false;
+        self.pending_focus = Some(Fokus::Liste);
+        if let Some(compose) = self.compose.iter_mut().find(|compose| compose.id == id) {
+            compose.minimiert = true;
+        }
+        self.entwurf_speichern_fuer(id, SendeAbsicht::Nichts, cx);
+        cx.notify();
+    }
+
+    /// Schließen; mit `verwerfen` wird der Entwurf im Kern gelöscht.
+    pub fn compose_schliessen(&mut self, verwerfen: bool, cx: &mut Context<Self>) {
+        self.compose_einlesen(cx);
+        let Some(id) = self.compose_aktiv.take() else { return };
+        let Some(compose) = self.compose.iter().find(|compose| compose.id == id).cloned() else {
+            return;
+        };
+        if verwerfen {
+            if let Some(draft_id) = compose.draft_id {
+                self.in_flight += 1;
+                self.kern.request(Request::DeleteDraft { draft_id });
+            }
+            self.compose.retain(|vorhanden| vorhanden.id != id);
+            self.toast = Some(crate::ui::toast::Toast::neu(
+                "Entwurf verworfen",
+                Duration::from_secs(3),
+            ));
+        } else {
+            self.entwurf_speichern_fuer(id, SendeAbsicht::Nichts, cx);
+        }
+        cx.notify();
+    }
+
+    /// Vorschläge zum An-Feld holen (ab zwei Zeichen).
+    pub fn vorschlaege_anfragen(&mut self, cx: &mut Context<Self>) {
+        if self.vorschlag_laeuft {
+            return;
+        }
+        let an = self.feld_an.read(cx).text().to_string();
+        let teil = an.rsplit(',').next().unwrap_or("").trim().to_string();
+        if teil.chars().count() < 2 {
+            self.vorschlaege.clear();
+            cx.notify();
+            return;
+        }
+        self.vorschlag_laeuft = true;
+        self.in_flight += 1;
+        self.kern.request(Request::SuggestContacts { prefix: teil });
+        cx.notify();
+    }
+
+    /// Vorschlag übernehmen: ersetzt den angefangenen Teil des An-Felds.
+    pub fn vorschlag_nehmen(&mut self, index: usize, cx: &mut Context<Self>) {
+        let Some(vorschlag) = self.vorschlaege.get(index).cloned() else { return };
+        let an = self.feld_an.read(cx).text().to_string();
+        let mut teile: Vec<String> = an
+            .split(',')
+            .map(|teil| teil.trim().to_string())
+            .filter(|teil| !teil.is_empty())
+            .collect();
+        if teile.is_empty() {
+            teile.push(vorschlag.anzeige());
+        } else if let Some(letzte) = teile.last_mut() {
+            *letzte = vorschlag.anzeige();
+        }
+        let neu = format!("{}, ", teile.join(", "));
+        setze_feld(&self.feld_an, &neu, cx);
+        self.vorschlaege.clear();
+        self.vorschlag_index = 0;
+        cx.notify();
+    }
+
+    pub fn vorschlag_bewegen(&mut self, delta: isize, cx: &mut Context<Self>) {
+        if self.vorschlaege.is_empty() {
+            return;
+        }
+        let anzahl = self.vorschlaege.len() as isize;
+        self.vorschlag_index = (self.vorschlag_index as isize + delta).rem_euclid(anzahl) as usize;
+        cx.notify();
+    }
+
+    /// Entwurf speichern; `danach_senden` heißt: im Erfolgsfall gleich raus.
+    fn entwurf_speichern(&mut self, absicht: SendeAbsicht, cx: &mut Context<Self>) {
+        let Some(id) = self.compose_aktiv else { return };
+        self.compose_einlesen(cx);
+        self.entwurf_speichern_fuer(id, absicht, cx);
+    }
+
+    /// Wie [`AppState::entwurf_speichern`], aber für ein Fenster, das gerade
+    /// nicht mehr aktiv ist (Minimieren, Schließen).
+    fn entwurf_speichern_fuer(&mut self, id: u64, absicht: SendeAbsicht, _cx: &mut Context<Self>) {
+        if self.speichert.is_some() {
+            return;
+        }
+        let Some(compose) = self.compose.iter().find(|compose| compose.id == id).cloned() else {
+            return;
+        };
+        let doc = compose.doc.clone().unwrap_or_default();
+        let args = serde_json::json!({
+            "draftId": compose.draft_id,
+            "accountId": compose.konto,
+            "to": adressen_json(&compose.an),
+            "cc": adressen_json(&compose.cc),
+            "bcc": adressen_json(&compose.bcc),
+            "subject": compose.betreff,
+            "bodyText": doc.to_plain(),
+            "bodyHtml": doc.to_html(),
+            "mode": compose.modus.kern_name(),
+            "inReplyToMessageId": compose.antwort_auf,
+            "attachments": compose.anhaenge.iter().map(|anhang| serde_json::json!({
+                "filePath": anhang.pfad.to_string_lossy(),
+                "filename": anhang.name,
+            })).collect::<Vec<_>>(),
+        });
+        self.speichert = Some((id, absicht));
+        self.in_flight += 1;
+        self.kern.request(Request::SaveDraft { args });
+    }
+
+    /// Der Kern hat gespeichert.
+    fn entwurf_gespeichert(&mut self, draft_id: i64, cx: &mut Context<Self>) {
+        let Some((id, absicht)) = self.speichert.take() else { return };
+        if let Some(compose) = self.compose.iter_mut().find(|compose| compose.id == id) {
+            compose.draft_id = Some(draft_id);
+        }
+        match absicht {
+            SendeAbsicht::Jetzt => return self.sende_einreihen(draft_id, None, cx),
+            SendeAbsicht::Um(at) => return self.sende_einreihen(draft_id, Some(at), cx),
+            SendeAbsicht::Nichts => {}
+        }
+        if let Some(compose) = self.compose.iter_mut().find(|compose| compose.id == id) {
+            let laenge = compose.an.len() + compose.betreff.len() + compose.doc.as_ref().map_or(0, |doc| doc.text.len());
+            eprintln!("L2-ENTWURF id={draft_id} fenster={id} zeichen={laenge}");
+        }
+        cx.notify();
+    }
+
+    /// `queue_send` mit oder ohne Zeitpunkt.
+    fn sende_einreihen(&mut self, draft_id: i64, send_at: Option<i64>, cx: &mut Context<Self>) {
+        self.send_absicht = Some(match send_at {
+            Some(at) => SendeAbsicht::Um(at),
+            None => SendeAbsicht::Jetzt,
+        });
+        self.in_flight += 1;
+        self.kern.request(Request::QueueSend { draft_id, send_at });
+        cx.notify();
+    }
+
+    /// Senden: erst den Entwurf sichern, dann einreihen. Prüft vorher die Adressen.
+    pub fn senden(&mut self, cx: &mut Context<Self>) {
+        self.compose_einlesen(cx);
+        let Some(id) = self.compose_aktiv else { return };
+        let Some(compose) = self.compose.iter().find(|compose| compose.id == id).cloned() else {
+            return;
+        };
+        let schlecht = [&compose.an, &compose.cc, &compose.bcc]
+            .iter()
+            .flat_map(|feld| ungueltige(feld))
+            .collect::<Vec<String>>();
+        if schlecht.is_empty() && adressen_parsen(&compose.an).is_empty() {
+            self.toast = Some(crate::ui::toast::Toast::neu(
+                "Kein Empfänger",
+                Duration::from_secs(3),
+            ));
+            cx.notify();
+            return;
+        }
+        if !schlecht.is_empty() {
+            self.toast = Some(crate::ui::toast::Toast::neu(
+                format!("Adresse nicht verstanden: {}", schlecht.join(", ")),
+                Duration::from_secs(5),
+            ));
+            cx.notify();
+            return;
+        }
+        if compose.doc.as_ref().map(|doc| doc.text.trim().is_empty()).unwrap_or(true) {
+            self.toast = Some(crate::ui::toast::Toast::neu(
+                "Nachricht ist leer",
+                Duration::from_secs(3),
+            ));
+            cx.notify();
+            return;
+        }
+        self.entwurf_speichern(SendeAbsicht::Jetzt, cx);
+    }
+
+    /// Datei-Dialog für Anhänge öffnen (Portal, auf der Kern-Runtime).
+    pub fn anhaenge_waehlen(&mut self, cx: &mut Context<Self>) {
+        if self.compose_aktiv.is_none() || self.anhaenge_laeuft {
+            return;
+        }
+        self.anhaenge_laeuft = true;
+        self.in_flight += 1;
+        self.kern.request(Request::AnhaengeWaehlen);
+        cx.notify();
+    }
+
+    /// Anhang ohne Portal anhängen (Messbuild/Hooks).
+    #[cfg_attr(not(feature = "test-hooks"), allow(dead_code))]
+    pub fn compose_anhang_setzen(
+        &mut self,
+        pfad: std::path::PathBuf,
+        name: String,
+        groesse: u64,
+        mime: String,
+        cx: &mut Context<Self>,
+    ) {
+        self.compose_einlesen(cx);
+        if let Some(id) = self.compose_aktiv {
+            if let Some(compose) = self.compose.iter_mut().find(|compose| compose.id == id) {
+                compose.anhaenge.push(crate::state::compose::Anhang { pfad, name, groesse, mime });
+                eprintln!("L2-ANHANG angehaengt n={}", compose.anhaenge.len());
+            }
+        }
+        cx.notify();
+    }
+
+    /// Anhang wieder entfernen.
+    pub fn anhang_entfernen(&mut self, index: usize, cx: &mut Context<Self>) {
+        self.compose_einlesen(cx);
+        if let Some(id) = self.compose_aktiv {
+            if let Some(compose) = self.compose.iter_mut().find(|compose| compose.id == id) {
+                if index < compose.anhaenge.len() {
+                    compose.anhaenge.remove(index);
+                }
+            }
+        }
+        cx.notify();
+    }
+
+    /// „Später senden": dieselben Presets wie beim Snooze.
+    pub fn spaeter_senden(&mut self, cx: &mut Context<Self>) {
+        if self.compose_aktiv.is_none() {
+            return;
+        }
+        let jetzt = chrono::Local::now().timestamp_millis();
+        let eintraege = snooze::presets(jetzt)
+            .into_iter()
+            .map(|preset| Eintrag {
+                key: preset.at,
+                name: preset.name.into(),
+                neben: snooze::zeit_text(preset.at, jetzt).into(),
+                marke: false,
+            })
+            .collect();
+        self.auswahl = Some(Auswahl {
+            art: Auswahlart::Senden,
+            titel: "Später senden".into(),
+            eintraege,
+            index: 0,
+            eigenes: false,
+            fehler: None,
+        });
+        cx.notify();
+    }
+
+    /// Senden eingereiht: Fenster zu, Toast mit Rückgängig.
+    fn gesendet(&mut self, action_id: i64, dispatch_at: i64, cx: &mut Context<Self>) {
+        self.compose_einlesen(cx);
+        if let Some(id) = self.compose_aktiv.take() {
+            if let Some(compose) = self.compose.iter().find(|compose| compose.id == id).cloned() {
+                self.letzte_sendung = Some((action_id, compose));
+            }
+            self.compose.retain(|compose| compose.id != id);
+        }
+        let jetzt = chrono::Local::now().timestamp_millis();
+        // „Später senden" erkennt man an der Absicht, nicht am Zeitfenster:
+        // auch ein sofortiger Versand liegt einige Sekunden in der Zukunft
+        // (`undo_send_seconds`), sonst gäbe es kein Rückgängig.
+        let text = if matches!(self.send_absicht.take(), Some(SendeAbsicht::Um(_))) {
+            format!(
+                "Später senden eingereiht: {}",
+                snooze::zeit_text(dispatch_at, jetzt)
+            )
+        } else {
+            "Wird gesendet · 1 Nachricht".to_string()
+        };
+        // Das Rückgängig-Fenster ist das des Kerns (`undo_send_seconds`, hier
+        // über `dispatch_at`): der Knopf bleibt so lange stehen wie die Chance.
+        let dauer = std::time::Duration::from_millis(
+            (dispatch_at - jetzt).clamp(5_000, 120_000) as u64,
+        );
+        self.toast = Some(crate::ui::toast::Toast::mit_senden(action_id, text, dauer));
+        cx.notify();
+    }
+
+    /// Knopf im Toast: je nach Ziel zurücknehmen oder Senden abbrechen.
+    pub fn toast_aktion(&mut self, cx: &mut Context<Self>) {
+        let Some(toast) = self.toast.take() else { return };
+        match toast.ziel {
+            crate::ui::toast::ToastZiel::Undo => self.rueckgaengig(cx),
+            crate::ui::toast::ToastZiel::SendCancel(action_id) => {
+                self.in_flight += 1;
+                self.kern.request(Request::CancelSend { action_id });
+                cx.notify();
+            }
+        }
+    }
+
+    // ------------------------------------------------------------- Rückfrage
+
+    /// Tasten in der Rückfrage: `Esc`/`↵` brechen ab, `Tab`/Pfeile wechseln,
+    /// erst der gewechselte Knopf löst das Löschen aus.
+    fn bestaetigung_tasten(&mut self, event: &KeyDownEvent, cx: &mut Context<Self>) {
+        let gewaehlt = self.bestaetigung.as_ref().is_some_and(|frage| frage.loeschen);
+        match dialog::taste(event.keystroke.key.as_str(), gewaehlt) {
+            Antwort::Nichts => {}
+            Antwort::Umschalten => {
+                if let Some(frage) = self.bestaetigung.as_mut() {
+                    frage.loeschen = !frage.loeschen;
+                }
+                cx.notify();
+            }
+            Antwort::Abbrechen => {
+                self.bestaetigung = None;
+                cx.notify();
+            }
+            Antwort::Loeschen => self.bestaetigung_bestaetigen(cx),
+        }
+    }
+
+    /// Der gefährliche Knopf: ausführen und die Rückfrage schließen.
+    pub fn bestaetigung_bestaetigen(&mut self, cx: &mut Context<Self>) {
+        let Some(frage) = self.bestaetigung.take() else { return };
+        match frage.ziel {
+            BestaetigungZiel::AnhangOeffnen(pfad) => {
+                if let Err(fehler) =
+                    crate::core::host::oeffnen_mit(&crate::core::host::oeffner(), &pfad)
+                {
+                    self.toast = Some(crate::ui::toast::Toast::neu(
+                        format!("Öffnen fehlgeschlagen: {fehler}"),
+                        Duration::from_secs(5),
+                    ));
+                }
+                cx.notify();
+            }
+            BestaetigungZiel::EndgueltigLoeschen(id) => {
+                self.selected = Some(id);
+                self.aktion_senden(
+                    id,
+                    "delete_permanently",
+                    None,
+                    "Endgültig gelöscht".into(),
+                    true,
+                    false,
+                    cx,
+                );
+            }
+        }
+    }
+
+    pub fn kontextmenue_schliessen(&mut self, cx: &mut Context<Self>) {
+        if self.kontextmenue.take().is_some() {
+            cx.notify();
+        }
+    }
+}
+
+/// Rückfrage vor dem Öffnen eines gefährdeten Anhangs. Vorgabe ist immer
+/// „Abbrechen" (`loeschen: false`), wie beim endgültigen Löschen.
+pub fn anhang_frage(text: String, pfad: String) -> Bestaetigung {
+    Bestaetigung {
+        text: text.into(),
+        knopf: "Trotzdem öffnen".into(),
+        loeschen: false,
+        hinweis: "Tab wechselt · ↵ bestätigt die Auswahl · Esc bricht ab".into(),
+        ziel: BestaetigungZiel::AnhangOeffnen(pfad),
+    }
+}
+
+/// „Name <mail>" oder nur die Adresse — wie sie im Feld steht.
+fn adresse_text(adresse: &crate::core::models::Address) -> String {
+    match adresse.name.as_deref().map(str::trim).filter(|name| !name.is_empty()) {
+        Some(name) => format!("{name} <{}>", adresse.email),
+        None => adresse.email.clone(),
+    }
+}
+
+/// Text in ein Feld setzen, Cursor ans Ende.
+fn setze_feld(feld: &Entity<TextField>, text: &str, cx: &mut Context<AppState>) {
+    let text = text.to_string();
+    feld.update(cx, |feld, cx| {
+        feld.cursor = text.encode_utf16().count();
+        feld.text = text;
+        cx.notify();
+    });
+}
+
+/// Adressen eines Feldes als JSON für `save_draft`.
+fn adressen_json(text: &str) -> Vec<serde_json::Value> {
+    adressen_parsen(text)
+        .into_iter()
+        .map(|adresse| match adresse.name {
+            Some(name) => serde_json::json!({ "name": name, "email": adresse.email }),
+            None => serde_json::json!({ "name": null, "email": adresse.email }),
+        })
+        .collect()
+}
+
+/// Morgen 8:00 als Millisekunden (Vorgabe für „Später", wie auf dem Mac).
+fn morgen_acht_uhr_ms() -> Option<i64> {
+    use chrono::TimeZone as _;
+    let morgen = chrono::Local::now().date_naive() + chrono::Duration::days(1);
+    let zeit = morgen.and_hms_opt(8, 0, 0)?;
+    chrono::Local.from_local_datetime(&zeit).single().map(|zeit| zeit.timestamp_millis())
+}
+
 impl Render for AppState {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = self.theme.clone();
         let breite = f32::from(window.viewport_size().width);
+        let hoehe = f32::from(window.viewport_size().height);
         self.fenster_breite = breite;
+        self.fenster_hoehe = hoehe;
         let seitenleiste = self.seitenleiste && breite >= 872.;
+        let toast_inhalt = self
+            .toast
+            .as_ref()
+            .map(|toast| (toast.text.clone(), toast.aktion.clone()));
+
+        // Ein Entwurf kam ohne Fenster an (Entwürfe, abgebrochenes Senden):
+        // hier ist das Fenster da, um Felder und Editor zu füllen.
+        if let Some(compose) = self.pending_dock.take() {
+            let id = compose.id;
+            self.compose.retain(|vorhanden| vorhanden.id != id);
+            self.compose.push(compose);
+            self.compose_laden(id, window, cx);
+        }
+
+        // Beleg-Hook: Text in den Editor setzen (braucht das Fenster).
+        if let Some(text) = self.pending_editor_text.take() {
+            if let Some(editor) = self.editor.clone() {
+                let doc = crate::editor::EditorDoc::from_plain(text);
+                editor.update(cx, |editor, cx| editor.set_content(&doc, window, cx));
+                if let Some(id) = self.compose_aktiv {
+                    if let Some(compose) = self.compose.iter_mut().find(|c| c.id == id) {
+                        compose.doc = Some(doc);
+                    }
+                }
+            }
+        }
 
         // Fokus aus einem Kürzel oder Hook anwenden (braucht das Fenster).
         self.fokus_anwenden(window, cx);
@@ -1216,6 +2942,7 @@ impl Render for AppState {
         div()
             .id("root")
             .size_full()
+            .relative()
             .flex()
             .flex_col()
             .bg(rgb(theme.bg()))
@@ -1228,7 +2955,13 @@ impl Render for AppState {
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(|this: &mut AppState, _event: &MouseDownEvent, window, cx| {
-                    let im_feld = this.suchfeld.read(cx).is_focused(window);
+                    let im_feld = this.suchfeld.read(cx).is_focused(window)
+                        || this.datumfeld.read(cx).is_focused(window);
+                    if this.kontextmenue.is_some() {
+                        this.kontextmenue = None;
+                        cx.notify();
+                    }
+                    this.compose_fokus = false;
                     if !im_feld {
                         let focus = this.focus.clone();
                         window.focus(&focus);
@@ -1262,7 +2995,23 @@ impl Render for AppState {
                     ),
             )
             .child(crate::ui::toolbar::fusszeile(self, cx))
+            .children(toast_inhalt.map(|(text, aktion)| {
+                div()
+                    .absolute()
+                    .bottom(px(56.))
+                    .left_0()
+                    .right_0()
+                    .flex()
+                    .justify_center()
+                    .child(crate::ui::toast::toast(text, aktion, &theme, cx))
+            }))
             .children(self.hilfe.then(|| crate::ui::toolbar::hilfe_overlay(self, cx)))
+            .children(self.auswahl.is_some().then(|| crate::ui::auswahl::overlay(self, cx)))
+            .children(self.kontextmenue.is_some().then(|| thread::kontextmenue(self, cx)))
+            .children(self.bestaetigung.is_some().then(|| dialog::dialog(self, cx)))
+            .children((!self.compose.is_empty()).then(|| {
+                crate::ui::compose_dock::dock(self, window, cx)
+            }))
     }
 }
 
@@ -1276,4 +3025,29 @@ fn korpus_ordner() -> Option<PathBuf> {
 #[cfg(not(feature = "test-hooks"))]
 fn korpus_ordner() -> Option<PathBuf> {
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{anhang_frage, BestaetigungZiel};
+
+    /// Die Anhang-Rückfrage steht auf „Abbrechen": ↵ ohne Umschalten öffnet nichts.
+    #[test]
+    fn anhang_frage_hat_abbrechen_als_vorgabe() {
+        let frage = anhang_frage(
+            "Trotzdem öffnen? .sh steckt als zweite Endung im Namen".into(),
+            "/tmp/rechnung.sh.pdf".into(),
+        );
+        assert!(!frage.loeschen, "Vorgabe muss Abbrechen sein");
+        assert_eq!(frage.knopf.as_ref(), "Trotzdem öffnen");
+        assert_eq!(
+            frage.ziel,
+            BestaetigungZiel::AnhangOeffnen("/tmp/rechnung.sh.pdf".into())
+        );
+        // ↵ ohne Umschalten bricht ab (dieselbe Auswertung wie im Dialog).
+        assert_eq!(
+            crate::ui::dialog::taste("enter", frage.loeschen),
+            crate::ui::dialog::Antwort::Abbrechen
+        );
+    }
 }
