@@ -1,0 +1,38 @@
+[package]
+name = "corax-linux-spike"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "GPUI-Spike für die künftige Corax-Oberfläche unter Linux/Omarchy"
+
+# Eigenes Workspace: der Spike hängt nur per Pfad am Host-Crate, damit der
+# Tauri-Workspace in src-tauri unberührt bleibt.
+[workspace]
+
+[[bin]]
+name = "corax-spike"
+path = "src/main.rs"
+
+[dependencies]
+# Versionen exakt gepinnt: GPUI ist vor 1.0, Blitz ist Beta. Upgrades nur als eigenes Paket.
+gpui = "=0.2.2"
+corax-host = { path = "../../src-tauri/crates/corax-host" }
+serde_json = "1"
+chrono = { version = "0.4", features = ["serde"] }
+
+# Blitz: HTML/CSS-Engine für den Mail-Körper (Vergleichs-Spike, Entscheidung für den Port).
+blitz-dom = "=0.3.0-beta.4"
+blitz-html = "=0.3.0-beta.4"
+blitz-traits = "=0.3.0-beta.4"
+blitz-paint = { version = "=0.3.0-beta.4", default-features = false }
+anyrender = "=0.14.0"
+anyrender_vello_cpu = "=0.18.0"
+image = { version = "=0.25.10", default-features = false, features = ["png"] }
+# fontique 0.12 importiert Fontconfig-Symbole als freie Funktionen, die
+# yeslogic-fontconfig-sys 6.0.1 nicht mehr exportiert; dlopen ist der Weg des Herstellers.
+fontique = { version = "=0.12.0", features = ["fontconfig-dlopen"] }
+
+[patch.crates-io]
+xattr = { path = "vendor/xattr" }
+# serde_fmt 1.1.0: störende `From<Error> for fmt::Error` entfernt (siehe vendor/serde_fmt).
+serde_fmt = { path = "vendor/serde_fmt" }
