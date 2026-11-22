@@ -29,7 +29,7 @@ Session-Verluste     0      (vor dem Fix: 96)
 Content-Fehler       0
 ```
 
-Die Release-Instanz (`de.streil.rabe`, `/Applications/Rabe.app`) nutzt
+Die Release-Instanz (`de.streil.rabe`, `/Applications/Corax.app`) nutzt
 dasselbe Binary mit der Basiskonfiguration und ein eigenes Datenverzeichnis.
 
 ## Änderungen und ihre Begründung
@@ -101,15 +101,15 @@ teilen:
 | Datei | Zweck |
 |---|---|
 | `scripts/build-local-app.sh` | Release-Build aus dem Fork, signiert, installiert nach `/Applications` |
-| `scripts/release-fork.sh` | baut, packt `Rabe.app.tar.gz`, signiert und legt das GitHub-Release mit `latest.json` an |
-| `scripts/build-dev-app.sh` | `Rabe Dev.app` (Release-Profil, Dev-Identifier) |
+| `scripts/release-fork.sh` | baut, packt `Corax.app.tar.gz`, signiert und legt das GitHub-Release mit `latest.json` an |
+| `scripts/build-dev-app.sh` | `Corax Dev.app` (Release-Profil, Dev-Identifier) |
 | `scripts/dev-isolated.sh` | `tauri dev` mit Dev-Overlay |
 | `scripts/imap-backup.py` | rein lesendes IMAP-Vollbackup als `.eml` |
 | `src-tauri/tauri.dev.conf.json` | Dev-Overlay: Identifier, Name, Updater aus |
 
 Der Updater ist in der Release-App **an**: `tauri.conf.json` trägt unseren
 Public Key und den Endpoint
-`https://github.com/cstreil/Rabe/releases/latest/download/latest.json`. Der
+`https://github.com/cstreil/Corax/releases/latest/download/latest.json`. Der
 private Schlüssel liegt unter `~/.tauri/rabe-updater.key` (außerhalb des Repos,
 `chmod 600`), ohne ihn kann niemand ein Update bauen, das eine installierte App
 annimmt.
@@ -348,8 +348,8 @@ Ein Fehler dort kostet nur die Büroklammer, nie den Header-Batch.
 ```bash
 cd "Projekte/comail.nosync"
 
-sh scripts/build-local-app.sh   # → /Applications/Rabe.app
-sh scripts/build-dev-app.sh     # → Rabe Dev.app, danach nach /Applications kopieren
+sh scripts/build-local-app.sh   # → /Applications/Corax.app
+sh scripts/build-dev-app.sh     # → Corax Dev.app, danach nach /Applications kopieren
 pnpm dev:isolated               # Hot-Reload-Dev-Instanz
 ```
 

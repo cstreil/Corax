@@ -126,7 +126,7 @@ async function notifyNewEvents(events: NewEventInfo[]) {
       });
     } else {
       sendNotification({
-        title: "Rabe",
+        title: "Corax",
         body: i18n.t("calendar:newEvents", { count: events.length }),
       });
     }

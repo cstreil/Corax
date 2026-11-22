@@ -51,13 +51,13 @@
     "continue": "Tiếp tục",
     "skip": "Bỏ qua",
     "welcome": {
-      "title": "Chào mừng đến với Rabe.",
+      "title": "Chào mừng đến với Corax.",
       "body": "Hộp thư nhanh, ưu tiên bàn phím. Kết nối tài khoản, chọn giao diện, học ba phím là xong. Chỉ mất khoảng một phút.",
       "cta": "Bắt đầu"
     },
     "connect": {
       "title": "Kết nối hộp thư của bạn.",
-      "body": "Rabe kết nối trực tiếp với nhà cung cấp của bạn. Mật khẩu và thư của bạn không bao giờ rời khỏi máy tính này.",
+      "body": "Corax kết nối trực tiếp với nhà cung cấp của bạn. Mật khẩu và thư của bạn không bao giờ rời khỏi máy tính này.",
       "imap": "Nhà cung cấp khác (IMAP)",
       "waiting": "Đang chờ trình duyệt…",
       "waitingHint": "Hoàn tất đăng nhập rồi quay lại đây.",
@@ -78,7 +78,7 @@
     },
     "shortcuts": {
       "title": "Học các phím tắt.",
-      "body": "Rabe được thiết kế để điều khiển bằng bàn phím. Hãy thử từng phím, hộp thư bên phải chỉ là bản thử nghiệm và không ảnh hưởng đến thư của bạn.",
+      "body": "Corax được thiết kế để điều khiển bằng bàn phím. Hãy thử từng phím, hộp thư bên phải chỉ là bản thử nghiệm và không ảnh hưởng đến thư của bạn.",
       "press": "Nhấn",
       "groups": {
         "navigate": "Di chuyển",
@@ -102,7 +102,7 @@
       "snoozeShort": "Tạm ẩn",
       "replyShort": "Trả lời",
       "paletteShort": "Thanh lệnh",
-      "allDone": "Bạn đã nắm được những điều cơ bản. Nhấn ? ở bất kỳ đâu trong Rabe để xem mọi phím tắt.",
+      "allDone": "Bạn đã nắm được những điều cơ bản. Nhấn ? ở bất kỳ đâu trong Corax để xem mọi phím tắt.",
       "progress": "Đã thử {{n}}/{{total}}",
       "then": "rồi",
       "summarize": "Tóm tắt cuộc hội thoại",

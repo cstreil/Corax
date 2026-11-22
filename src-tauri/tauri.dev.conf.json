@@ -1,11 +1,11 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Rabe Dev",
+  "productName": "Corax Dev",
   "identifier": "de.streil.rabe.dev",
   "app": {
     "windows": [
       {
-        "title": "Rabe Dev",
+        "title": "Corax Dev",
         "width": 1200,
         "height": 800,
         "minWidth": 720,

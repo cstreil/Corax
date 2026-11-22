@@ -1,5 +1,5 @@
 #!/bin/sh
-# Startet eine isolierte Entwicklungs-Instanz neben der installierten Rabe-App.
+# Startet eine isolierte Entwicklungs-Instanz neben der installierten Corax-App.
 #
 # Das Overlay `src-tauri/tauri.dev.conf.json` setzt einen eigenen
 # Bundle-Identifier (de.streil.rabe.dev). Daraus leitet die App beim Start

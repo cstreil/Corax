@@ -2,7 +2,7 @@ import Foundation
 import CoraxKit
 
 /// M3.3: was die Intents von der App brauchen — absichtlich schmal und ohne
-/// AppKit, damit `CoraxIntents` unverändert nach `rabe-app` wandern kann.
+/// AppKit, damit `CoraxIntents` unverändert in die eigenständige App wandern kann.
 public protocol IntentHost: Sendable {
     /// Wartet, bis die Sitzung steht (Host gestartet, Liste geladen).
     func waitUntilReady(timeout: Duration) async -> Bool

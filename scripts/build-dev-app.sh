@@ -1,9 +1,9 @@
 #!/bin/sh
-# Baut eine eigenständige Rabe Dev.app: eigener Identifier
+# Baut eine eigenständige Corax Dev.app: eigener Identifier
 # (de.streil.rabe.dev), eigenes Datenverzeichnis, eigener Keyring-Service,
 # kein Updater. Läuft parallel zu einer installierten Release-App.
 #
-# Ergebnis: src-tauri/target/release/bundle/macos/Rabe Dev.app
+# Ergebnis: src-tauri/target/release/bundle/macos/Corax Dev.app
 #
 # Release-Profil statt `tauri dev`, weil das Einbetten des Mail-Korpus im
 # Debug-Build um Größenordnungen langsamer ist. Dieselbe Datenverzeichnis-
@@ -43,7 +43,7 @@ pnpm tauri build --config src-tauri/tauri.dev.conf.json --bundles app "$@"
 # macOS derives the keychain partition ID from it. A self-signed identity has
 # no Team ID, so its partition ID falls back to the CDHash and every rebuild
 # re-prompts no matter how often "Always Allow" was clicked.
-APP="src-tauri/target/release/bundle/macos/Rabe Dev.app"
+APP="src-tauri/target/release/bundle/macos/Corax Dev.app"
 SIGN_IDENTITY="$(security find-identity -v -p codesigning 2>/dev/null \
   | sed -n 's/.*"\(Apple Development: [^"]*\)".*/\1/p' | head -1)"
 if [ -z "$SIGN_IDENTITY" ] && security find-certificate -c "comail-dev" >/dev/null 2>&1; then
@@ -56,12 +56,12 @@ if [ -n "$SIGN_IDENTITY" ]; then
   # build then silently kept tauri's ad-hoc signature and every rebuild asked
   # the keychain for the IMAP password again.
   SIGN_DIR="$(mktemp -d)"
-  ditto "$APP" "$SIGN_DIR/Rabe Dev.app"
-  xattr -cr "$SIGN_DIR/Rabe Dev.app"
+  ditto "$APP" "$SIGN_DIR/Corax Dev.app"
+  xattr -cr "$SIGN_DIR/Corax Dev.app"
   codesign --force --sign "$SIGN_IDENTITY" --identifier "de.streil.rabe.dev" \
-    --timestamp=none "$SIGN_DIR/Rabe Dev.app"
+    --timestamp=none "$SIGN_DIR/Corax Dev.app"
   rm -rf "$APP"
-  ditto "$SIGN_DIR/Rabe Dev.app" "$APP"
+  ditto "$SIGN_DIR/Corax Dev.app" "$APP"
   rm -rf "$SIGN_DIR"
   echo "Signiert mit: $SIGN_IDENTITY"
 else
@@ -71,4 +71,4 @@ fi
 
 echo
 echo "Bundle: $APP"
-echo "Installieren: ditto \"$APP\" \"/Applications/Rabe Dev.app\""
+echo "Installieren: ditto \"$APP\" \"/Applications/Corax Dev.app\""

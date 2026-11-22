@@ -24,7 +24,7 @@ public enum AppIdentity {
     public static let tauriID = "de.streil.rabe"
 
     /// Die bisherigen Kennungen, **neueste zuerst**:
-    /// M3.1–M3.4 lief unter `de.streil.corax`, davor `Rabe Native.app` unter
+    /// M3.1–M3.4 lief unter `de.streil.corax`, davor die frühere native Version unter
     /// `de.streil.rabe.native`.
     public static let legacyIDs = ["de.streil.corax", "de.streil.rabe.native"]
     public static let legacySandboxIDs = ["de.streil.corax.sandbox", "de.streil.rabe.native.sandbox"]

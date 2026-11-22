@@ -51,13 +51,13 @@
     "continue": "继续",
     "skip": "跳过",
     "welcome": {
-      "title": "欢迎使用 Rabe。",
+      "title": "欢迎使用 Corax。",
       "body": "快速、以键盘为先的收件箱。连接账户、选择外观、学会三个按键，即可开始。大约只需一分钟。",
       "cta": "开始使用"
     },
     "connect": {
       "title": "接入你的收件箱。",
-      "body": "Rabe 直接与你的邮件服务商通信。你的密码和邮件始终不会离开这台电脑。",
+      "body": "Corax 直接与你的邮件服务商通信。你的密码和邮件始终不会离开这台电脑。",
       "imap": "其他服务商（IMAP）",
       "waiting": "等待浏览器…",
       "waitingHint": "完成登录后，再回到这里。",
@@ -78,7 +78,7 @@
     },
     "shortcuts": {
       "title": "学会这些按键。",
-      "body": "Rabe 专为键盘操作而设计。逐个试试吧，右侧的收件箱只是沙盒，不会影响你的邮件。",
+      "body": "Corax 专为键盘操作而设计。逐个试试吧，右侧的收件箱只是沙盒，不会影响你的邮件。",
       "press": "按",
       "groups": {
         "navigate": "移动",
@@ -102,7 +102,7 @@
       "snoozeShort": "暂停",
       "replyShort": "回复",
       "paletteShort": "命令面板",
-      "allDone": "基础操作已掌握。在 Rabe 中随时按 ? 查看所有快捷键。",
+      "allDone": "基础操作已掌握。在 Corax 中随时按 ? 查看所有快捷键。",
       "progress": "已试 {{n}}/{{total}} 个",
       "then": "然后",
       "summarize": "总结会话",

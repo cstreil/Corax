@@ -10,7 +10,7 @@ final class M218mTests: XCTestCase {
     }
 
     private func label(_ id: Int64, _ name: String, auto: Bool = false) -> Label {
-        Label(id: id, name: name, color: "#3366ff", keyword: "$rabe-\(id)",
+        Label(id: id, name: name, color: "#3366ff", keyword: "$corax-\(id)",
               position: id, isAuto: auto)
     }
 
@@ -18,13 +18,13 @@ final class M218mTests: XCTestCase {
 
     func testFoldersComeWithTheirPathAndLabelsWithoutAutoCategories() {
         let entries = GoToEntries.make(
-            folders: [folder(3, "Projekte/Rabe"), folder(2, "Projekte")],
+            folders: [folder(3, "Projekte/Website"), folder(2, "Projekte")],
             labels: [label(10, "Reise"), label(11, "Bank"), label(12, "Marketing", auto: true)])
-        XCTAssertEqual(entries.map(\.title), ["Projekte", "Rabe", "Bank", "Reise"])
+        XCTAssertEqual(entries.map(\.title), ["Projekte", "Website", "Bank", "Reise"])
         XCTAssertEqual(entries.map(\.kind), [.folder, .folder, .label, .label])
         XCTAssertEqual(entries[0].path, "Projekte")
-        XCTAssertEqual(entries[1].path, "Projekte / Rabe", "der Pfad ist lesbar")
-        XCTAssertEqual(entries[1].detail, "Projekte / Rabe")
+        XCTAssertEqual(entries[1].path, "Projekte / Website", "der Pfad ist lesbar")
+        XCTAssertEqual(entries[1].detail, "Projekte / Website")
         XCTAssertNil(entries[2].path)
         XCTAssertFalse(entries.contains { $0.title == "Marketing" }, "automatische Labels fallen weg")
     }
@@ -32,7 +32,7 @@ final class M218mTests: XCTestCase {
     /// Zwischenknoten des Baums sind keine Ziele: ein fehlender Elternordner
     /// wird eingefügt, aber nicht angeboten.
     func testMissingParentsAreNotTargets() {
-        let entries = GoToEntries.make(folders: [folder(5, "Projekte/Rabe/Design")], labels: [])
+        let entries = GoToEntries.make(folders: [folder(5, "Projekte/Website/Design")], labels: [])
         XCTAssertEqual(entries.map(\.title), ["Design"])
         XCTAssertTrue(entries.allSatisfy { $0.targetId > 0 },
                       "nur echte Ordner, keine negativen Zwischenknoten")
@@ -54,14 +54,14 @@ final class M218mTests: XCTestCase {
 
     func testSearchFindsByNameAndByPath() {
         let entries = GoToEntries.make(
-            folders: [folder(1, "Projekte"), folder(2, "Projekte/Rabe"), folder(3, "Bank")],
+            folders: [folder(1, "Projekte"), folder(2, "Projekte/Website"), folder(3, "Bank")],
             labels: [label(10, "Steuer")])
 
         XCTAssertEqual(GoToEntries.matches(entries, query: "bank").map(\.title), ["Bank"])
-        XCTAssertEqual(GoToEntries.matches(entries, query: "rabe").map(\.title), ["Rabe"],
+        XCTAssertEqual(GoToEntries.matches(entries, query: "website").map(\.title), ["Website"],
                        "der Ordnername reicht")
         XCTAssertEqual(GoToEntries.matches(entries, query: "projekte").map(\.title),
-                       ["Projekte", "Rabe"], "der Pfad trifft Ordner und Kinder")
+                       ["Projekte", "Website"], "der Pfad trifft Ordner und Kinder")
         XCTAssertEqual(GoToEntries.matches(entries, query: "steu").map(\.title), ["Steuer"])
         XCTAssertEqual(GoToEntries.matches(entries, query: "").count, entries.count)
         XCTAssertTrue(GoToEntries.matches(entries, query: "xyz").isEmpty)

@@ -1,7 +1,7 @@
 @import "tailwindcss";
 
 /* ---------------------------------------------------------------------------
-   Rabe themes - "Glas" (light) & "Graphit" (dark), after the mail mockup.
+   Corax themes - "Glas" (light) & "Graphit" (dark), after the mail mockup.
    The stored ids stay `snow` and `carbon`: they sit in localStorage, in the
    theme unions and in every translation file, and only the palette changed.
    Exactly 5 gray steps per theme. Never pure black/white.

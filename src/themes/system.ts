@@ -5,7 +5,7 @@ import type { SystemColors } from "../ipc/types";
  *
  * Only the tokens a desktop actually dictates are overridden - surfaces, text
  * and accent. Shadows, AI colours and the selection tints keep coming from
- * Glas/Graphit, so the app still reads as Rabe instead of as a colour dump, and
+ * Glas/Graphit, so the app still reads as Corax instead of as a colour dump, and
  * a desktop palette can never produce an unreadable accent-on-surface pair.
  *
  * Call with `null` to drop the overlay again.

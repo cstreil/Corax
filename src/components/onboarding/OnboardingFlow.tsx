@@ -126,7 +126,7 @@ export function OnboardingFlow({ onDone }: { onDone: () => void }) {
         <section className="co-onb-panel" data-tauri-drag-region>
           <header className="flex items-center gap-2.5" data-tauri-drag-region>
             <IntroMark className="size-5" />
-            <span className="text-sm font-semibold tracking-[0.14em] text-ink-faint uppercase">Rabe</span>
+            <span className="text-sm font-semibold tracking-[0.14em] text-ink-faint uppercase">Corax</span>
             <IconButton
               icon="settings"
               size="md"

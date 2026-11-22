@@ -72,10 +72,10 @@ final class M218kTests: XCTestCase {
     /// Root, sondern unter einem nicht wählbaren Zwischenknoten.
     func testAMissingParentBecomesANonSelectableNode() {
         let rows = tree([
-            ("Projekte/Rabe/Design", 6),
-            ("Projekte/Rabe", 5),
+            ("Projekte/Website/Design", 6),
+            ("Projekte/Website", 5),
         ])
-        XCTAssertEqual(rows.map(\.name), ["Projekte", "Rabe", "Design"])
+        XCTAssertEqual(rows.map(\.name), ["Projekte", "Website", "Design"])
         XCTAssertEqual(rows.map(\.depth), [0, 1, 2])
 
         let parent = rows[0]
@@ -85,19 +85,19 @@ final class M218kTests: XCTestCase {
         XCTAssertTrue(rows[2].isSelectable)
 
         // Die Kennung ist über Aufrufe hinweg gleich (SwiftUI-Identität).
-        let again = tree([("Projekte/Rabe/Design", 6), ("Projekte/Rabe", 5)])
+        let again = tree([("Projekte/Website/Design", 6), ("Projekte/Website", 5)])
         XCTAssertEqual(rows.map(\.folder.id), again.map(\.folder.id))
     }
 
     /// „INBOX.Ordner“ (Dovecot/Courier) wird ohne das Präfix einsortiert.
     func testTheInboxPrefixIsDropped() {
         var inbox = folder(1, "INBOX", role: "inbox", delimiter: ".")
-        let rest = [("INBOX.Projekte", 2), ("INBOX.Projekte.Rabe", 3)].map {
+        let rest = [("INBOX.Projekte", 2), ("INBOX.Projekte.Website", 3)].map {
             folder($0.1, $0.0, delimiter: ".")
         }
         _ = inbox
         let rows = Pickers.folderTree([inbox] + rest)
-        XCTAssertEqual(rows.map(\.name), ["Projekte", "Rabe"])
+        XCTAssertEqual(rows.map(\.name), ["Projekte", "Website"])
         XCTAssertEqual(rows.map(\.depth), [0, 1])
         XCTAssertTrue(rows.allSatisfy(\.isSelectable))
     }

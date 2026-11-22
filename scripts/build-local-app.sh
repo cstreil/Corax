@@ -1,5 +1,5 @@
 #!/bin/sh
-# Baut Rabe.app aus dem Fork, signiert sie und installiert sie nach /Applications.
+# Baut Corax.app aus dem Fork, signiert sie und installiert sie nach /Applications.
 #
 # Drei lokale Eigenheiten werden behandelt:
 #  - Ohne volles Xcode fehlen die Siri-Intents-Metadaten
@@ -32,7 +32,7 @@ PY
 
 pnpm tauri build --bundles app
 
-APP="src-tauri/target/release/bundle/macos/Rabe.app"
+APP="src-tauri/target/release/bundle/macos/Corax.app"
 SIGN_IDENTITY="$(security find-identity -v -p codesigning 2>/dev/null \
   | sed -n 's/.*"\(Apple Development: [^"]*\)".*/\1/p' | head -1)"
 if [ -z "$SIGN_IDENTITY" ] && security find-certificate -c "comail-dev" >/dev/null 2>&1; then
@@ -43,12 +43,12 @@ if [ -n "$SIGN_IDENTITY" ]; then
   # com.apple.FinderInfo on bundles in there, and codesign rejects that with
   # "resource fork, Finder information, or similar detritus not allowed".
   SIGN_DIR="$(mktemp -d)"
-  ditto "$APP" "$SIGN_DIR/Rabe.app"
-  xattr -cr "$SIGN_DIR/Rabe.app"
+  ditto "$APP" "$SIGN_DIR/Corax.app"
+  xattr -cr "$SIGN_DIR/Corax.app"
   codesign --force --sign "$SIGN_IDENTITY" --identifier "de.streil.rabe" \
-    --timestamp=none "$SIGN_DIR/Rabe.app"
+    --timestamp=none "$SIGN_DIR/Corax.app"
   rm -rf "$APP"
-  ditto "$SIGN_DIR/Rabe.app" "$APP"
+  ditto "$SIGN_DIR/Corax.app" "$APP"
   rm -rf "$SIGN_DIR"
   echo "Signiert mit: $SIGN_IDENTITY"
 else
@@ -63,10 +63,10 @@ if [ "${NO_INSTALL:-0}" = "1" ]; then
   exit 0
 fi
 
-osascript -e 'quit app "Rabe"' 2>/dev/null || true
+osascript -e 'quit app "Corax"' 2>/dev/null || true
 sleep 2
-rm -rf /Applications/Rabe.app
-ditto "$APP" /Applications/Rabe.app
+rm -rf /Applications/Corax.app
+ditto "$APP" /Applications/Corax.app
 
 echo
-echo "Installiert: /Applications/Rabe.app"
+echo "Installiert: /Applications/Corax.app"

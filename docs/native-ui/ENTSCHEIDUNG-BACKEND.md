@@ -1,4 +1,4 @@
-# Entscheidungspapier: Backend für Rabe auf Apple-Plattformen
+# Entscheidungspapier: Backend für Corax auf Apple-Plattformen
 
 Stand 2026-11-21 · Architect · Anlass: Frage des Nutzers, ob ein reiner macOS/iOS-Fokus ein anderes Backend nahelegt.
 Status: **Vorschlag**, nicht beschlossen. Ändert nichts an M2/M3.
@@ -18,8 +18,8 @@ Bei reinem Apple-Fokus: **eigenes Backend in Swift**, das den Comail-Kern vollst
 
 - `comail-core`: ≈ 42 k Zeilen Rust. Davon `db` 10,6 k, `sync` 5,7 k, `ai` 3,7 k, `caldav` 3,2 k, `route` 3,0 k, `queue` 3,0 k, `imap` 2,8 k, `mime` 2,6 k, `mcp` 2,5 k, `trash` 1,3 k, `calendar` 1,3 k, `search` 1,1 k, `embed` 0,9 k, `oauth` 0,8 k, Rest < 0,5 k je Modul.
 - Bibliotheken: `async-imap`, `lettre` (SMTP), `mail-parser`/`mail-builder` (MIME), `rusqlite`, `candle` (lokale Embeddings).
-- App ↔ Kern über `rabe-host` (Befehle/Ereignisse) und `rabe-uniffi`. `RabeKit` ist plattformneutrales Swift und schon für iOS vorbereitet.
-- Lizenz: Rabe ist ein Fork von NextOSP/comail unter **AGPL-3.0** (`FORK.md`, `LICENSE`). Die Swift-UI ist neu geschrieben. Der Kern und `src-tauri/swift/ComailIntents.swift` sind Comail-Code.
+- App ↔ Kern über `corax-host` (Befehle/Ereignisse) und `corax-uniffi`. `CoraxKit` ist plattformneutrales Swift und schon für iOS vorbereitet.
+- Lizenz: Corax ist ein Fork von NextOSP/comail unter **AGPL-3.0** (`FORK.md`, `LICENSE`). Die Swift-UI ist neu geschrieben. Der Kern und `src-tauri/swift/ComailIntents.swift` sind Comail-Code.
 
 ## 3. Bausteine
 
@@ -45,8 +45,8 @@ Bei reinem Apple-Fokus: **eigenes Backend in Swift**, das den Comail-Kern vollst
 ## 4. Zielstruktur
 
 ```
-RabeKit (bestehend, UI-nah)
-  └─ benutzt ─▶ RabeEngine (neu, SwiftPM-Target, kein AppKit/UIKit)
+CoraxKit (bestehend, UI-nah)
+  └─ benutzt ─▶ CoraxEngine (neu, SwiftPM-Target, kein AppKit/UIKit)
                  ├─ Store/        GRDB-Schema, Migrationen, FTS5
                  ├─ Sources/
                  │   ├─ MailSource (Protokoll) ─ IMAPSource · JMAPMailSource
@@ -58,8 +58,8 @@ RabeKit (bestehend, UI-nah)
                  └─ AI/  MCP/
 ```
 
-- Die Stores in `RabeKit` sprechen heute mit `RabeClient`, also mit `rabe-host`. Während des Umbaus bekommt `RabeClient` eine zweite Implementierung auf `RabeEngine`. Umgeschaltet wird **je Bereich** (Kalender, Kontakte, Mail), nicht alles auf einmal.
-- JMAP-Kalender sind nur in Rabe sichtbar, nicht im Apple Kalender, weil iOS und macOS keine JMAP-Konten kennen. Das nehmen wir bewusst in Kauf.
+- Die Stores in `CoraxKit` sprechen heute mit `CoraxClient`, also mit `corax-host`. Während des Umbaus bekommt `CoraxClient` eine zweite Implementierung auf `CoraxEngine`. Umgeschaltet wird **je Bereich** (Kalender, Kontakte, Mail), nicht alles auf einmal.
+- JMAP-Kalender sind nur in Corax sichtbar, nicht im Apple Kalender, weil iOS und macOS keine JMAP-Konten kennen. Das nehmen wir bewusst in Kauf.
 
 ## 5. Reihenfolge und Aufwand
 
@@ -67,7 +67,7 @@ Die Schätzung ist in Coder-Tagen auf dem bisherigen Arbeitsniveau angegeben und
 
 | # | Paket | Tage | Bemerkung |
 |---|---|---|---|
-| B0 | Fundament `RabeEngine`: Store, Konten, Schlüsselbund, Quellen-Protokolle | 5–8 | |
+| B0 | Fundament `CoraxEngine`: Store, Konten, Schlüsselbund, Quellen-Protokolle | 5–8 | |
 | B1 | Kalender, Erinnerungen und Kontakte über `EventKit`/`Contacts`, plus iMIP-Antworten | 6–10 | **unabhängig vom Rust-Kern** und damit auch früher möglich. Danach fallen `caldav/` und `calendar/` in der App weg. |
 | B2 | JMAP-Mail | 10–15 | der erste Mailweg ohne Comail |
 | B3 | IMAP-Engine in Swift | 20–30 | größtes Risiko (iCloud-Eigenheiten, Nachladen, Trash) |

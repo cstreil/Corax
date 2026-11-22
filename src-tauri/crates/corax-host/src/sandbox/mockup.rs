@@ -86,14 +86,14 @@ pub(crate) const THREADS: &[MockupThread] = &[
                 from_name: ACCOUNT_NAME,
                 outgoing: true,
                 at: Slot::DaysAgo(2, 18, 20),
-                body: "<p>Ja, gern – solange der Rabe erkennbar bleibt.</p>",
+                body: "<p>Ja, gern – solange der Vogel erkennbar bleibt.</p>",
                 attachments: &[],
             },
             MockupMessage {
                 from_name: "Jana Peters",
                 outgoing: false,
                 at: Slot::Today(10, 42),
-                body: "<p>Hallo Christian,</p><p>anbei Runde 3. Wir haben die Wortmarke reduziert und den Raben als eigenständiges Zeichen gezogen – funktioniert jetzt auch in 16 px.</p><p>Magst du bis Freitag Feedback geben? Dann kann Lea mit den App-Icons starten.</p><p>Liebe Grüße<br>Jana</p>",
+                body: "<p>Hallo Christian,</p><p>anbei Runde 3. Wir haben die Wortmarke reduziert und den Vogel als eigenständiges Zeichen gezogen – funktioniert jetzt auch in 16 px.</p><p>Magst du bis Freitag Feedback geben? Dann kann Lea mit den App-Icons starten.</p><p>Liebe Grüße<br>Jana</p>",
                 attachments: &[
                     att("Rebranding_Runde3.pdf", "application/pdf", "4,2 MB"),
                     att("Icon-Raster.png", "image/png", "820 KB"),

@@ -1,22 +1,22 @@
-# Briefing P2 — Rabe native: macOS-Oberfläche M1
+# Briefing P2 — Corax native: macOS-Oberfläche M1
 
 Empfänger: **Frontend** · Verfasser: Architect · Stand 2026-11-18 · Status: versendet 2026-11-19 (Sandbox P1b steht; Audit P1 läuft parallel, Befunde kommen ggf. nach)
 
-> Nachtrag P1b: Sandbox existiert (`~/Library/Application Support/de.streil.rabe.native.sandbox`, 10 Threads, 15 Nachrichten, 7 Anhänge, 3 Labels, Tab „Newsletter“). App-Umschaltung per `RABE_IDENTIFIER` liegt in `apps/macos/Sources/Rabe/{Instance.swift, AppModel.swift, AppDelegate.swift, main.swift}` — beim Umbau auf SwiftUI `App` erhalten. Bericht: `Work/Tasks/2026-11-18-rabe-native-p0/BERICHT-P1b.md`. Tests mit Keychain-Zugriff (`ai_status`) lösen einen macOS-Sicherheitsdialog aus; nie bestätigen.
+> Nachtrag P1b: Sandbox existiert (`~/Library/Application Support/de.streil.rabe.native.sandbox`, 10 Threads, 15 Nachrichten, 7 Anhänge, 3 Labels, Tab „Newsletter“). App-Umschaltung per `CORAX_IDENTIFIER` liegt in `apps/macos/Sources/Rabe/{Instance.swift, AppModel.swift, AppDelegate.swift, main.swift}` — beim Umbau auf SwiftUI `App` erhalten. Bericht: `Work/Tasks/2026-11-18-rabe-native-p0/BERICHT-P1b.md`. Tests mit Keychain-Zugriff (`ai_status`) lösen einen macOS-Sicherheitsdialog aus; nie bestätigen.
 
 ## 1. Ziel
-`Rabe Native.app` ist für Lesen, Triage und Antworten im Alltag nutzbar und sieht aus wie das macOS-Mockup in den Themes Papier, Graphit und Glas. Unter der Haube läuft der unveränderte Rust-Kern über `rabe-host`/`rabe-uniffi`.
+`Corax.app` ist für Lesen, Triage und Antworten im Alltag nutzbar und sieht aus wie das macOS-Mockup in den Themes Papier, Graphit und Glas. Unter der Haube läuft der unveränderte Rust-Kern über `corax-host`/`corax-uniffi`.
 
 ## 2. Kontext
 - Repo `Work/Projekte/comail.nosync`, Branch `feat/native-ui` (uncommitted). Zuerst lesen: `docs/native-ui/ARCHITEKTUR.md` (bes. §3, §4, §5 M1, §6 Budget, §7a/7b).
 - Mockup (Gestaltung ist verbindlich): `Work/Tasks/2026-11-18-mail-app-mockup/index.html` (Ansicht „macOS“, Themes `paper`/`graphite`/`glass`, im Browser bedienbar), Screenshots `previews/a-papier.png`, `b-graphit.png`, `c-glas.png`. Daten `mail-data.js`.
   - Fenster ohne Seitenleiste: Toolbar mit Ampel, Titel (aktuelle Ansicht), Tabs, Suche (`/`), Neu, Tastenkürzel-Knopf. Darunter die Liste mit Datumsgruppen und Initialen-Avataren; der Thread klappt **inline unter seiner Zeile** auf (Nachrichten, Anhänge, Antwortfeld, `⌘↵` senden, `Esc` verwerfen). Hinweisleiste unten, Toast mit Rückgängig, Sheet „Tastenkürzel“.
   - Design-Tokens je Theme (`--page`, `--win`, `--surface`, `--ink/2/3`, `--line`, `--hover`, `--sel`, `--accent`, `--accent-ink`, `--shadow`, `--blur`, `--ease: cubic-bezier(.22,.8,.2,1)`, `--dur: .36s`) stehen im `<style>` von `index.html`.
-- Bestehende App: `apps/macos/` (SwiftPM-Paket `Rabe`, Targets `RabeFFI`, `RabeBindings`, `Rabe`), `apps/macos/scripts/build-app.sh` (baut Rust-Staticlib, Bindings, `.app`, signiert). Einstieg aktuell AppKit, weil P0 ohne Xcode lief. **Xcode 27.2 ist jetzt aktiv**, SwiftUI-`App` mit `@State` ist erlaubt.
-- Brücke (Swift sieht): `RabeHost.start(identifier:resourceDir:delegate:)` (nicht blockierend), `waitReady()`, `invoke(cmd:argsJson:) async throws -> String`, `html…`-Funktionen (`wrapForDisplay`, `hasRemoteImages`, `darkModeScript`), Delegate `openUrl`, `openPath`, `onEvent(eventJson)`, `notify(...) -> Bool`, `copyToClipboard(text) -> Bool`. Exakte Signaturen: generierte Swift-Datei des Targets `RabeBindings`.
+- Bestehende App: `apps/macos/` (SwiftPM-Paket `Corax`, Targets `CoraxFFI`, `CoraxBindings`, `Corax`), `apps/macos/scripts/build-app.sh` (baut Rust-Staticlib, Bindings, `.app`, signiert). Einstieg aktuell AppKit, weil P0 ohne Xcode lief. **Xcode 27.2 ist jetzt aktiv**, SwiftUI-`App` mit `@State` ist erlaubt.
+- Brücke (Swift sieht): `CoraxHost.start(identifier:resourceDir:delegate:)` (nicht blockierend), `waitReady()`, `invoke(cmd:argsJson:) async throws -> String`, `html…`-Funktionen (`wrapForDisplay`, `hasRemoteImages`, `darkModeScript`), Delegate `openUrl`, `openPath`, `onEvent(eventJson)`, `notify(...) -> Bool`, `copyToClipboard(text) -> Bool`. Exakte Signaturen: generierte Swift-Datei des Targets `CoraxBindings`.
 - Command-Vertrag = Tauri-Frontend: Namen, Argumente und JSON-Formen aus `src/ipc/commands.ts` und `src/ipc/types.ts`, Events aus `src/ipc/events.ts` (`{"name","payload"}`). Fehler `{"code","message"}`, Codes siehe `src/ipc/errors.ts`.
 - Logik, die heute im React-Frontend liegt und **portiert, nicht neu erfunden** wird: `src/lib/quotes.ts` (Zitate), `src/lib/listItems.ts` (Datumsgruppen, Listeneinträge), `src/lib/format.ts` (Datum, Namen), `src/lib/snooze.ts` (Presets), `src/lib/selection.ts`, `src/lib/mailto.ts`, `src/lib/signatures.ts`, `src/lib/emailDark.ts` (läuft künftig über `darkModeScript`), `src/components/compose/Composer.tsx` + `RecipientField.tsx` (Antwort-Empfänger, Betreff-Präfix, Entwurf, Undo-Send), `src/components/common/Toasts.tsx`, `ShortcutHelp.tsx`, `src/keyboard/` (Tastaturbelegung), `src/i18n/` (deutsche Texte: wo vorhanden, wörtlich übernehmen).
-- Instanzen: Standard `de.streil.rabe.native` = **echtes iCloud-Konto** des Nutzers. Sandbox `RABE_IDENTIFIER=de.streil.rabe.native.sandbox` = Mockup-Daten, Server nicht erreichbar (`*.invalid`); Seed: `cargo run -p rabe-host --bin rabe-cli -- --identifier de.streil.rabe.native.sandbox seed-sandbox --reset` in `src-tauri`.
+- Instanzen: Standard `de.streil.rabe.native` = **echtes iCloud-Konto** des Nutzers. Sandbox `CORAX_IDENTIFIER=de.streil.rabe.native.sandbox` = Mockup-Daten, Server nicht erreichbar (`*.invalid`); Seed: `cargo run -p rabe-host --bin rabe-cli -- --identifier de.streil.rabe.native.sandbox seed-sandbox --reset` in `src-tauri`.
 
 ## 3. Anforderungen
 **Funktion**
@@ -24,7 +24,7 @@ Empfänger: **Frontend** · Verfasser: Architect · Stand 2026-11-18 · Status: 
 2. Ansicht und Konto wechseln über den Fenstertitel (Menü), die Menüleiste „Postfach“ (Eingang, Markiert, Später, Gesendet, Entwürfe, Erledigt, Papierkorb, Spam, Alle; Konten mit `⌃1`–`⌃9`) und `⌘K`.
 3. Thread inline aufklappen/zuklappen (`↵`/`Space`, Klick), `get_thread`/`get_body`. Text- und HTML-Nachrichten, ältere Nachrichten eines Threads gefaltet wie im Mockup, Anhänge öffnen (`open_attachment` → Delegate `openPath`) und sichern (`NSSavePanel` → `save_attachment`). Leiste „Bilder laden“, wenn `hasRemoteImages`.
 4. Aktionen über `perform_action` mit Tasten wie im Mockup-Sheet: `E` Erledigt, `#` Papierkorb, `H` Später (Presets aus `snooze.ts`, `H` direkt = morgen 8:00 wie im Mockup), `S` Stern, `U` ungelesen, `Z` Rückgängig (`undo_last`). Optimistisch: Zeile verschwindet im selben Frame, Toast mit „Rückgängig“; Fehler → Zeile zurück und Fehlermeldung.
-5. Antworten: `R` antwortet, `⇧R` an alle (Rabe-Belegung, siehe MEMORY.md). Inline-Antwortfeld wie im Mockup, `F` Weiterleiten, `C` neue Mail in eigenem Fenster. Empfängerfelder mit `suggest_contacts`, Betreff, Text (nur Text in M1). Entwurf automatisch speichern (`save_draft`, 1 s entprellt), `⌘↵` → `queue_send`, Toast „Gesendet · Rückgängig“ (`cancel_send`) für die Undo-Send-Dauer aus den Einstellungen.
+5. Antworten: `R` antwortet, `⇧R` an alle (Kürzelbelegung, siehe MEMORY.md). Inline-Antwortfeld wie im Mockup, `F` Weiterleiten, `C` neue Mail in eigenem Fenster. Empfängerfelder mit `suggest_contacts`, Betreff, Text (nur Text in M1). Entwurf automatisch speichern (`save_draft`, 1 s entprellt), `⌘↵` → `queue_send`, Toast „Gesendet · Rückgängig“ (`cancel_send`) für die Undo-Send-Dauer aus den Einstellungen.
 6. Suche: `/` fokussiert das Suchfeld, `↵` → `search`, Ergebnisse in derselben Liste, `Esc` zurück.
 7. `?` zeigt das Tastenkürzel-Sheet, `⌘K` eine Befehlspalette mit allen M1-Aktionen und Ansichten.
 8. Themes Papier/Graphit/Glas plus „System“ (hell → Papier, dunkel → Graphit), Auswahl in den Einstellungen und in der Menüleiste „Darstellung“. Gespeichert in `settings.theme` mit den IDs `paper`, `carbon` (= Graphit), `snow` (= Glas), `system`. `carbon` und `snow` sind bestehende IDs, nicht umbenennen. Glas nutzt echtes macOS-Material (`glassEffect`/`NSVisualEffectView`), Akzentfarbe aus `settings.accent_color`.
@@ -40,11 +40,11 @@ Empfänger: **Frontend** · Verfasser: Architect · Stand 2026-11-18 · Status: 
 16. Deutsch als Oberflächensprache (Texte aus `src/i18n/de`), Anrede „du“. Strings zentral in `Localizable.xcstrings` oder einer Swift-Tabelle.
 
 ## 4. Nicht-Ziele
-Kalender, KI-Funktionen, Splits-/Regel-Editor, Snippets, OAuth, Avatar-Layout/Senderfotos, Rich-Text-Composer, Tray/Menüleisten-Icon, `mailto:`, Updater, iOS, Linux. Keine Änderungen an `src-tauri/` (Kern, Tauri-App, `rabe-host`). Fehlt dort etwas, eine Notiz an Architect statt eines Umbaus. Kein Commit/Push.
+Kalender, KI-Funktionen, Splits-/Regel-Editor, Snippets, OAuth, Avatar-Layout/Senderfotos, Rich-Text-Composer, Tray/Menüleisten-Icon, `mailto:`, Updater, iOS, Linux. Keine Änderungen an `src-tauri/` (Kern, Tauri-App, `corax-host`). Fehlt dort etwas, eine Notiz an Architect statt eines Umbaus. Kein Commit/Push.
 
 ## 5. Umsetzung
-1. **Gerüst**: `Sources/Rabe/App/RabeApp.swift` (SwiftUI `App`, ein Hauptfenster, `Commands` für die Menüleiste), `AppDelegate` für Host-Start und -Ende. AppKit-Einstieg aus P0 ersetzen. `RABE_IDENTIFIER` aus P1b beibehalten.
-2. **Kernschicht**: `Core/RabeClient.swift` (actor, typisierte Wrapper je Command, decodiert mit `JSONDecoder` und `.convertFromSnakeCase` passend zum Vertrag), `Core/Models.swift` (Codable aus `src/ipc/types.ts`, nur M1-Typen), `Core/EventRouter.swift` (Event-JSON → typisierte Events auf `MainActor`).
+1. **Gerüst**: `Sources/Corax/App/CoraxApp.swift` (SwiftUI `App`, ein Hauptfenster, `Commands` für die Menüleiste), `AppDelegate` für Host-Start und -Ende. AppKit-Einstieg aus P0 ersetzen. `CORAX_IDENTIFIER` aus P1b beibehalten.
+2. **Kernschicht**: `Core/CoraxClient.swift` (actor, typisierte Wrapper je Command, decodiert mit `JSONDecoder` und `.convertFromSnakeCase` passend zum Vertrag), `Core/Models.swift` (Codable aus `src/ipc/types.ts`, nur M1-Typen), `Core/EventRouter.swift` (Event-JSON → typisierte Events auf `MainActor`).
 3. **Zustand** (`@Observable`, `@MainActor`): `MailboxStore` (Ansicht, Split, Konto, Seiten, Auswahl, aufgeklappter Thread, optimistische Aktionen samt Rollback und Undo-Stapel), `ThreadCache` (LRU 50 ThreadDetails), `ComposeStore` (je Entwurf), `SearchStore`, `SettingsStore`, `SyncStore`.
 4. **Liste** `UI/MailList/`: `NSTableView` (view-based, per `NSViewRepresentable`) mit drei Zeilentypen: Gruppenkopf, Thread-Zeile (feste Höhe, selbst gezeichnet bzw. leichte Views, keine SwiftUI-Hosting-View pro Zeile), Detailzeile für den aufgeklappten Thread (eine `NSHostingView` mit SwiftUI-Inhalt). Höhenänderung animiert über `noteHeightOfRows` in `NSAnimationContext`. Einzeltasten (`J/K/E/#/H/S/U/R/⇧R/F/Z/?`) im `keyDown` der Tabelle; die Menüleiste zeigt sie nur an.
 5. **HTML** `UI/Thread/HTMLMessageView.swift`: `WKWebView` mit `WKWebsiteDataStore.nonPersistent()`, `defaultWebpagePreferences.allowsContentJavaScript = false`. Inhalt = `wrapForDisplay(html, theme, loadRemoteImages)`. `darkModeScript` und Höhenmessung laufen in `WKContentWorld.defaultClient` (`evaluateJavaScript(_:in:in:)`). Navigation: `http`/`https` → `NSWorkspace.open`, `mailto` → Composer, alles andere abbrechen. Zusätzlich `WKContentRuleList`, die `http(s)`-Ladevorgänge blockt, solange Remote-Bilder aus sind. Höhe: Platzhalter aus Textlänge, nach Messung animiert anpassen. Web-Views aus einem kleinen Pool wiederverwenden.
@@ -62,11 +62,11 @@ let undone: Bool = try await client.undoLast()
 // Event
 {"name":"mail:updated","payload":{"threadIds":[42,43]}}
 ```
-Fehler: `RabeError.core(code, message)` → Toast mit deutschem Text je Code (Tabelle aus `src/ipc/errors.ts` + i18n).
+Fehler: `CoraxError.core(code, message)` → Toast mit deutschem Text je Code (Tabelle aus `src/ipc/errors.ts` + i18n).
 
 ## 7. Abnahmekriterien
 1. `sh apps/macos/scripts/build-app.sh` baut ohne Fehler, `codesign -v` ok.
-2. Sandbox (`RABE_IDENTIFIER=de.streil.rabe.native.sandbox`): Screenshots aller drei Themes im selben Zustand wie `previews/a-papier.png`, `b-graphit.png`, `c-glas.png` (Inbox mit aufgeklapptem Thread „Rebranding – Entwürfe Runde 3“), nebeneinander mit dem Mockup in `Work/Tasks/2026-11-18-rabe-native-p2/`.
+2. Sandbox (`CORAX_IDENTIFIER=de.streil.rabe.native.sandbox`): Screenshots aller drei Themes im selben Zustand wie `previews/a-papier.png`, `b-graphit.png`, `c-glas.png` (Inbox mit aufgeklapptem Thread „Rebranding – Entwürfe Runde 3“), nebeneinander mit dem Mockup in `Work/Tasks/2026-11-18-rabe-native-p2/`.
 3. Sandbox-Durchlauf nur per Tastatur, als Protokoll mit Screenshots: J/K, ↵, E, Z, H, S, U, #, R → Text → ⌘↵ → Rückgängig, C, /, ?, ⌘K, Tab.
 4. Echte Instanz **nur lesend**: Liste, Aufklappen, HTML-Mails (mindestens ein Newsletter mit Remote-Bildern, gesperrt und nach „Bilder laden“), Suche. Messwerte aus Anforderung 13 im Bericht.
 5. Scrollen durch die echte Inbox und „Alle“ mit Overlay: Hänger-Zahl und längster Frame im Bericht.
@@ -77,4 +77,4 @@ Fehler: `RabeError.core(code, message)` → Toast mit deutschem Text je Code (Ta
 - Variable Höhe der HTML-Zeile in `NSTableView` mit Animation: früh als Prototyp prüfen. Wenn es ruckelt, eine Notiz an Architect statt auf SwiftUI-`List` auszuweichen.
 - Dark-Mode-Anpassung von HTML-Mails (Graphit) ohne Seiten-JS: Ergebnis sichtbar prüfen.
 - Command-Formen: Bei Abweichungen zwischen `src/ipc` und tatsächlichem `dispatch`-Verhalten gilt `src/ipc`; Abweichung an Architect melden.
-- Die Mockup-Tastenbelegung (`R` antworten) und die Rabe-Belegung (`R`/`⇧R`) sind konsistent. Bei weiteren Konflikten gilt das Mockup, sie kommen in den Bericht.
+- Die Mockup-Tastenbelegung (`R` antworten) und die Kürzelbelegung (`R`/`⇧R`) sind konsistent. Bei weiteren Konflikten gilt das Mockup, sie kommen in den Bericht.

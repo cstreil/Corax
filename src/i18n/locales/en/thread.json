@@ -84,7 +84,7 @@
       "download": "Download",
       "downloaded": "Saved {{name}}",
       "noPreviewTitle": "No preview available",
-      "unsupported": "Rabe can't preview this file type yet. Open it in its app or save a copy.",
+      "unsupported": "Corax can't preview this file type yet. Open it in its app or save a copy.",
       "tooLargeTitle": "Too large to preview",
       "tooLarge": "Files this big open faster in their own app.",
       "pdfFailed": "This PDF couldn't be rendered",

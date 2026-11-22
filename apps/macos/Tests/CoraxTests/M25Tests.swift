@@ -382,8 +382,8 @@ final class M25PickerTests: XCTestCase {
     func testFolderNameDropsTheGmailPrefixAndShowsTheLeaf() {
         let gmail = folder(1, "[Gmail]/Alle Nachrichten")
         XCTAssertEqual(Pickers.folderName(gmail), "Alle Nachrichten")
-        let nested = FolderInfo(id: 2, accountId: 1, imapName: "INBOX/Projekte/Rabe", delimiter: "/", role: nil)
-        XCTAssertEqual(Pickers.folderName(nested), "Rabe")
+        let nested = FolderInfo(id: 2, accountId: 1, imapName: "INBOX/Projekte/Website", delimiter: "/", role: nil)
+        XCTAssertEqual(Pickers.folderName(nested), "Website")
     }
 
     func testLabelAndSnippetRanking() {

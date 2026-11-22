@@ -61,7 +61,7 @@ final class M29SidebarTests: XCTestCase {
     }
 
     func testToggleUnderTheAutoHideWidthForcesTheSidebar() {
-        let defaults = UserDefaults(suiteName: "rabe.test.sidebar.\(UUID().uuidString)")!
+        let defaults = UserDefaults(suiteName: "corax.test.sidebar.\(UUID().uuidString)")!
         let state = SidebarState(defaults: defaults)
         state.update(windowWidth: 800)
         XCTAssertFalse(state.isVisible, "schmal: von selbst eingeklappt")
@@ -77,7 +77,7 @@ final class M29SidebarTests: XCTestCase {
     }
 
     func testWidthChangeKeepsTheUsersChoice() {
-        let defaults = UserDefaults(suiteName: "rabe.test.sidebar.\(UUID().uuidString)")!
+        let defaults = UserDefaults(suiteName: "corax.test.sidebar.\(UUID().uuidString)")!
         let state = SidebarState(defaults: defaults)
         state.update(windowWidth: 1200)
         XCTAssertTrue(state.isVisible)
@@ -109,11 +109,11 @@ final class M29SidebarTests: XCTestCase {
     func testFolderTreeIndentsByPath() {
         let rows = Pickers.folderTree([
             folder(1, "Projekte"),
-            folder(2, "Projekte/Rabe"),
-            folder(3, "Projekte/Rabe/M2"),
+            folder(2, "Projekte/Website"),
+            folder(3, "Projekte/Website/M2"),
         ])
         XCTAssertEqual(rows.map(\.depth), [0, 1, 2])
-        XCTAssertEqual(rows.map(\.name), ["Projekte", "Rabe", "M2"])
+        XCTAssertEqual(rows.map(\.name), ["Projekte", "Website", "M2"])
     }
 
     func testFolderTreeStripsTheGmailPrefix() {
@@ -146,14 +146,14 @@ final class M29SidebarTests: XCTestCase {
 
     func testSelectingAFolderFiltersTheList() async throws {
         let (box, core) = await coreStore()
-        let target = FolderInfo(id: 7, accountId: 1, imapName: "Projekte/Rabe", delimiter: "/", role: nil)
+        let target = FolderInfo(id: 7, accountId: 1, imapName: "Projekte/Website", delimiter: "/", role: nil)
 
         box.selectFolder(target)
         await waitForList(core, folderId: 7)
 
         XCTAssertEqual(box.filterFolderId, 7)
         XCTAssertNil(box.filterLabelId)
-        XCTAssertEqual(box.title, "Rabe")
+        XCTAssertEqual(box.title, "Website")
         let queries = await core.listQueries
         XCTAssertTrue(queries.contains { $0.folderId == 7 }, "der Filter geht als folderId in den Kern")
     }

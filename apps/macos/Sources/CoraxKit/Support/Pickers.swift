@@ -95,7 +95,7 @@ public struct FolderRow: Identifiable, Hashable {
     /// Voller Pfad des Knotens (ohne `INBOX`/`[Gmail]`) — die Identität für
     /// Vergleich und Aufklappzustand.
     public let path: String
-    /// Derselbe Pfad lesbar: „Projekte / Rabe“ (M2.18m).
+    /// Derselbe Pfad lesbar: „Projekte / Website“ (M2.18m).
     public let displayPath: String
     public let hasChildren: Bool
     public let isSyntheticParent: Bool

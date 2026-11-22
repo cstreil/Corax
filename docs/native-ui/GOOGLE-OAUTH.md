@@ -74,7 +74,7 @@ Konten-Einrichtung per Klick.
 ## 6. Wo die Fehler stehen
 
 Der Kern antwortet auf Fehler mit `auth` und einem englischen Satz. Die Oberfläche übersetzt sie
-(`RabeKit/Support/OAuthErrorText.swift`) und zeigt nur deutschen Text — der Kern-Text bleibt im Log.
+(`CoraxKit/Support/OAuthErrorText.swift`) und zeigt nur deutschen Text — der Kern-Text bleibt im Log.
 Protokolliert werden ausschließlich:
 
 ```

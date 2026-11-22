@@ -191,7 +191,7 @@
     "automation": {
       "newTitle": "Tự động hóa mới",
       "editTitle": "Sửa tự động hóa",
-      "editorHint": "Mô tả toàn bộ quy trình bằng ngôn ngữ tự nhiên. Rabe sẽ diễn giải và kiểm tra trước khi cho phép lưu.",
+      "editorHint": "Mô tả toàn bộ quy trình bằng ngôn ngữ tự nhiên. Corax sẽ diễn giải và kiểm tra trước khi cho phép lưu.",
       "promptLabel": "Mô tả tự động hóa",
       "promptPlaceholder": "Khi email là hóa đơn hoặc biên lai từ nhà cung cấp, thêm nhãn Tài chính, chuyển vào Quan trọng và thêm [INVOICE] vào chủ đề.",
       "promptHint": "Nêu rõ cả điều kiện email cần khớp và mọi hành động cần chạy, theo đúng thứ tự bạn muốn.",
@@ -258,7 +258,7 @@
       "title": "Thiết lập từng bước",
       "googleTitle": "Google (Gmail)",
       "openGoogle": "Mở Google Cloud Console",
-      "g1": "Tạo dự án: tại console.cloud.google.com mở bộ chọn dự án trên thanh trên cùng, bấm New project, đặt tên (ví dụ Rabe), Create rồi chọn nó. Sau đó mở menu và vào APIs & Services.",
+      "g1": "Tạo dự án: tại console.cloud.google.com mở bộ chọn dự án trên thanh trên cùng, bấm New project, đặt tên (ví dụ Corax), Create rồi chọn nó. Sau đó mở menu và vào APIs & Services.",
       "g2": "Màn hình chấp thuận OAuth: chọn External (chọn Internal chỉ khi bạn có tổ chức Workspace), điền tên ứng dụng và email của bạn làm liên hệ hỗ trợ và nhà phát triển, rồi thêm địa chỉ Gmail của bạn vào mục Test users.",
       "g3": "Phạm vi: bấm Add or remove scopes, dán https://mail.google.com/ vào ô nhập thủ công và thêm. Đó là phạm vi duy nhất Google chấp nhận cho IMAP/SMTP XOAUTH2; bạn không cần bật Gmail API.",
       "g4": "Thông tin đăng nhập: Create credentials, OAuth client ID, loại ứng dụng Desktop app. Client desktop tự động chấp nhận loopback http://127.0.0.1, nên không cần cấu hình URI chuyển hướng.",
@@ -267,11 +267,11 @@
       "g7": "Để đồng bộ lịch (Kết nối Google Calendar): trong cùng dự án, bật Google Calendar API (APIs & Services, Library, tìm Google Calendar API, Enable), và trên màn hình chấp thuận thêm phạm vi https://www.googleapis.com/auth/calendar. Thiếu một trong hai, việc kết nối sẽ lỗi máy chủ lịch.",
       "msTitle": "Microsoft (Outlook / 365)",
       "openMs": "Mở Microsoft Entra",
-      "m1": "Tại entra.microsoft.com (hoặc portal.azure.com) vào App registrations, New registration. Đặt tên Rabe: người dùng sẽ thấy tên này trên màn hình cấp quyền.",
-      "m2": "Loại tài khoản được hỗ trợ: chọn tùy chọn multitenant có kèm tài khoản Microsoft cá nhân (mọi thư mục tổ chức + cá nhân). Bắt buộc: Rabe đăng nhập qua endpoint dùng chung /common, ứng dụng single-tenant sẽ lỗi AADSTS50194. Có thể sửa sau trong mục Authentication.",
+      "m1": "Tại entra.microsoft.com (hoặc portal.azure.com) vào App registrations, New registration. Đặt tên Corax: người dùng sẽ thấy tên này trên màn hình cấp quyền.",
+      "m2": "Loại tài khoản được hỗ trợ: chọn tùy chọn multitenant có kèm tài khoản Microsoft cá nhân (mọi thư mục tổ chức + cá nhân). Bắt buộc: Corax đăng nhập qua endpoint dùng chung /common, ứng dụng single-tenant sẽ lỗi AADSTS50194. Có thể sửa sau trong mục Authentication.",
       "m3": "URI chuyển hướng: chọn nền tảng Mobile and desktop applications (không phải Web), giá trị http://localhost. Biến thể Web cần secret và sẽ lỗi redirect mismatch; các cổng loopback sau đó được chấp nhận tự động.",
       "m4": "Quyền API: Add a permission, Microsoft Graph, rồi chọn Delegated permissions (không phải Application permissions; nếu tìm email mà ra các API không liên quan thì bạn đang ở ô Application). Tích IMAP.AccessAsUser.All, SMTP.Send, offline_access, openid và email, rồi bấm Add permissions.",
-      "m5": "Không cần tạo key hay secret nào: bỏ qua mục Certificates & secrets (Rabe là public client). Sao chép Application (client) ID từ trang Overview vào ô bên dưới, và để trống ô Microsoft client secret.",
+      "m5": "Không cần tạo key hay secret nào: bỏ qua mục Certificates & secrets (Corax là public client). Sao chép Application (client) ID từ trang Overview vào ô bên dưới, và để trống ô Microsoft client secret.",
       "m6": "Chỉ với hộp thư công ty hoặc trường học: nếu đăng nhập báo \"Cần quản trị viên phê duyệt\", quản trị viên tenant phải đồng ý một lần bằng Grant admin consent trên trang API permissions. Tài khoản Outlook.com cá nhân không bao giờ cần.",
       "msNote": "Tài khoản Outlook.com / Hotmail / Live cá nhân? Bạn vẫn đăng ký ứng dụng tại đây. Đăng nhập cổng bằng tài khoản cá nhân của bạn (miễn phí, không cần gói đăng ký Azure) và chọn tùy chọn đa tenant + cá nhân ở bước 2. Tài khoản dùng để đăng ký và hộp thư bạn kết nối có thể khác nhau.",
       "docsHint": "Muốn xem hướng dẫn đầy đủ có ảnh chụp màn hình và khắc phục sự cố?",
@@ -740,7 +740,7 @@
     "custom": "Màu tùy chỉnh"
   },
   "font": {
-    "hint": "Phông chữ dùng trong Rabe. Nội dung thư giữ phông chữ riêng.",
+    "hint": "Phông chữ dùng trong Corax. Nội dung thư giữ phông chữ riêng.",
     "system": "Hệ thống",
     "custom": "Phông Google tùy chỉnh",
     "customPlaceholder": "Bất kỳ phông Google nào, vd. Poppins",
@@ -853,7 +853,7 @@
   },
   "decision": {
     "section": "Mô hình quyết định",
-    "intro": "Câu trả lời có/không và chọn một có kiểu dữ liệu, dùng cho danh mục AI và các kiểm tra AI trong quy tắc và tab, từ TypeSafe Jev, Decisions API của OpenAI hoặc một điểm cuối tương thích. Mọi thứ vẫn hoạt động khi không có chúng: Rabe sẽ hỏi mô hình chat (API, cục bộ hoặc Apple trên thiết bị), và khi hoàn toàn không có AI, điều kiện và phân loại tích hợp vẫn chạy.",
+    "intro": "Câu trả lời có/không và chọn một có kiểu dữ liệu, dùng cho danh mục AI và các kiểm tra AI trong quy tắc và tab, từ TypeSafe Jev, Decisions API của OpenAI hoặc một điểm cuối tương thích. Mọi thứ vẫn hoạt động khi không có chúng: Corax sẽ hỏi mô hình chat (API, cục bộ hoặc Apple trên thiết bị), và khi hoàn toàn không có AI, điều kiện và phân loại tích hợp vẫn chạy.",
     "providerLabel": "Nhà cung cấp",
     "provider": {
       "off": "Tắt",

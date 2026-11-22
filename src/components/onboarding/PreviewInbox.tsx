@@ -205,7 +205,7 @@ export function PreviewInbox({
       {/* TopBar */}
       <div className="co-glass relative z-10 flex h-10 shrink-0 items-center gap-3 px-4">
         <Icon name="menu" size={16} className="-ml-1 text-ink-muted" />
-        <span className="text-sm font-semibold tracking-[0.14em] text-ink-faint uppercase">Rabe</span>
+        <span className="text-sm font-semibold tracking-[0.14em] text-ink-faint uppercase">Corax</span>
         <span className="text-base font-medium text-ink-muted">
           {view === "search" ? t("onboarding:preview.searchTitle") : t("onboarding:preview.title")}
         </span>

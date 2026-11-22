@@ -191,7 +191,7 @@
     "automation": {
       "newTitle": "Neue Automatisierung",
       "editTitle": "Automatisierung bearbeiten",
-      "editorHint": "Beschreibe den ganzen Ablauf in eigenen Worten. Rabe interpretiert und prüft ihn, bevor er gespeichert werden kann.",
+      "editorHint": "Beschreibe den ganzen Ablauf in eigenen Worten. Corax interpretiert und prüft ihn, bevor er gespeichert werden kann.",
       "promptLabel": "Automatisierung beschreiben",
       "promptPlaceholder": "Wenn eine E-Mail eine Rechnung oder Quittung von einem Lieferanten ist, füge das Label Finanzen hinzu, verschiebe sie nach Wichtig und setze [RECHNUNG] vor den Betreff.",
       "promptHint": "Nenne, worauf die E-Mail passen soll, und jede Aktion, die ausgeführt werden soll, in der gewünschten Reihenfolge.",
@@ -258,7 +258,7 @@
       "title": "Einrichtung Schritt für Schritt",
       "googleTitle": "Google (Gmail)",
       "openGoogle": "Google Cloud Console öffnen",
-      "g1": "Projekt anlegen: Öffne auf console.cloud.google.com die Projektauswahl in der oberen Leiste, klicke auf „Neues Projekt“, gib einen Namen ein (z. B. Rabe), klicke auf „Erstellen“ und wähle das Projekt aus. Öffne dann das Menü und gehe zu „APIs und Dienste“.",
+      "g1": "Projekt anlegen: Öffne auf console.cloud.google.com die Projektauswahl in der oberen Leiste, klicke auf „Neues Projekt“, gib einen Namen ein (z. B. Corax), klicke auf „Erstellen“ und wähle das Projekt aus. Öffne dann das Menü und gehe zu „APIs und Dienste“.",
       "g2": "OAuth-Zustimmungsbildschirm: Wähle „Extern“ („Intern“ nur mit einer Workspace-Organisation), trage den App-Namen und deine E-Mail-Adresse als Support- und Entwicklerkontakt ein und füge unter „Testnutzer“ deine eigene Gmail-Adresse hinzu.",
       "g3": "Bereiche: Klicke auf „Bereiche hinzufügen oder entfernen“, füge https://mail.google.com/ in das Feld für die manuelle Eingabe ein und übernimm ihn. Das ist der einzige Bereich, den Google für IMAP/SMTP mit XOAUTH2 akzeptiert. Die Gmail API musst du nicht aktivieren.",
       "g4": "Anmeldedaten: „Anmeldedaten erstellen“, „OAuth-Client-ID“, Anwendungstyp „Desktop-App“. Desktop-Clients akzeptieren den Loopback http://127.0.0.1 automatisch, eine Weiterleitungs-URI musst du also nicht einrichten.",
@@ -267,11 +267,11 @@
       "g7": "Für die Kalendersynchronisierung (Google Kalender verbinden): Aktiviere im selben Projekt die Google Calendar API („APIs und Dienste“, „Bibliothek“, nach Google Calendar API suchen, „Aktivieren“) und füge auf dem Zustimmungsbildschirm den Bereich https://www.googleapis.com/auth/calendar hinzu. Fehlt eins von beiden, schlägt die Verbindung mit einem Fehler des Kalenderservers fehl.",
       "msTitle": "Microsoft (Outlook / 365)",
       "openMs": "Microsoft Entra öffnen",
-      "m1": "Gehe auf entra.microsoft.com (oder portal.azure.com) zu „App-Registrierungen“, „Neue Registrierung“. Nenne sie Rabe: Diesen Namen sehen Nutzer auf dem Zustimmungsbildschirm.",
-      "m2": "Unterstützte Kontotypen: Wähle die mehrinstanzenfähige Option, die auch persönliche Microsoft-Konten einschließt (beliebiges Organisationsverzeichnis und persönliche Konten). Das ist Pflicht: Rabe meldet sich über den gemeinsamen Endpunkt /common an, und eine App mit nur einem Mandanten scheitert mit dem Fehler AADSTS50194. Lässt sich später unter „Authentifizierung“ ändern.",
+      "m1": "Gehe auf entra.microsoft.com (oder portal.azure.com) zu „App-Registrierungen“, „Neue Registrierung“. Nenne sie Corax: Diesen Namen sehen Nutzer auf dem Zustimmungsbildschirm.",
+      "m2": "Unterstützte Kontotypen: Wähle die mehrinstanzenfähige Option, die auch persönliche Microsoft-Konten einschließt (beliebiges Organisationsverzeichnis und persönliche Konten). Das ist Pflicht: Corax meldet sich über den gemeinsamen Endpunkt /common an, und eine App mit nur einem Mandanten scheitert mit dem Fehler AADSTS50194. Lässt sich später unter „Authentifizierung“ ändern.",
       "m3": "Weiterleitungs-URI: Wähle die Plattform „Mobile Anwendungen und Desktopanwendungen“ (nicht Web) mit dem Wert http://localhost. Die Web-Variante erwartet einen Schlüssel und scheitert mit einem Weiterleitungsfehler. Loopback-Ports werden danach automatisch akzeptiert.",
       "m4": "API-Berechtigungen: „Berechtigung hinzufügen“, „Microsoft Graph“, dann „Delegierte Berechtigungen“ (nicht „Anwendungsberechtigungen“; zeigt die Suche nach email fremde APIs an, bist du im falschen Bereich). Setze Haken bei IMAP.AccessAsUser.All, SMTP.Send, offline_access, openid und email, dann „Berechtigungen hinzufügen“.",
-      "m5": "Kein Schlüssel nötig: Überspringe „Zertifikate & Geheimnisse“ (Rabe ist ein öffentlicher Client). Kopiere die Anwendungs-ID (Client-ID) von der Übersichtsseite in das Feld unten und lass den Microsoft-Clientschlüssel leer.",
+      "m5": "Kein Schlüssel nötig: Überspringe „Zertifikate & Geheimnisse“ (Corax ist ein öffentlicher Client). Kopiere die Anwendungs-ID (Client-ID) von der Übersichtsseite in das Feld unten und lass den Microsoft-Clientschlüssel leer.",
       "m6": "Nur bei Geschäfts- oder Schulpostfächern: Endet die Anmeldung mit „Administratorgenehmigung erforderlich“, muss eine Person mit Administratorrechten im Mandanten einmalig auf der Seite „API-Berechtigungen“ über „Administratorzustimmung erteilen“ zustimmen. Persönliche Outlook.com-Konten brauchen das nie.",
       "msNote": "Persönliches Konto bei Outlook.com, Hotmail oder Live? Die App registrierst du trotzdem hier. Melde dich mit deinem persönlichen Konto im Portal an (kostenlos, kein Azure-Abo nötig) und wähle in Schritt 2 die Option „mehrinstanzenfähig und persönlich“. Das Konto für die Registrierung und das verbundene Postfach dürfen verschieden sein.",
       "docsHint": "Lieber die ausführliche Anleitung mit Screenshots und Fehlerbehebung?",
@@ -742,7 +742,7 @@
     "custom": "Eigene Farbe"
   },
   "font": {
-    "hint": "Die Schrift für ganz Rabe. Nachrichtentexte behalten ihre eigenen Schriften.",
+    "hint": "Die Schrift für ganz Corax. Nachrichtentexte behalten ihre eigenen Schriften.",
     "system": "System",
     "custom": "Eigene Google-Schrift",
     "customPlaceholder": "Beliebige Google-Schrift, z. B. Poppins",
@@ -855,7 +855,7 @@
   },
   "decision": {
     "section": "Entscheidungsmodell",
-    "intro": "Typisierte Ja-Nein- und Auswahlantworten für KI-Kategorien und die KI-Prüfungen in Regeln und Aufteilungen, von TypeSafe Jev, der Decisions API von OpenAI oder einem kompatiblen Endpunkt. Ohne sie funktioniert trotzdem alles: Rabe fragt dann das Chat-Modell (API, lokal oder Apple auf dem Gerät), und ganz ohne KI laufen Bedingungen und die eingebaute Sortierung weiter.",
+    "intro": "Typisierte Ja-Nein- und Auswahlantworten für KI-Kategorien und die KI-Prüfungen in Regeln und Aufteilungen, von TypeSafe Jev, der Decisions API von OpenAI oder einem kompatiblen Endpunkt. Ohne sie funktioniert trotzdem alles: Corax fragt dann das Chat-Modell (API, lokal oder Apple auf dem Gerät), und ganz ohne KI laufen Bedingungen und die eingebaute Sortierung weiter.",
     "providerLabel": "Anbieter",
     "provider": {
       "off": "Aus",

@@ -90,7 +90,7 @@ fn emit(app: &AppHandle, ev: CoreEvent) {
             error,
         } => {
             // M2.16: a move the core gave up on. Same name and payload as the
-            // native host (`rabe-host/src/events.rs`).
+            // native host (`corax-host/src/events.rs`).
             let _ = app.emit(
                 "action:failed",
                 json!({

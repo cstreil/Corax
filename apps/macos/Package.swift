@@ -62,7 +62,7 @@ let package = Package(
             path: "Sources/CoraxKit"
         ),
         // M3.3: Siri und Kurzbefehle. Eigenes Modul, damit der Intent-Code ohne
-        // AppKit auskommt und sich später unverändert nach `rabe-app` tragen
+        // AppKit auskommt und sich später unverändert in die eigenständige App tragen
         // lässt; das App-Target hängt nur davon ab.
         .target(
             name: "CoraxIntents",

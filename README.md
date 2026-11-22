@@ -1,6 +1,6 @@
-# Rabe
+# Corax
 
-> **Rabe is a fork of [Comail](https://github.com/NextOSP/comail).** It tracks upstream v0.2.44
+> **Corax is a fork of [Comail](https://github.com/NextOSP/comail).** It tracks upstream v0.2.44
 > and adds IMAP sync fixes, an inline conversation panel and a German localization. It ships
 > under its own name and bundle identifier, so the download and release links below describe
 > upstream Comail, not this fork. See [FORK.md](FORK.md) for what changed and how the fork is

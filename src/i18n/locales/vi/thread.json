@@ -84,7 +84,7 @@
       "download": "Tải xuống",
       "downloaded": "Đã lưu {{name}}",
       "noPreviewTitle": "Không có bản xem trước",
-      "unsupported": "Rabe chưa thể xem trước loại tệp này. Hãy mở bằng ứng dụng của nó hoặc lưu một bản sao.",
+      "unsupported": "Corax chưa thể xem trước loại tệp này. Hãy mở bằng ứng dụng của nó hoặc lưu một bản sao.",
       "tooLargeTitle": "Tệp quá lớn để xem trước",
       "tooLarge": "Tệp lớn như vậy mở nhanh hơn bằng ứng dụng riêng.",
       "pdfFailed": "Không thể hiển thị PDF này",

@@ -15,7 +15,7 @@ public struct GoToEntry: Identifiable, Hashable, Sendable {
     public let targetId: Int64
     /// Anzeigename: der Ordnername bzw. der Labelname.
     public let title: String
-    /// Voller Ordnerpfad, z. B. „Projekte / Rabe“ (`nil` bei Labels).
+    /// Voller Ordnerpfad, z. B. „Projekte / Website“ (`nil` bei Labels).
     public let path: String?
     /// Kontoname — nur, wenn es mehr als ein Konto gibt.
     public let account: String?

@@ -1,7 +1,7 @@
 import iconUrl from "../../../src-tauri/icons/128x128@2x.png";
 
 /**
- * The real Rabe app icon (the glowing planet), shown on arrival in the
+ * The real Corax app icon (the glowing planet), shown on arrival in the
  * first-run intro. Imported straight from the Tauri icon set so it always
  * matches the shipped app icon - no hand-drawn stand-in.
  */

@@ -20,13 +20,13 @@ final class M215aTests: XCTestCase {
             folder(2, "Archive", role: "archive"),
             folder(3, "Sent", role: "sent"),
             folder(4, "Projekte"),
-            folder(5, "Projekte/Rabe"),
-            folder(6, "Projekte/Rabe/Design"),
+            folder(5, "Projekte/Website"),
+            folder(6, "Projekte/Website/Design"),
             folder(7, "Familie"),
         ]
         let rows = Pickers.folderTree(folders)
         XCTAssertEqual(rows.map(\.folder.id), [7, 4, 5, 6], "Systemordner dürfen nicht in der Liste stehen")
-        XCTAssertEqual(rows.map(\.name), ["Familie", "Projekte", "Rabe", "Design"])
+        XCTAssertEqual(rows.map(\.name), ["Familie", "Projekte", "Website", "Design"])
         XCTAssertEqual(rows.map(\.depth), [0, 0, 1, 2])
     }
 

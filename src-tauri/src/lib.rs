@@ -27,13 +27,13 @@ fn isolate_instance(identifier: &str) {
         // daily driver. Abort instead of sharing it silently.
         let Some(dir) = dev_data_dir(identifier) else {
             abort_dev_instance(
-                "Rabe (dev): no platform data directory. Aborting instead of sharing \
+                "Corax (dev): no platform data directory. Aborting instead of sharing \
                  the release database.",
             );
         };
         if let Err(error) = std::fs::create_dir_all(&dir) {
             abort_dev_instance(&format!(
-                "Rabe (dev): cannot create data directory {}: {error}. Aborting \
+                "Corax (dev): cannot create data directory {}: {error}. Aborting \
                  instead of sharing the release database.",
                 dir.display()
             ));
@@ -61,7 +61,7 @@ fn abort_dev_instance(message: &str) -> ! {
     #[cfg(target_os = "macos")]
     {
         let escaped = message.replace('\\', "\\\\").replace('"', "\\\"");
-        let script = format!("display alert \"Rabe (dev)\" message \"{escaped}\" as critical");
+        let script = format!("display alert \"Corax (dev)\" message \"{escaped}\" as critical");
         let _ = std::process::Command::new("osascript")
             .arg("-e")
             .arg(script)
@@ -128,9 +128,9 @@ fn resolve_lang(setting: &str) -> String {
 /// stays untranslated. Add a match arm per language as catalogs are added on
 /// the frontend.
 fn tray_labels(lang: &str) -> (String, String) {
-    // German puts the verb last, so it cannot use the "<verb> Rabe" template.
+    // German puts the verb last, so it cannot use the "<verb> Corax" template.
     if lang == "de" {
-        return ("Rabe öffnen".to_string(), "Rabe beenden".to_string());
+        return ("Corax öffnen".to_string(), "Corax beenden".to_string());
     }
     let (open, quit) = match lang {
         "es" => ("Abrir", "Salir"),
@@ -139,7 +139,7 @@ fn tray_labels(lang: &str) -> (String, String) {
         "vi" => ("Mở", "Thoát"),
         _ => ("Open", "Quit"),
     };
-    (format!("{open} Rabe"), format!("{quit} Rabe"))
+    (format!("{open} Corax"), format!("{quit} Corax"))
 }
 
 pub struct AppState {
@@ -408,7 +408,7 @@ pub fn run() {
             TrayIconBuilder::with_id("comail-tray")
                 .icon(tray_icon)
                 .icon_as_template(cfg!(target_os = "macos"))
-                .tooltip("Rabe")
+                .tooltip("Corax")
                 .menu(&menu)
                 .show_menu_on_left_click(false)
                 .on_menu_event(|app, event| match event.id.as_ref() {

@@ -4,7 +4,7 @@
 //! the instance lock, dispatches the Tauri command set as JSON, forwards
 //! `CoreEvent`s to a UI, delivers desktop notifications and wraps HTML mail for
 //! display. This is the layer the Swift app (via `corax-uniffi`) and the QML app
-//! (via `rabe-qt`) both sit on.
+//! (via `corax-qt`) both sit on.
 
 mod backoff;
 mod dispatch;
@@ -508,7 +508,7 @@ impl Inner {
 }
 
 /// Run one command against an already-started core. The same entry point the
-/// host uses; exposed so `rabe-qt` and the contract tests can drive the
+/// host uses; exposed so `corax-qt` and the contract tests can drive the
 /// dispatcher without a UI. `data_dir` is the instance directory the command
 /// may open paths from (attachments, logs).
 pub async fn dispatch_json(
@@ -522,7 +522,7 @@ pub async fn dispatch_json(
 }
 
 /// Start the notification dispatcher against a core the caller already owns.
-/// [`Host::start`] does this itself; exposed so tests and `rabe-qt` can run the
+/// [`Host::start`] does this itself; exposed so tests and `corax-qt` can run the
 /// same delivery loop without a host.
 pub fn spawn_notifications(
     runtime: &tokio::runtime::Handle,
@@ -672,7 +672,7 @@ impl Host {
         self.inner.wait_core().await
     }
 
-    /// The core if it is already running, without waiting (for `rabe-qt`).
+    /// The core if it is already running, without waiting (for `corax-qt`).
     pub fn core_now(&self) -> Option<&Core> {
         self.inner.core.get()
     }

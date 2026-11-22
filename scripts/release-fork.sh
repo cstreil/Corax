@@ -11,7 +11,7 @@
 #     (erzeugen: pnpm tauri signer generate -w ~/.tauri/rabe-updater.key)
 #     Der passende Public Key steht in src-tauri/tauri.conf.json; ohne ihn
 #     lehnt jede installierte App das Update ab.
-#   - gh ist als cstreil angemeldet und cstreil/Rabe ist das Ziel.
+#   - gh ist als cstreil angemeldet und cstreil/Corax ist das Ziel.
 #
 # Die Version kommt aus tauri.conf.json. Vor jedem Release dort hochziehen —
 # der Updater vergleicht Semver, gleiche Version heißt „kein Update".
@@ -30,7 +30,7 @@ fi
 VERSION="$(python3 -c 'import json,sys; print(json.load(open("src-tauri/tauri.conf.json"))["version"])')"
 TAG="v$VERSION"
 DIST="dist"
-ARCHIVE="$DIST/Rabe.app.tar.gz"
+ARCHIVE="$DIST/Corax.app.tar.gz"
 
 echo "Version: $VERSION  (Tag $TAG)"
 
@@ -41,7 +41,7 @@ NO_INSTALL=1 sh scripts/build-local-app.sh
 #    damit die installierte App und das Archiv identisch sind.
 rm -rf "$DIST"
 mkdir -p "$DIST"
-COPYFILE_DISABLE=1 tar -czf "$ARCHIVE" -C src-tauri/target/release/bundle/macos Rabe.app
+COPYFILE_DISABLE=1 tar -czf "$ARCHIVE" -C src-tauri/target/release/bundle/macos Corax.app
 
 # 3. Archiv signieren (minisign, Schlüssel bleibt außerhalb des Repos).
 #    Das Passwort muss explizit mitgegeben werden: ohne -p fragt die CLI am
@@ -59,10 +59,10 @@ import json, pathlib, sys
 from datetime import datetime, timezone
 
 version, signature = sys.argv[1], sys.argv[2]
-url = f"https://github.com/cstreil/Rabe/releases/download/v{version}/Rabe.app.tar.gz"
+url = f"https://github.com/cstreil/Corax/releases/download/v{version}/Corax.app.tar.gz"
 manifest = {
     "version": version,
-    "notes": f"Rabe {version}",
+    "notes": f"Corax {version}",
     "pub_date": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
     "platforms": {
         "darwin-aarch64": {"signature": signature, "url": url},
@@ -86,12 +86,12 @@ fi
 #    Commit: ohne das landet er auf dem Default-Branch (fork/sync-fixes), der
 #    den Build gar nicht enthält. Der Commit muss dafür gepusht sein.
 gh release create "$TAG" \
-  --repo cstreil/Rabe \
+  --repo cstreil/Corax \
   --target "$(git rev-parse HEAD)" \
-  --title "Rabe $VERSION" \
-  --notes "Rabe $VERSION — signiertes Update für macOS (Apple Silicon)." \
+  --title "Corax $VERSION" \
+  --notes "Corax $VERSION — signiertes Update für macOS (Apple Silicon)." \
   "$ARCHIVE" "$ARCHIVE.sig" "$DIST/latest.json"
 
 echo
 echo "Veröffentlicht: $TAG"
-echo "Feed: https://github.com/cstreil/Rabe/releases/latest/download/latest.json"
+echo "Feed: https://github.com/cstreil/Corax/releases/latest/download/latest.json"

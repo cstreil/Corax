@@ -1,24 +1,25 @@
-# Rabe native — Architektur
+# Corax native — Architektur
 
 Stand 2026-11-18 · Entscheidung: **Option A** — SwiftUI/AppKit (macOS) + Qt 6/QML (Linux, Skins KDE und Omarchy) auf dem unveränderten Rust-Kern `comail-core`. Kein Tauri, kein Electron.
 
 ## 0. Namen
 
-**Corax** ist der Fork dieses Projekts (früher „Rabe“) und die App in `apps/macos`.
-Code, Crates, Swift-Targets, Binärdateien und Umgebungsvariablen heißen deshalb
-`Corax…`/`corax…`; die Kennungen (`com.coraxapp.corax`, Schlüsselbund, MCP-Name `corax`,
-Update-Feed) tragen den Namen ohnehin schon.
+**Corax** ist der Name dieses Projekts und die App in `apps/macos`. Code, Crates,
+Swift-Targets, Binärdateien und Umgebungsvariablen heißen deshalb `Corax…`/`corax…`;
+die Kennungen (`com.coraxapp.corax`, Schlüsselbund, MCP-Name `corax`, Update-Feed)
+tragen den Namen ebenfalls.
 
-„Rabe“ lebt nur noch an drei Stellen weiter, jeweils mit Absicht:
+Der alte Name steht nur noch dort, wo er technisch weiterwirkt und niemand ihn zu
+Gesicht bekommt:
 
-- als **historischer** Name: die alten Apps „Rabe (Tauri)“, „Rabe Native“ und ihre
-  Bundle-Kennungen `de.streil.rabe*` — daran erkennt die Übernahme die Vorgänger;
-- als Name des getrennten Repos `cstreil/rabe-app` für die spätere eigene App;
-- in Beispieldaten (Sandbox-Ordner „Projekte/Rabe“, Mockup-Mails über das Raben-Logo)
-  und in alten Berichten/Briefings.
+- in den Bundle-Kennungen der früheren Installationen `de.streil.rabe*` — daran erkennt
+  die Datenübernahme die Vorgänger;
+- in gespeicherten Einstellungsschlüsseln der Vorgänger (`rabe.languageFollowsSystem`,
+  `rabe.calendarHidden`, `rabe.calendarHiddenLocal`, `rabe-block-remote`), damit Sprache
+  und Kalenderauswahl beim Wechsel erhalten bleiben.
 
-Der Kalender-`PRODID` im Kern (`-//Rabe//Rabe Calendar//EN`) bleibt, weil Corax eigene
-Termine daran erkennt.
+Der Kalender-`PRODID` im Kern ist `-//Corax//Corax Calendar//EN`; er beschreibt, wer den
+Termin geschrieben hat, und wird nirgends gelesen.
 
 ## 1. Ist-Stand (geprüft)
 
@@ -45,7 +46,7 @@ Termine daran erkennt.
                 │ html::wrap_for_display (CSP, Theme-Variablen)           │
                 └───────▲──────────────────────────────────▲─────────────┘
                         │                                  │ Rust direkt
-              corax-uniffi (UniFFI)                 rabe-qt (cxx-qt, Binary)
+              corax-uniffi (UniFFI)                 corax-qt (cxx-qt, Binary)
                         │ Swift-Bindings                   │ QObjects/ListModels
               apps/macos  SwiftUI + AppKit          apps/linux/qml  QML-Skins kde | omarchy
 ```
@@ -57,10 +58,10 @@ Termine daran erkennt.
 | `src-tauri/crates/corax-host/` | lib, Member des bestehenden Workspace | Host-Logik, Dispatcher, Events, HTML-Hülle |
 | `src-tauri/crates/corax-host/src/bin/corax-cli.rs` | bin | `corax-cli invoke <cmd> '<json>'`, `corax-cli events` — Test ohne UI |
 | `src-tauri/crates/corax-uniffi/` | staticlib, Member | UniFFI-Fassade für Swift |
-| `apps/macos/` | SwiftPM-Paket `Rabe` | macOS-App; `scripts/build-app.sh` baut `.app` ohne Xcode |
-| `apps/linux/` | eigener Cargo-Workspace, Crate `rabe-qt` | Linux-App (cxx-qt, Cargo-only-Build), `qml/`, `packaging/PKGBUILD` |
+| `apps/macos/` | SwiftPM-Paket `Corax` | macOS-App; `scripts/build-app.sh` baut `.app` ohne Xcode |
+| `apps/linux/` | eigener Cargo-Workspace, Crate `corax-qt` | Linux-App (cxx-qt, Cargo-only-Build), `qml/`, `packaging/PKGBUILD` |
 
-Begründung: Kern und Tauri-App bleiben unangetastet (Upstream-Merges bleiben billig, die Tauri-App bleibt bis zur Ablösung Alltags-App). Zusätzlich ändert sich in `src-tauri/Cargo.toml` nur die Zeile `members`. Qt-Abhängigkeiten liegen außerhalb des Tauri-Workspace, damit macOS- und Tauri-Builds kein QtQuick brauchen. `rabe-qt` bindet `corax-host` per Pfad ein (`../../src-tauri/crates/corax-host`).
+Begründung: Kern und Tauri-App bleiben unangetastet (Upstream-Merges bleiben billig, die Tauri-App bleibt bis zur Ablösung Alltags-App). Zusätzlich ändert sich in `src-tauri/Cargo.toml` nur die Zeile `members`. Qt-Abhängigkeiten liegen außerhalb des Tauri-Workspace, damit macOS- und Tauri-Builds kein QtQuick brauchen. `corax-qt` bindet `corax-host` per Pfad ein (`../../src-tauri/crates/corax-host`).
 
 ## 3. Kernentscheidungen
 
@@ -99,7 +100,7 @@ pub struct Host { /* Runtime, Core, Lock */ }
 impl Host {
     pub fn start(cfg: HostConfig, delegate: Arc<dyn HostDelegate>) -> Result<Host, HostError>;
     pub async fn dispatch(&self, cmd: &str, args_json: &str) -> Result<String, HostError>;
-    pub fn core(&self) -> &comail_core::Core;    // für rabe-qt
+    pub fn core(&self) -> &comail_core::Core;    // für corax-qt
     pub fn runtime(&self) -> &tokio::runtime::Runtime;
     pub fn shutdown(self);
 }
@@ -137,9 +138,9 @@ impl CoraxHost {
 
 Swift-Seite: `CoraxClient` (actor) mit typisierten Wrappern (`listThreads(view:…) async throws -> ThreadPage`) und `Codable`-Typen gespiegelt aus `src/ipc/*.ts`.
 
-### rabe-qt (QML sieht)
+### corax-qt (QML sieht)
 
-- `Rabe` (Singleton-QObject): `invoke(cmd, argsJson) → Promise-artig über Signal `result(requestId, json, error)``, Signale je UiEvent, Property `skin`.
+- `Corax` (Singleton-QObject): `invoke(cmd, argsJson) → Promise-artig über Signal `result(requestId, json, error)``, Signale je UiEvent, Property `skin`.
 - `ThreadListModel` (QAbstractListModel): Rollen `threadId, subject, snippet, from, date, unread, starred, hasAttachments, labels, group`; Properties `view, splitId, accountId, labelId, folderId`; `canFetchMore/fetchMore` (Seiten à 100); reagiert auf `mail:updated` mit gezieltem Nachladen der betroffenen Zeilen.
 - `ThreadDetailModel`, `AccountsModel`, `SidebarModel`, `Theme` (Palette aus `system_theme.rs`, Dateibeobachtung von `colors.toml`/`kdeglobals`, Signal `changed` → 450-ms-Farbübergang).
 
@@ -157,9 +158,9 @@ Swift-Seite: `CoraxClient` (actor) mit typisierten Wrappern (`listThreads(view:�
 
 **Nach M3, Kandidaten (Abgleich mit Superhuman, `Work/Tasks/2026-11-20-superhuman-re/REPORT.md`, Entscheidung Nutzer 2026-11-20):** Nachfass-Erinnerungen bei ausbleibender Antwort und vorbereitete KI-Entwürfe vor dem Öffnen — beide lokal ohne Server machbar, brauchen Kern-Arbeit. **Kern-Ersatz-Phase, gesammelt (Entscheidung Nutzer 2026-11-21: größere Kern-Änderungen erst besprechen, sonst hierher):** Serien bearbeiten/löschen mit Geltungsbereich `this|following|all` (Entwurf `Work/Tasks/2026-11-19-rabe-native-m2/BERICHT-M2.18a.md`, ≈ 3–3,5 Tage; bis dahin Übergang: jede Wiederholung einzeln in Anzeige/Navigation, Bearbeiten nur „Alle“) · `calendar_status` mit Fehlerursache · Organisator-Aliasse · Papierkorb, wenn die Mail noch in einem anderen Ordner liegt · Selbstheilung verwaister `drafts_meta` + SQL-Fehlertext statt `code=db` · unsichtbare Zeichen in Newslettern (`wrapForDisplay`) · Gesten-ID für Undo · Erinnerung je Termin · JMAP.
 
-**M3-Festlegungen (Nutzer 2026-11-21):** Der Fork heißt **Corax** (`de.streil.corax`); „Rabe“ bleibt der finalen, eigenständigen App vorbehalten (Repo `cstreil/rabe-app`). M3 umfasst: M3.1 Umbenennen, Bundle-Kennung und Übernahme der Daten aus `de.streil.rabe.native` · M3.2 Sparkle, Updates aus einem eigenen öffentlichen Releases-Repo · M3.3 Siri/App Intents (neu geschrieben) · M3.4 OAuth nur Google. **Microsoft/Azure erst nach M3.** Briefings in `Work/Tasks/2026-11-21-rabe-native-m3/`.
+**M3-Festlegungen (Nutzer 2026-11-21):** Der Fork heißt **Corax** (`de.streil.corax`). Eine spätere, eigenständige App mit eigenem Repo bleibt ein separates Vorhaben. M3 umfasst: M3.1 Umbenennen, Bundle-Kennung und Übernahme der Daten aus `de.streil.rabe.native` · M3.2 Sparkle, Updates aus einem eigenen öffentlichen Releases-Repo · M3.3 Siri/App Intents (neu geschrieben) · M3.4 OAuth nur Google. **Microsoft/Azure erst nach M3.** Briefings in `Work/Tasks/2026-11-21-rabe-native-m3/`.
 
-**Finale Kennungen (Nutzer 2026-11-21):** `de.streil.corax` ist eine Zwischenkennung. Vor dem ersten Push kommt als **M3.5** der Wechsel auf **`com.coraxapp.corax`** (Domain `coraxapp.com`, Sandbox `com.coraxapp.corax.sandbox`). Der Datenumzug liest dann zuerst aus `de.streil.corax`, danach aus `de.streil.rabe.native`. Im selben Paket ziehen GitHub-Organisation, Releases-Repo, Sparkle-Feed-URL und der EdDSA-Schlüssel um. Die finale App Rabe bekommt `com.rabeapp.rabe` (Domain `rabeapp.com`).
+**Finale Kennungen (Nutzer 2026-11-21):** `de.streil.corax` ist eine Zwischenkennung. Vor dem ersten Push kommt als **M3.5** der Wechsel auf **`com.coraxapp.corax`** (Domain `coraxapp.com`, Sandbox `com.coraxapp.corax.sandbox`). Der Datenumzug liest dann zuerst aus `de.streil.corax`, danach aus `de.streil.rabe.native`. Im selben Paket ziehen GitHub-Organisation, Releases-Repo, Sparkle-Feed-URL und der EdDSA-Schlüssel um.
 
 **Backend-Richtung (Vorschlag 2026-11-21, offen):** Bei reinem Apple-Fokus wird Comail vollständig durch ein eigenes Swift-Backend `CoraxEngine` ersetzt. Kalender und Erinnerungen laufen über `EventKit`, Kontakte über `Contacts`, Mail, Kalender, Kontakte und später Aufgaben über JMAP, Mail zusätzlich über IMAP mit `swift-nio-imap`, gespeichert in GRDB/SQLite. Danach ist kein AGPL-Code mehr enthalten. Aufwand ≈ 80–120 Coder-Tage. Details, Reihenfolge B0–B8 und offene Fragen in `ENTSCHEIDUNG-BACKEND.md`.
 
@@ -194,7 +195,7 @@ Messung: `corax-host` loggt Zeitstempel (`tracing`, Ziel `perf`), UIs loggen Ers
 
 ## 7a. Ergebnis P0 (2026-11-18, Bericht `Work/Tasks/2026-11-18-rabe-native-p0/BERICHT.md`)
 
-- Steht: `corax-host` (+ `corax-cli`), `corax-uniffi` (uniffi 0.32.2), `apps/macos` (SwiftPM + `scripts/build-app.sh`), `Rabe Native.app` ohne Xcode gebaut und signiert, Inbox mit Paging und `mail:updated`.
+- Steht: `corax-host` (+ `corax-cli`), `corax-uniffi` (uniffi 0.32.2), `apps/macos` (SwiftPM + `scripts/build-app.sh`), `Corax.app` ohne Xcode gebaut und signiert, Inbox mit Paging und `mail:updated`.
 - Messwerte warm: Core-Start 697 ms, erste Liste 709 ms; `list_threads` 0,51 ms (20 Threads, 9,8 KB JSON), `get_thread` 3,96 ms. Kalt 6,2 s. → E1 (JSON-Dispatcher) bestätigt; Startzeit ist Kern-Start, nicht Brücke.
 - **Abweichung E8:** Ohne Xcode fehlen die SwiftUI-Makro-Plugins (`SwiftUIMacros.StateMacro`), Observation-Makros sind da. Einstieg deshalb AppKit (`NSApplication`/`NSWindow`/`NSHostingView`); `@State` in SwiftUI-Views nicht nutzbar.
 - **Kern-Befund:** `credentials::adopt_legacy` kopiert Zugangsdaten aus `com.deanoss.comail.dev` in den aktuellen Keyring-Service → die Native-Instanz synchronisiert echt und legt eigene Keyring-Einträge (u. a. `mcp_token`) an. Neue Instanzen sind also nie „ohne Zugangsdaten“.
@@ -233,7 +234,7 @@ Messung: `corax-host` loggt Zeitstempel (`tracing`, Ziel `perf`), UIs loggen Ers
 ## 8. Risiken
 
 1. **Kein Xcode:** SwiftPM-App-Bau per Skript ist machbar, aber ohne Instruments/Asset-Katalog. Icon als `.icns` (vorhanden in `src-tauri/icons/`). Fällt P0 hier durch → Xcode installieren.
-2. **cxx-qt mit Pfad-Abhängigkeit in einen fremden Workspace** (Workspace-Vererbung von `comail-core`): in P0 mit `cargo check` belegen; Rückfall: `rabe-qt` als Member in `src-tauri` mit `default-members` ohne `rabe-qt`.
+2. **cxx-qt mit Pfad-Abhängigkeit in einen fremden Workspace** (Workspace-Vererbung von `comail-core`): in P0 mit `cargo check` belegen; Rückfall: `corax-qt` als Member in `src-tauri` mit `default-members` ohne `corax-qt`.
 3. **Inline-Aufklappen mit HTML in Tabellenzeilen:** Höhe des `WKWebView` erst nach Laden bekannt → Platzhalterhöhe aus Text-Snippet, dann animiert anpassen.
 4. **HTML ohne WebEngine unter Linux** sieht bei Newsletter-HTML schlechter aus → Knopf „Original anzeigen“ ist Pflicht in M1.
 5. **Doppelte UI-Arbeit** über zwei Plattformen; Mitigation: Store-Logik (Paging, optimistische Aktionen, Undo) in `corax-host` halten, wo sie plattformneutral ist — aber erst, wenn beide UIs sie wirklich brauchen.
@@ -242,9 +243,9 @@ Messung: `corax-host` loggt Zeitstempel (`tracing`, Ziel `perf`), UIs loggen Ers
 
 ## 8a. Ergebnis M2 (2026-11-20, `Work/Tasks/2026-11-19-rabe-native-m2/`)
 
-- M2.0–M2.6 liegen unter `apps/macos`: `CoraxKit` (plattformneutral, `check-rabekit.sh` erlaubt nur Foundation/Observation/os/RabeBindings/UserNotifications) und `Rabe` (AppKit/SwiftUI/WebKit).
+- M2.0–M2.6 liegen unter `apps/macos`: `CoraxKit` (plattformneutral, `scripts/check-coraxkit.sh` erlaubt nur Foundation/Observation/os/CoraxBindings/UserNotifications) und `Corax` (AppKit/SwiftUI/WebKit).
 - **Composer M2.6:** der Körper ist ein `NSTextView` (TextKit 2, `RichTextEditor.swift`) mit eigener Formatleiste. Die HTML-Teilmenge lebt in `CoraxKit/Support/{RichText,RichHTML}.swift`: `p br b i u s a href ul ol li blockquote img[data:]` plus die beiden Marker, die Tauri selbst schreibt (`div.co-signature`, `span.co-mention`). Kein `NSAttributedString.DocumentType.html` (CSS-Ballast). Parser und Schreiber sind iterativ, prüfen Grenzen (`RichLimits`) und verwerfen `script`/`style`/`iframe` samt Inhalt, `on*`-Attribute und fremde Schemata.
-- **Brücke:** `Rabe/Support/RichTextBridge.swift` übersetzt `RichDocument` ↔ `NSAttributedString` (Absatzstile für Zitat/Liste/Signatur, Läufe für fett/kursiv/unterstrichen/durchgestrichen/Link/Chip/Bild).
+- **Brücke:** `Corax/Support/RichTextBridge.swift` übersetzt `RichDocument` ↔ `NSAttributedString` (Absatzstile für Zitat/Liste/Signatur, Läufe für fett/kursiv/unterstrichen/durchgestrichen/Link/Chip/Bild).
 - **Entwurf:** `ComposeDraft.bodyHtml` ist die Wahrheit; `body` (Text) wird abgeleitet, `bodyRevision` sagt dem Editor, wann er neu laden muss. `save_draft` bekommt Text- und HTML-Teil; der Host baut `multipart/alternative` und wandelt `data:`-Bilder in CID-Teile.
 - **Kalender M2.6:** `DayListPopover` für „+n weitere“, `join-next-meeting` über `MeetingLink` (Regeln wie Tauri, nur `http`/`https`), `calendar-sidebar` als Befehl. `MiniMonth` und die Zeitwahl waren schon da.
 - Offene M2-Punkte siehe `BERICHT-M2.6.md` §6 (Navigation: `toggle-sidebar`, `ContactPane`, `BundleRow`; Verfügbarkeit ohne Host-Befehl).

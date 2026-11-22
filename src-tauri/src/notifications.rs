@@ -250,7 +250,7 @@ async fn suppress(core: &Core, id: i64, reason: &'static str) {
 fn notification_copy(item: &NotificationOutboxItem) -> (String, String) {
     let title = nonempty(item.sender_name.as_deref())
         .or_else(|| nonempty(item.sender_addr.as_deref()))
-        .unwrap_or("Rabe")
+        .unwrap_or("Corax")
         .to_owned();
     let body = nonempty(Some(&item.subject))
         .unwrap_or("New message")
@@ -334,7 +334,7 @@ mod tests {
         );
         assert_eq!(
             notification_copy(&item(None, None, "Subject")),
-            ("Rabe".to_owned(), "Subject".to_owned())
+            ("Corax".to_owned(), "Subject".to_owned())
         );
     }
 

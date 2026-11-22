@@ -15,7 +15,7 @@
 # Local `tauri build -v` does not need this. Drop it once tauri fixes actool.
 #
 # The fork has no Icon.icon any more: the app icon is a plain icon.icns built
-# from design/icon/rabe-icon-1024.png with `pnpm tauri icon`, and upstream's
+# from design/icon/corax-icon-1024.png with `pnpm tauri icon`, and upstream's
 # Icon Composer package (the old planet) was removed with the rebrand. Without
 # Icon Composer we cannot author a Liquid Glass .icon, so the script writes an
 # overlay without Assets.car and leaves the icns in charge. Without this check

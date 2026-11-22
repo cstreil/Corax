@@ -84,7 +84,7 @@
       "download": "Descargar",
       "downloaded": "{{name}} guardado",
       "noPreviewTitle": "Vista previa no disponible",
-      "unsupported": "Rabe aún no puede previsualizar este tipo de archivo. Ábrelo en su app o guarda una copia.",
+      "unsupported": "Corax aún no puede previsualizar este tipo de archivo. Ábrelo en su app o guarda una copia.",
       "tooLargeTitle": "Demasiado grande para previsualizar",
       "tooLarge": "Los archivos tan grandes se abren más rápido en su propia app.",
       "pdfFailed": "No se pudo mostrar este PDF",
