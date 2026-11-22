@@ -505,7 +505,7 @@ bright_magenta = "#B91C1C"
     #[test]
     fn omarchy_state_dir_wins_over_the_old_config_path() {
         let root = std::env::temp_dir().join(format!(
-            "rabe-system-theme-{}-{:?}",
+            "corax-system-theme-{}-{:?}",
             std::process::id(),
             std::thread::current().id()
         ));

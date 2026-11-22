@@ -6,7 +6,7 @@ pub struct Paths {
     /// Name des lokalen MCP-Servers: steht im `initialize`-Handshake und ist
     /// der Schlüssel, den die „Bei App eintragen“-Helfer in die Konfiguration
     /// schreiben. Standard bleibt `comail` (Tauri-App und Upstream unverändert);
-    /// die native Instanz setzt `corax` (siehe `rabe-host`).
+    /// die native Instanz setzt `corax` (siehe `corax-host`).
     pub mcp_name: String,
 }
 

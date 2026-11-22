@@ -470,7 +470,7 @@ pub fn edit_blocked_reason(
     if status.is_some_and(|s| s.eq_ignore_ascii_case("CANCELLED")) {
         return Some("event is cancelled");
     }
-    // M2.18e: Ein in Rabe angelegter Termin ist immer unser Termin. iCloud
+    // M2.18e: Ein in Corax angelegter Termin ist immer unser Termin. iCloud
     // trägt beim Hochladen trotzdem gern eine Kontokennung (oder eine Adresse
     // aus dem Konto) als Organisator ein; das sagt nichts über das
     // Bearbeitungsrecht aus. Nur gezogene Termine (Einladungen, fremde
@@ -692,7 +692,7 @@ pub struct InviteSpec<'a> {
 fn calendar_shell(method: &str, body: impl FnOnce(&mut String)) -> String {
     let mut out = String::new();
     push_prop(&mut out, "BEGIN", "VCALENDAR");
-    push_prop(&mut out, "PRODID", "-//Rabe//Rabe Calendar//EN");
+    push_prop(&mut out, "PRODID", "-//Corax//Corax Calendar//EN");
     push_prop(&mut out, "VERSION", "2.0");
     push_prop(&mut out, "METHOD", method);
     push_prop(&mut out, "BEGIN", "VEVENT");
@@ -1164,7 +1164,7 @@ mod tests {
             edit_blocked_reason(None, Some("CANCELLED"), Some(false), me, None, false),
             Some("event is cancelled")
         );
-        // M2.18e: In Rabe angelegt — auch ein fremd wirkender Organisator
+        // M2.18e: In Corax angelegt — auch ein fremd wirkender Organisator
         // (iCloud trägt beim Hochladen gern eine Kennung ein) sperrt nicht.
         assert_eq!(
             edit_blocked_reason(Some("boss@example.test"), None, Some(false), me, None, true),

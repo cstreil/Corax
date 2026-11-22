@@ -332,7 +332,7 @@ pub fn build_put_body(row: &SyncRow, self_email: Option<&str>) -> String {
     let ev = &row.event;
     let mut out = String::new();
     push_prop(&mut out, "BEGIN", "VCALENDAR");
-    push_prop(&mut out, "PRODID", "-//Rabe//Rabe Calendar//EN");
+    push_prop(&mut out, "PRODID", "-//Corax//Corax Calendar//EN");
     push_prop(&mut out, "VERSION", "2.0");
     push_prop(&mut out, "BEGIN", "VEVENT");
     push_prop(&mut out, "UID", &row.ical_uid);

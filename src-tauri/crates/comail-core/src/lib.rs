@@ -3194,7 +3194,7 @@ impl Core {
         let prompt = prompt.trim();
         if prompt.is_empty() {
             return Ok(AiAutomationPlan {
-                issues: vec!["Describe the emails to match and what Rabe should do.".into()],
+                issues: vec!["Describe the emails to match and what Corax should do.".into()],
                 ..AiAutomationPlan::default()
             });
         }
