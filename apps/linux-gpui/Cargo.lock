@@ -1654,9 +1654,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "corax-linux-spike"
+name = "corax-linux"
 version = "0.1.0"
 dependencies = [
+ "ammonia",
  "anyrender",
  "anyrender_vello_cpu",
  "blitz-dom",
@@ -1668,7 +1669,10 @@ dependencies = [
  "fontique",
  "gpui",
  "image",
+ "reqwest 0.12.28",
+ "serde",
  "serde_json",
+ "tokio",
 ]
 
 [[package]]

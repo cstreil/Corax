@@ -1,8 +1,9 @@
-//! HTML-Mail zu Text mit Auszeichnung.
+//! Notnagel und Zulieferer für Text: HTML zu Text mit Auszeichnung.
 //!
-//! Ergebnis ist ein Text plus Bereiche für fett, kursiv, Links und Zitate —
-//! genau das, was `StyledText::with_default_highlights` braucht. Der Spike
-//! prüft damit den Weg (a) aus dem Briefing: HTML ohne Web-Ansicht darstellen.
+//! Der Körper einer HTML-Mail läuft in L1 über Blitz (`crate::html_view`).
+//! Dieser Konverter bleibt für drei Dinge: den Textkörper einer Mail
+//! (`text/plain`) als Zeilen, die Vorschauzeile einer Nachricht, und als
+//! Rückfall, wenn Blitz einen Körper nicht zeichnen kann.
 
 use std::ops::Range;
 

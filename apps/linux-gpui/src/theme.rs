@@ -7,6 +7,8 @@
 //!
 //! Ein Theme-Wechsel ersetzt das Verzeichnis `current/theme`; die Datei ändert
 //! ihre Kennung und ihr mtime, daran erkennen wir den Wechsel ohne Neustart.
+//! Omarchy 4 schreibt `current` unter `~/.local/state`, Omarchy 3 unter
+//! `~/.config`; gelesen wird zuerst der Zustands-Pfad.
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -22,7 +24,7 @@ pub struct Theme {
 }
 
 fn home() -> PathBuf {
-    PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| "/home/cs".into()))
+    PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| "/".into()))
 }
 
 pub fn theme_dir() -> PathBuf {
@@ -30,6 +32,17 @@ pub fn theme_dir() -> PathBuf {
 }
 
 impl Theme {
+    /// Ein Rückfall-Thema, falls gar nichts lesbar ist (dunkel, wie Omarchy).
+    pub fn fallback() -> Theme {
+        Theme {
+            name: "Omarchy".into(),
+            mode: "dark".into(),
+            colors: HashMap::new(),
+            font_family: None,
+            stamp: None,
+        }
+    }
+
     /// Theme aus `~/.config/omarchy/themes/<name>` (nur zum Ansehen, ohne den
     /// Desktop umzustellen).
     pub fn load_named(name: &str) -> Theme {
@@ -49,7 +62,11 @@ impl Theme {
                     .map(|s| s.trim().to_string())
             })
             .unwrap_or_else(|| "?".into());
-        Theme::load_dir(&dir, &name)
+        let theme = Theme::load_dir(&dir, &name);
+        if theme.colors.is_empty() {
+            return Theme { name, ..Theme::fallback() };
+        }
+        theme
     }
 
     fn load_dir(dir: &std::path::Path, name: &str) -> Theme {
@@ -89,13 +106,7 @@ impl Theme {
                 None
             });
 
-        let stamp = std::fs::metadata(dir.join("colors.toml"))
-            .ok()
-            .and_then(|m| {
-                let t = m.modified().ok()?;
-                let secs = t.duration_since(SystemTime::UNIX_EPOCH).ok()?.as_secs();
-                Some((secs, m.len()))
-            });
+        let stamp = stamp_of(dir);
 
         Theme {
             name: name.to_string(),
@@ -106,9 +117,15 @@ impl Theme {
         }
     }
 
+    /// Nur die Kennung der Themadatei (mtime, Länge), ohne sie zu lesen. Damit
+    /// kostet der Wechsel-Test alle 100 ms nur zwei `stat`.
+    pub fn stamp_now(&self) -> Option<(u64, u64)> {
+        stamp_of(&theme_dir())
+    }
+
     /// Hat sich das Theme seit dem letzten Laden geändert?
     pub fn changed(&self) -> bool {
-        Theme::load().stamp != self.stamp
+        self.stamp_now() != self.stamp
     }
 
     pub fn is_dark(&self) -> bool {
@@ -144,6 +161,14 @@ impl Theme {
             self.color("lighter_background", self.bg())
         }
     }
+    /// Etwas abgesetzte Fläche (Kopfzeile, Statuszeile, aufgeklappte Karte).
+    pub fn raised(&self) -> u32 {
+        if self.is_dark() {
+            self.color("lighter_background", self.surface())
+        } else {
+            self.color("dark_background", self.surface())
+        }
+    }
     pub fn ink1(&self) -> u32 {
         self.color("foreground", if self.is_dark() { 0xececec } else { 0x101010 })
     }
@@ -157,6 +182,10 @@ impl Theme {
     pub fn ink3(&self) -> u32 {
         self.color("muted", self.ink2())
     }
+    /// Kräftigste Schrift (beste Kontrast): ungelesene Zeilen, Überschriften.
+    pub fn ink_strong(&self) -> u32 {
+        self.color("bright_foreground", self.ink1())
+    }
     pub fn line(&self) -> u32 {
         // Haarlinie: Foreground zu 16 % über dem Hintergrund
         mix(self.ink1(), self.bg(), 0.16)
@@ -164,12 +193,36 @@ impl Theme {
     pub fn accent(&self) -> u32 {
         self.color("accent", 0x2f62ff)
     }
+    pub fn accent_ink(&self) -> u32 {
+        self.color("selection_foreground", self.bg())
+    }
     pub fn selection(&self) -> u32 {
         self.color("selection", self.accent())
     }
-    pub fn selection_ink(&self) -> u32 {
-        self.color("selection_foreground", self.ink1())
+    pub fn green(&self) -> u32 {
+        self.color("green", 0x40a02b)
     }
+    pub fn yellow(&self) -> u32 {
+        self.color("yellow", 0xdf8e1d)
+    }
+    pub fn red(&self) -> u32 {
+        self.color("red", 0xd20f39)
+    }
+    /// Die Schriftart aus `shell.toml` (Terminalschrift der Sitzung).
+    pub fn font(&self) -> gpui::SharedString {
+        self.font_family
+            .clone()
+            .map(gpui::SharedString::from)
+            .unwrap_or_else(|| gpui::SharedString::from("monospace"))
+    }
+}
+
+fn stamp_of(dir: &std::path::Path) -> Option<(u64, u64)> {
+    std::fs::metadata(dir.join("colors.toml")).ok().and_then(|m| {
+        let t = m.modified().ok()?;
+        let secs = t.duration_since(SystemTime::UNIX_EPOCH).ok()?.as_secs();
+        Some((secs, m.len()))
+    })
 }
 
 /// `a` mit Anteil `t` über `b` mischen (t = 1 → a).

@@ -11,6 +11,7 @@ use std::ops::Range;
 use gpui::prelude::*;
 use gpui::*;
 
+use crate::perf::TIPP_ZEIT;
 use crate::theme::Theme;
 
 pub struct TextField {
@@ -93,7 +94,7 @@ impl TextField {
     }
 
     fn insert(&mut self, value: &str) {
-        *crate::TIPP_ZEIT.lock().unwrap() = Some(std::time::Instant::now());
+        *TIPP_ZEIT.lock().unwrap() = Some(std::time::Instant::now());
         // Dead Key: Zeichen erst zurückhalten und nur einsetzen, wenn kein
         // Folgezeichen mehr kommt (sonst entsteht „´é" statt „é").
         if let Some((tot, t)) = self.pending_dead.take() {
