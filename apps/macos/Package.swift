@@ -3,17 +3,17 @@ import PackageDescription
 import Foundation
 
 // The Rust static library is produced by scripts/build-app.sh
-// (`cargo build --release -p rabe-uniffi`). Its directory can be overridden so
+// (`cargo build --release -p corax-uniffi`). Its directory can be overridden so
 // the same package can be built against a different target triple.
 let packageDirectory = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
-let libraryDirectory = ProcessInfo.processInfo.environment["RABE_LIB_DIR"]
+let libraryDirectory = ProcessInfo.processInfo.environment["CORAX_LIB_DIR"]
     ?? packageDirectory
         .appendingPathComponent("../../src-tauri/target/release")
         .standardizedFileURL
         .path
 
 // Native libraries the Rust static library needs. Exact list from
-// `cargo rustc -p rabe-uniffi --release --lib -- --print native-static-libs`:
+// `cargo rustc -p corax-uniffi --release --lib -- --print native-static-libs`:
 //   -framework SystemConfiguration -lobjc -framework IOKit
 //   -framework CoreFoundation -framework Security -liconv
 // (`-lSystem -lc -lm` come from the toolchain; `AppKit`/`Foundation` are added
@@ -28,58 +28,58 @@ let rustNativeFrameworks: [LinkerSetting] = [
 ]
 
 let package = Package(
-    name: "Rabe",
+    name: "Corax",
     platforms: [.macOS("27.0")],
     // M3.2: Sparkle 2 (MIT) für Updates. Fest angeheftet: die App ist ad-hoc
     // signiert, die Updates trägt die EdDSA-Signatur (siehe Updater.swift).
-    // Nur das App-Target bekommt Sparkle; RabeKit bleibt AppKit-frei.
+    // Nur das App-Target bekommt Sparkle; CoraxKit bleibt AppKit-frei.
     dependencies: [
         .package(url: "https://github.com/sparkle-project/Sparkle", exact: "2.10.1"),
     ],
     targets: [
-        // Generated C module: RabeFFI.h + module.modulemap from uniffi-bindgen.
+        // Generated C module: CoraxFFI.h + module.modulemap from uniffi-bindgen.
         .target(
-            name: "RabeFFI",
+            name: "CoraxFFI",
             path: "Generated/ffi",
             linkerSettings: [
                 .unsafeFlags(["-L", libraryDirectory]),
-                .linkedLibrary("rabe_uniffi"),
+                .linkedLibrary("corax_uniffi"),
             ] + rustNativeFrameworks
         ),
         // Generated Swift wrappers. Swift 5 language mode: the generated code
         // predates strict concurrency checking and is not the thing we test here.
         .target(
-            name: "RabeBindings",
-            dependencies: ["RabeFFI"],
+            name: "CoraxBindings",
+            dependencies: ["CoraxFFI"],
             path: "Generated/swift",
             swiftSettings: [.swiftLanguageMode(.v5)]
         ),
         // Plattformneutraler Kern: Core, State und Support ohne AppKit,
-        // SwiftUI oder WebKit (`scripts/check-rabekit.sh` prüft das).
+        // SwiftUI oder WebKit (`scripts/check-coraxkit.sh` prüft das).
         .target(
-            name: "RabeKit",
-            dependencies: ["RabeBindings", "RabeFFI"],
-            path: "Sources/RabeKit"
+            name: "CoraxKit",
+            dependencies: ["CoraxBindings", "CoraxFFI"],
+            path: "Sources/CoraxKit"
         ),
         // M3.3: Siri und Kurzbefehle. Eigenes Modul, damit der Intent-Code ohne
         // AppKit auskommt und sich später unverändert nach `rabe-app` tragen
         // lässt; das App-Target hängt nur davon ab.
         .target(
-            name: "RabeIntents",
-            dependencies: ["RabeKit"],
-            path: "Sources/RabeIntents",
+            name: "CoraxIntents",
+            dependencies: ["CoraxKit"],
+            path: "Sources/CoraxIntents",
             linkerSettings: [
                 .linkedFramework("AppIntents"),
             ]
         ),
         // Nur UI: AppKit, SwiftUI, WebKit und die Mac-Seite von `PlatformServices`.
         .executableTarget(
-            name: "Rabe",
+            name: "Corax",
             dependencies: [
-                "RabeKit", "RabeBindings", "RabeFFI", "RabeIntents",
+                "CoraxKit", "CoraxBindings", "CoraxFFI", "CoraxIntents",
                 .product(name: "Sparkle", package: "Sparkle"),
             ],
-            path: "Sources/Rabe",
+            path: "Sources/Corax",
             // Sparkle.framework liegt im Bundle unter Contents/Frameworks.
             linkerSettings: [
                 .unsafeFlags(["-Xlinker", "-rpath", "-Xlinker", "@executable_path/../Frameworks"]),
@@ -88,9 +88,9 @@ let package = Package(
         // Argument names of the IPC wrappers against the contract in
         // `src/ipc/types.ts` (run with `swift test`).
         .testTarget(
-            name: "RabeTests",
-            dependencies: ["Rabe", "RabeIntents"],
-            path: "Tests/RabeTests"
+            name: "CoraxTests",
+            dependencies: ["Corax", "CoraxIntents"],
+            path: "Tests/CoraxTests"
         ),
     ]
 )

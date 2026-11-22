@@ -17,7 +17,7 @@ tauri="$root/src-tauri"
 target="$tauri/target/release"
 generated="$package/Generated"
 # M3.1: Name und Kennung stehen nur hier im Skript (der Swift-Code liest
-# dieselben Werte aus `Sources/RabeKit/Support/AppIdentity.swift`; der Test
+# dieselben Werte aus `Sources/CoraxKit/Support/AppIdentity.swift`; der Test
 # `M31IdentityTests` vergleicht beide Seiten, damit sie nicht auseinanderlaufen).
 APP_NAME="Corax"
 BUNDLE_ID="com.coraxapp.corax"
@@ -44,12 +44,12 @@ export MACOSX_DEPLOYMENT_TARGET=27.0
 
 echo "==> toolchain: $(xcode-select -p 2>/dev/null || echo 'no developer dir')"
 
-# RabeKit must stay free of AppKit/SwiftUI/WebKit/UIKit (M2.0, requirement 8).
-"$here/check-rabekit.sh"
-echo "==> cargo build --release -p rabe-uniffi (MACOSX_DEPLOYMENT_TARGET=$MACOSX_DEPLOYMENT_TARGET)"
-cargo build --manifest-path "$tauri/Cargo.toml" --release -p rabe-uniffi
+# CoraxKit must stay free of AppKit/SwiftUI/WebKit/UIKit (M2.0, requirement 8).
+"$here/check-coraxkit.sh"
+echo "==> cargo build --release -p corax-uniffi (MACOSX_DEPLOYMENT_TARGET=$MACOSX_DEPLOYMENT_TARGET)"
+cargo build --manifest-path "$tauri/Cargo.toml" --release -p corax-uniffi
 
-library="$target/librabe_uniffi.a"
+library="$target/libcorax_uniffi.a"
 bindgen="$target/uniffi-bindgen"
 [ -f "$library" ] || { echo "error: missing $library" >&2; exit 1; }
 [ -x "$bindgen" ] || { echo "error: missing $bindgen" >&2; exit 1; }
@@ -68,25 +68,25 @@ mkdir -p "$generated/swift" "$generated/ffi/include" "$generated/raw"
         --no-format
 )
 
-mv "$generated/raw/RabeBindings.swift" "$generated/swift/"
-mv "$generated/raw/RabeFFI.h" "$generated/ffi/include/"
-mv "$generated/raw/RabeFFI.modulemap" "$generated/ffi/include/module.modulemap"
+mv "$generated/raw/CoraxBindings.swift" "$generated/swift/"
+mv "$generated/raw/CoraxFFI.h" "$generated/ffi/include/"
+mv "$generated/raw/CoraxFFI.modulemap" "$generated/ffi/include/module.modulemap"
 rmdir "$generated/raw"
 
 # SwiftPM expects a compiled object for a C target; the module itself is
 # headers only, so one empty translation unit keeps the linker happy.
-cat > "$generated/ffi/RabeFFI.c" <<'C'
-#include "RabeFFI.h"
+cat > "$generated/ffi/CoraxFFI.c" <<'C'
+#include "CoraxFFI.h"
 
-void rabe_ffi_module_anchor(void) {}
+void corax_ffi_module_anchor(void) {}
 C
 
-# RABE_TEST_HOOKS=1 compiles the test hooks (RABE_DEBUG_AUTOMATION,
-# RABE_REMOTE_IMAGES) into the release build, for walkthrough.sh. Default: off.
+# CORAX_TEST_HOOKS=1 compiles the test hooks (CORAX_DEBUG_AUTOMATION,
+# CORAX_REMOTE_IMAGES) into the release build, for walkthrough.sh. Default: off.
 swift_flags=()
-if [ "${RABE_TEST_HOOKS:-0}" = "1" ]; then
-    swift_flags=(-Xswiftc -DRABE_TEST_HOOKS)
-    echo "==> test hooks enabled (RABE_TEST_HOOKS=1)"
+if [ "${CORAX_TEST_HOOKS:-0}" = "1" ]; then
+    swift_flags=(-Xswiftc -DCORAX_TEST_HOOKS)
+    echo "==> test hooks enabled (CORAX_TEST_HOOKS=1)"
 fi
 
 echo "==> swift build -c release"
@@ -110,14 +110,14 @@ if [ "${version_warnings:-0}" -gt 0 ]; then
     echo
     echo "note: $version_warnings linker version warning(s) remain."
     echo "      These objects ship inside the installed Rust toolchain:"
-    echo "      $(grep -o "librabe_uniffi.a\[[0-9]*\]([^)]*)" "$build_log" | sed -n '1,3p' | tr '\n' ' ')"
+    echo "      $(grep -o "libcorax_uniffi.a\[[0-9]*\]([^)]*)" "$build_log" | sed -n '1,3p' | tr '\n' ' ')"
     echo "      $(grep -o "built for newer 'macOS' version ([0-9.]*)" "$build_log" | sort -u | tr '\n' ' ')"
     echo "      Cause: the prebuilt std of $(rustc --version 2>/dev/null | cut -d' ' -f1-2) is built for that version."
     echo "      Fix: LSMinimumSystemVersion to the same version, or a toolchain whose std is built for 26.0."
     echo
 fi
 bin_path="$(swift build -c release --disable-sandbox ${swift_flags[@]+"${swift_flags[@]}"} --package-path "$package" --show-bin-path)"
-executable="$bin_path/Rabe"
+executable="$bin_path/Corax"
 [ -x "$executable" ] || { echo "error: no executable at $executable" >&2; exit 1; }
 
 # M3.3: Siri und Kurzbefehle brauchen `Metadata.appintents` im Bundle; SwiftPM
@@ -128,7 +128,7 @@ echo "==> app intents metadata"
 meta_out="$generated/appintents"
 rm -rf "$meta_out"
 mkdir -p "$meta_out"
-intents_src="$package/Sources/RabeIntents"
+intents_src="$package/Sources/CoraxIntents"
 sdk_path="$(xcrun --sdk macosx --show-sdk-path)"
 processor="$(xcrun --sdk macosx --find appintentsmetadataprocessor)"
 swiftc_path="$(xcrun --sdk macosx --find swiftc)"
@@ -142,7 +142,7 @@ find "$intents_src" -name '*.swift' | sort > "$meta_out/sources.txt"
 # `-emit-const-values-path` und `-const-gather-protocols-file`; die Datei liegt
 # bei den Zwischenergebnissen und wird hier wiederverwendet, statt die Quellen
 # ein zweites Mal zu übersetzen. Fehlt sie, läuft der Prozessor ohne.
-const_values="$(find "$bin_path/../.." -name 'RabeIntents-*.swiftconstvalues' -type f -print 2>/dev/null | head -1)"
+const_values="$(find "$bin_path/../.." -name 'CoraxIntents-*.swiftconstvalues' -type f -print 2>/dev/null | head -1)"
 : > "$meta_out/constvalues.txt"
 if [ -n "$const_values" ]; then
     echo "$const_values" > "$meta_out/constvalues.txt"
@@ -151,7 +151,7 @@ fi
 "$processor" \
     --output "$meta_out" \
     --toolchain-dir "$toolchain_dir" \
-    --module-name RabeIntents \
+    --module-name CoraxIntents \
     --sdk-root "$sdk_path" \
     --xcode-version "$xcode_build" \
     --platform-family macOS \
@@ -169,7 +169,7 @@ fi
 echo "==> assembling $app"
 rm -rf "$app"
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
-cp "$executable" "$app/Contents/MacOS/Rabe"
+cp "$executable" "$app/Contents/MacOS/Corax"
 ditto --norsrc "$meta_out/Metadata.appintents" "$app/Contents/Resources/Metadata.appintents"
 # M3.2: Sparkle.framework mit ins Bundle; der Linker sucht es zur Laufzeit
 # unter Contents/Frameworks (@executable_path/../Frameworks).
@@ -190,7 +190,7 @@ cat > "$app/Contents/Info.plist" <<PLIST
 	<key>CFBundleDisplayName</key>
 	<string>${APP_NAME}</string>
 	<key>CFBundleExecutable</key>
-	<string>Rabe</string>
+	<string>Corax</string>
 	<key>CFBundleIdentifier</key>
 	<string>${BUNDLE_ID}</string>
 	<key>CFBundleIconFile</key>
@@ -213,7 +213,7 @@ cat > "$app/Contents/Info.plist" <<PLIST
 	<string>NSApplication</string>
 	<!-- M2.4: the bundle handles mailto: (RFC 6068), so macOS may hand the
 	     app such a URL (Ai: "Neue Mail" from another app). Registering the
-	     scheme does NOT make Rabe the default mail app — that is a choice in
+	     scheme does NOT make Corax the default mail app — that is a choice in
 	     Mail's settings. LSHandlerRank Alternate keeps the app out of the way
 	     for anyone who did not pick it. -->
 	<key>CFBundleURLTypes</key>
@@ -249,8 +249,8 @@ fi
 
 # Mark hook builds inside the bundle (W5): the release for the user must not
 # carry the debug notification hooks.
-if [ "${RABE_TEST_HOOKS:-0}" = "1" ]; then
-    /usr/libexec/PlistBuddy -c "Add :RabeTestHooks bool true" "$app/Contents/Info.plist"
+if [ "${CORAX_TEST_HOOKS:-0}" = "1" ]; then
+    /usr/libexec/PlistBuddy -c "Add :CoraxTestHooks bool true" "$app/Contents/Info.plist"
 fi
 
 echo "==> codesign"
@@ -262,9 +262,9 @@ echo "==> codesign"
 # in-place attempt can never win there (M2.8b: the bundle ended up unsigned and
 # without `_CodeSignature`). In that case sign a copy in a scratch directory
 # outside iCloud and copy it back with `ditto`, then verify at the real path.
-identity="${RABE_SIGN_IDENTITY:-$(security find-identity -v -p codesigning | awk 'NR==1 {print $2}')}"
+identity="${CORAX_SIGN_IDENTITY:-$(security find-identity -v -p codesigning | awk 'NR==1 {print $2}')}"
 if [ -z "${identity:-}" ]; then
-    echo "error: no codesigning identity; set RABE_SIGN_IDENTITY" >&2
+    echo "error: no codesigning identity; set CORAX_SIGN_IDENTITY" >&2
     exit 1
 fi
 
@@ -273,7 +273,7 @@ fi
 sign_bundle() {
     bundle="$1"
     attempt=0
-    err="$(mktemp "${TMPDIR:-/tmp}/rabe-codesign.XXXXXX")"
+    err="$(mktemp "${TMPDIR:-/tmp}/corax-codesign.XXXXXX")"
     while [ "$attempt" -lt 3 ]; do
         attempt=$((attempt + 1))
         xattr -cr "$bundle" 2>/dev/null || true
@@ -295,7 +295,7 @@ sign_bundle() {
 if sign_bundle "$app"; then
     codesign --verify --verbose=2 "$app"
 else
-    scratch="$(mktemp -d "${TMPDIR:-/tmp}/rabe-sign.XXXXXX")"
+    scratch="$(mktemp -d "${TMPDIR:-/tmp}/corax-sign.XXXXXX")"
     echo "note: signing in place failed (iCloud keeps FinderInfo on the bundle root);"
     echo "      signing a copy in $scratch and copying it back."
     ditto --norsrc "$app" "$scratch/$APP_NAME.app"
@@ -317,8 +317,8 @@ fi
 echo
 echo "built: $app"
 echo "start: open -a \"$app\""
-if [ "${RABE_TEST_HOOKS:-0}" = "1" ]; then
+if [ "${CORAX_TEST_HOOKS:-0}" = "1" ]; then
     echo
-    echo "WARNING: this bundle contains the test hooks (RABE_TEST_HOOKS=1)."
+    echo "WARNING: this bundle contains the test hooks (CORAX_TEST_HOOKS=1)."
     echo "         Build without the flag before handing it to the user or copying it to /Applications."
 fi

@@ -1288,6 +1288,36 @@ dependencies = [
 ]
 
 [[package]]
+name = "corax-host"
+version = "0.0.1"
+dependencies = [
+ "chrono",
+ "comail-core",
+ "libc",
+ "regex",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tempfile",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "corax-uniffi"
+version = "0.0.1"
+dependencies = [
+ "corax-host",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+ "uniffi",
+]
+
+[[package]]
 name = "core-foundation"
 version = "0.9.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5201,36 +5231,6 @@ name = "r-efi"
 version = "6.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f8dcc9c7d52a811697d2151c701e0d08956f92b0e24136cf4cf27b57a6a0d9bf"
-
-[[package]]
-name = "rabe-host"
-version = "0.0.1"
-dependencies = [
- "chrono",
- "comail-core",
- "libc",
- "regex",
- "rusqlite",
- "serde",
- "serde_json",
- "sha2 0.10.9",
- "tempfile",
- "tokio",
- "tracing",
- "tracing-subscriber",
-]
-
-[[package]]
-name = "rabe-uniffi"
-version = "0.0.1"
-dependencies = [
- "rabe-host",
- "serde_json",
- "thiserror 2.0.18",
- "tokio",
- "tracing",
- "uniffi",
-]
 
 [[package]]
 name = "rand"

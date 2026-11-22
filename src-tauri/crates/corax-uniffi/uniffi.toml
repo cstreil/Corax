@@ -1,0 +1,7 @@
+[bindings.swift]
+# Names the Swift side imports: the C module (`CoraxFFI`) is the static library's
+# headers, the generated Swift wrappers land in `CoraxBindings`.
+module_name = "CoraxBindings"
+ffi_module_name = "CoraxFFI"
+ffi_module_filename = "CoraxFFI"
+cdylib_name = "corax_uniffi"

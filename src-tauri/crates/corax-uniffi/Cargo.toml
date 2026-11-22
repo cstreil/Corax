@@ -1,0 +1,22 @@
+[package]
+name = "corax-uniffi"
+version = "0.0.1"
+edition = "2024"
+license = "AGPL-3.0-only"
+description = "UniFFI facade for the Swift app: starts corax-host and exposes a JSON dispatcher"
+
+[lib]
+name = "corax_uniffi"
+crate-type = ["staticlib", "rlib"]
+
+[[bin]]
+name = "uniffi-bindgen"
+path = "src/bin/uniffi-bindgen.rs"
+
+[dependencies]
+corax-host = { path = "../corax-host" }
+uniffi = { version = "0.32", features = ["cli", "tokio"] }
+tokio.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tracing.workspace = true

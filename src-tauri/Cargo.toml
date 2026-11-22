@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/comail-core", "crates/rabe-host", "crates/rabe-uniffi"]
+members = ["crates/comail-core", "crates/corax-host", "crates/corax-uniffi"]
 
 [workspace.dependencies]
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "net", "io-util", "fs"] }

@@ -70,7 +70,7 @@ plist_key="$(/usr/libexec/PlistBuddy -c 'Print :SUPublicEDKey' "$plist" 2>/dev/n
 # 3) Sparkle-Werkzeuge (sign_update) aus den SwiftPM-Artefakten.
 sparkle_bin="${SPARKLE_BIN:-}"
 if [ -z "$sparkle_bin" ]; then
-    for candidate in "$package/.build" "${RABE_SCRATCH:-/tmp/rabe-coder2-build}"; do
+    for candidate in "$package/.build" "${CORAX_SCRATCH:-/tmp/corax-build}"; do
         found="$(find "$candidate" -type f -name sign_update -path '*artifacts*' 2>/dev/null | head -1)"
         if [ -n "$found" ]; then
             sparkle_bin="$(dirname "$found")"
