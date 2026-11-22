@@ -43,8 +43,6 @@ pub enum Action {
     Seitenleiste,
     /// `G` gefolgt von `I S D T E H # ! A`
     GeheZu(crate::core::models::MailView),
-    /// Zeichen, das nur für den `G`-Präfix zählt (noch offen).
-    Praefix(char),
 }
 
 /// In welchem Zustand die Taste ankommt.

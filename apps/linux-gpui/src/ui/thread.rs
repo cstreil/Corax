@@ -39,7 +39,6 @@ pub struct Karte {
     pub nachrichten: Vec<KarteNachricht>,
     pub ms: f64,
     pub bilder: usize,
-    pub fehler: Option<String>,
     /// Externe Bilder, für die beim Zeichnen keine Bytes vorlagen (Einkaufsliste).
     pub fern: Vec<String>,
 }
@@ -52,7 +51,6 @@ impl Karte {
 
 #[derive(Clone)]
 pub struct KarteNachricht {
-    pub id: i64,
     pub von: String,
     pub initialen: String,
     pub an: String,
@@ -61,8 +59,6 @@ pub struct KarteNachricht {
     pub koerper: Koerper,
     pub anhaenge: Vec<AttachmentMeta>,
     pub blockiert: usize,
-    /// Externe Bilder dieser Nachricht, die noch fehlen.
-    pub fern: Vec<String>,
     /// Bilder werden gerade geholt (Hinweiszeile statt „Laden").
     pub laedt: bool,
     /// Bilder, die nicht geholt werden konnten (mit „erneut laden").
@@ -103,18 +99,16 @@ pub fn karte_bauen(
     let b = breite as f32;
     let mut nachrichten = Vec::with_capacity(detail.messages.len());
     let mut bilder_anzahl = 0usize;
-    let mut fehler = None;
     let mut alle_fern: Vec<String> = Vec::new();
 
     for message in &detail.messages {
         let (koerper, blockiert, fern) =
-            koerper_bauen(message, breite, remote, basis, Arc::clone(&bilder), &mut fehler);
+            koerper_bauen(message, breite, remote, basis, Arc::clone(&bilder));
         if matches!(koerper, Koerper::Bild { .. }) {
             bilder_anzahl += 1;
         }
         alle_fern.extend(fern.iter().cloned());
         nachrichten.push(KarteNachricht {
-            id: message.id,
             von: message.from.display(),
             initialen: message.from.initials(),
             an: empfaenger_zeile(message),
@@ -127,7 +121,6 @@ pub fn karte_bauen(
             // Der Fehler gehört zur Mail, nicht zur Nachricht: nur wo noch
             // Bilder fehlen, steht die Zeile.
             fehler: if fern.is_empty() { 0 } else { fehler_anzahl },
-            fern,
         });
     }
     alle_fern.sort();
@@ -140,7 +133,6 @@ pub fn karte_bauen(
         nachrichten,
         ms: start.elapsed().as_secs_f64() * 1000.0,
         bilder: bilder_anzahl,
-        fehler,
         fern: alle_fern,
     }
 }
@@ -164,7 +156,6 @@ fn koerper_bauen(
     remote: RemoteImages,
     basis: Option<&Path>,
     bilder: Arc<Resources>,
-    fehler: &mut Option<String>,
 ) -> (Koerper, usize, Vec<String>) {
     // `cid:`-Bilder sind kein Thema mehr: der Kern schreibt sie vor der
     // Auslieferung in `data:`-URIs um, die [`Resources`] selbst dekodiert.
@@ -182,10 +173,7 @@ fn koerper_bauen(
                 };
                 return (art, blockiert, fern);
             }
-            Err(error) => {
-                eprintln!("L1-HTML fehler: {error}");
-                *fehler = Some(error);
-            }
+            Err(error) => eprintln!("L1-HTML fehler: {error}"),
         }
     }
 
@@ -413,10 +401,6 @@ fn nachricht_block(
                     },
                     mailtext::Emphasis::Link => HighlightStyle {
                         color: Some(rgb(theme.accent()).into()),
-                        ..Default::default()
-                    },
-                    mailtext::Emphasis::Quote => HighlightStyle {
-                        color: Some(rgb(theme.ink3()).into()),
                         ..Default::default()
                     },
                 };

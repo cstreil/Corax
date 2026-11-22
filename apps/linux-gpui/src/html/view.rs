@@ -43,9 +43,6 @@ pub struct Koerper {
     pub fern: Vec<String>,
     /// Was der Sanitizer entfernt hat, für Statuszeile und Bericht.
     pub entfernt: Vec<String>,
-    /// Zeit für Layout+Paint bzw. PNG-Kodierung.
-    pub ms_render: f64,
-    pub ms_png: f64,
 }
 
 /// Bild-Anbieter für Blitz: beantwortet **jede** Anfrage, damit nichts
@@ -255,8 +252,6 @@ pub fn rendere_dokument(
         blockiert: 0,
         fern: offen,
         entfernt: Vec::new(),
-        ms_render: ms_layout + ms_paint,
-        ms_png,
     })
 }
 

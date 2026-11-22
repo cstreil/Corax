@@ -39,7 +39,6 @@ pub enum Request {
     Bilder { thread: i64, urls: Vec<String> },
     /// Nach der ersten Liste: der Kern muss nicht mehr auf die UI warten.
     UiReady,
-    SyncNow,
 }
 
 /// Eine Antwort oder ein Ereignis aus dem Kern.
@@ -60,6 +59,9 @@ pub enum Reply {
 }
 
 /// Kernereignisse, die L1 braucht; alles Übrige heißt „sonstiges Ereignis".
+/// Die Nutzlast (Thread-Ids, Konto) wertet erst L2 aus — Abgleich nach
+/// `mail:new` und Sync-Status je Konto.
+#[allow(dead_code)]
 #[derive(Clone, Debug)]
 pub enum CoreEvent {
     Ready { core_start_ms: f64 },
@@ -267,7 +269,6 @@ fn command_for(request: &Request) -> Option<(&'static str, String)> {
             "open_attachment",
             args(serde_json::json!({ "attachmentId": id })),
         )),
-        Request::SyncNow => Some(("sync_now", args(serde_json::json!({ "accountId": null })))),
         // Bilder holt die Laufzeit, nicht `dispatch` (siehe Schleife oben).
         Request::Bilder { .. } => None,
         Request::UiReady => None,
@@ -314,7 +315,6 @@ fn parse_reply(request: Request, json: &str) -> Reply {
         Request::OpenAttachment(_) => Reply::Status("Anhang geöffnet".into()),
         // Kommt hier nie an: Bilder beantwortet die Laufzeit selbst.
         Request::Bilder { .. } => Reply::Error("Bilder laufen nicht über dispatch".into()),
-        Request::SyncNow => Reply::Status("Synchronisation angestoßen".into()),
         Request::UiReady => Reply::Status("UI bereit".into()),
     }
 }

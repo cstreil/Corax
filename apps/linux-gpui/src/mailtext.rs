@@ -12,18 +12,12 @@ pub enum Emphasis {
     Bold,
     Italic,
     Link,
-    Quote,
 }
 
 #[derive(Clone, Debug, Default)]
 pub struct RichText {
     pub text: String,
     pub ranges: Vec<(Range<usize>, Emphasis)>,
-}
-
-/// Nur Text, ohne Auszeichnung (für Notfälle und Vergleiche).
-pub fn strip(html: &str) -> String {
-    to_text(html).text
 }
 
 pub fn to_text(html: &str) -> RichText {

@@ -55,6 +55,8 @@ pub struct Tab {
 }
 
 /// Ein Lauf für die Abnahme (§4.11): Frames während des Scrollens.
+/// Nur der Messbuild startet ihn.
+#[cfg_attr(not(feature = "test-hooks"), allow(dead_code))]
 #[derive(Debug, Default)]
 pub struct Messlauf {
     pub schritte: usize,
@@ -104,6 +106,8 @@ pub struct AppState {
     /// Sichtbarer Bereich der Liste, vom Scroll-Handler gefüllt.
     pub sichtbar: Arc<AtomicUsize>,
     pub sichtbar_ende: Arc<AtomicUsize>,
+    /// Nur Messbuild: Dauer der letzten Listenantwort.
+    #[cfg_attr(not(feature = "test-hooks"), allow(dead_code))]
     pub letzte_liste_ms: f64,
 
     // ---- Suche ----
@@ -139,6 +143,8 @@ pub struct AppState {
     /// Ein von Hand gewähltes Theme (Test-Hook): dann nicht der Sitzung folgen.
     pub theme_override: Option<String>,
     /// Stand der Befehlsdatei (Test-Hooks).
+    /// Nur Messbuild: Leseposition in der Hook-Datei.
+    #[cfg_attr(not(feature = "test-hooks"), allow(dead_code))]
     pub hook_pos: u64,
     /// Fenstergröße aus einem Test-Hook, beim nächsten Zeichnen angewandt.
     pub pending_size: Option<(f32, f32)>,
@@ -1080,7 +1086,6 @@ impl AppState {
                 self.hint = SharedString::default();
                 self.gehe_zu(view, cx);
             }
-            Action::Praefix(_) => {}
         }
     }
 
@@ -1134,6 +1139,7 @@ impl AppState {
     fn hooks(&mut self, _cx: &mut Context<Self>) {}
 
     /// Startet einen Frame-Messlauf: die Liste scrollt `schritte` Mal.
+    #[cfg_attr(not(feature = "test-hooks"), allow(dead_code))]
     pub fn messlauf_starten(&mut self, name: String, schritte: usize, cx: &mut Context<Self>) {
         perf::reset_frames();
         self.messlauf = Some(Messlauf {

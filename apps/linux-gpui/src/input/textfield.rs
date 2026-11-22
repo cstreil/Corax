@@ -56,6 +56,7 @@ impl TextField {
     }
 
     /// Test-Hook: Text einfügen, ohne den Plattformweg (Dead Keys, IME).
+    #[cfg_attr(not(feature = "test-hooks"), allow(dead_code))]
     pub fn type_text(&mut self, value: &str) {
         self.insert(value);
     }

@@ -6,6 +6,9 @@
 //! Mutex und ein paar Zahlen; Ausgaben entstehen nur bei Messläufen und
 //! Fehlern.
 
+// Im Release greift niemand darauf zu: das Modul ist Messwerkzeug.
+#![cfg_attr(not(feature = "test-hooks"), allow(dead_code))]
+
 use std::sync::Mutex;
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, Ordering};

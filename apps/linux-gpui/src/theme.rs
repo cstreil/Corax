@@ -44,7 +44,8 @@ impl Theme {
     }
 
     /// Theme aus `~/.config/omarchy/themes/<name>` (nur zum Ansehen, ohne den
-    /// Desktop umzustellen).
+    /// Desktop umzustellen). Nur der Test-Hook (`theme:`) ruft das.
+    #[cfg_attr(not(feature = "test-hooks"), allow(dead_code))]
     pub fn load_named(name: &str) -> Theme {
         let dir = home().join(".config/omarchy/themes").join(name);
         Theme::load_dir(&dir, name)
@@ -193,14 +194,8 @@ impl Theme {
     pub fn accent(&self) -> u32 {
         self.color("accent", 0x2f62ff)
     }
-    pub fn accent_ink(&self) -> u32 {
-        self.color("selection_foreground", self.bg())
-    }
     pub fn selection(&self) -> u32 {
         self.color("selection", self.accent())
-    }
-    pub fn green(&self) -> u32 {
-        self.color("green", 0x40a02b)
     }
     pub fn yellow(&self) -> u32 {
         self.color("yellow", 0xdf8e1d)

@@ -18,9 +18,9 @@ use crate::ui::thread;
 #[derive(Clone, Debug)]
 pub enum Row {
     /// Datumsgruppen-Überschrift („Heute", „Gestern", „Diese Woche", Monat).
-    Kopf { label: SharedString, key: String },
+    Kopf { label: SharedString },
     /// Ein Thread.
-    Thread { id: i64, index: usize },
+    Thread { id: i64 },
     /// Der aufgeklappte Thread direkt unter seiner Zeile.
     Karte { id: i64, hoehe: f32 },
 }
@@ -47,15 +47,15 @@ pub fn rows_bauen(state: &mut AppState) {
     let gruppieren = state.suche.is_none();
     let expanded = state.expanded;
 
-    for (index, thread) in state.threads.iter().enumerate() {
+    for thread in state.threads.iter() {
         if gruppieren {
             let (key, label) = gruppe(thread.last_message_at, jetzt);
             if letzte_gruppe.as_deref() != Some(key.as_str()) {
-                rows.push(Row::Kopf { label: label.into(), key: key.clone() });
+                rows.push(Row::Kopf { label: label.into() });
                 letzte_gruppe = Some(key);
             }
         }
-        rows.push(Row::Thread { id: thread.id, index });
+        rows.push(Row::Thread { id: thread.id });
         if expanded == Some(thread.id) {
             if let Some(karte) = state.karten.get(&thread.id) {
                 rows.push(Row::Karte { id: thread.id, hoehe: karte.hoehe });
