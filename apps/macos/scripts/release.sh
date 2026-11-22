@@ -36,7 +36,10 @@ build="$(sed -n '2p' "$version_file" | tr -d '[:space:]')"
 [[ "$build" =~ ^[0-9]+$ ]] || fail "Build-Nummer '$build' ist keine Zahl"
 
 feed_url="${CORAX_FEED_URL:-https://github.com/coraxapp/releases/releases/latest/download/appcast.xml}"
-public_key="${CORAX_PUBLIC_ED_KEY:-}"
+# Öffentlicher EdDSA-Schlüssel für die Info.plist. Öffentlich, unbedenklich —
+# der private Teil liegt im Schlüsselbund des Nutzers und kommt nie ins Repo,
+# in eine Datei oder ins Log.
+public_key="${CORAX_PUBLIC_ED_KEY:-6ZCcUiZJOasvKpYZCbOC3ksOKdzHfKRSnlLhvwRVPPw=}"
 app_name="${CORAX_APP_NAME:-Corax}"
 # Probelauf wie in build-app.sh: CORAX_BUILD_DIR und CORAX_DIST_DIR woandershin.
 build_dir="${CORAX_BUILD_DIR:-$package/build}"
@@ -100,7 +103,17 @@ esac
 echo "==> signiert: $signature"
 
 # 6) Appcast ergänzen (bisherige Versionen bleiben stehen).
-download_url="${CORAX_DOWNLOAD_URL:-$(dirname "$feed_url")/$app_name-$version.zip}"
+# Die ZIP hängt am getaggten Release **ihrer** Version, nicht unter
+# `latest/download`: der Feed zeigt auf "latest", die Datei selbst muss aber
+# unveränderlich an ihrer Version hängen. CORAX_DOWNLOAD_URL sticht das aus.
+if [ -n "${CORAX_DOWNLOAD_URL:-}" ]; then
+    download_url="$CORAX_DOWNLOAD_URL"
+elif [[ "$feed_url" == */latest/download/appcast.xml ]]; then
+    download_url="${feed_url%/latest/download/appcast.xml}/download/v$version/$app_name-$version.zip"
+else
+    download_url="$(dirname "$feed_url")/$app_name-$version.zip"
+fi
+echo "==> Download: $download_url"
 minimum_os="$(/usr/libexec/PlistBuddy -c 'Print :LSMinimumSystemVersion' "$plist" 2>/dev/null || echo 27.0)"
 appcast="$dist/appcast.xml"
 python3 - "$appcast" "$version" "$build" "$download_url" "$size" "$signature" "$minimum_os" "$feed_url" <<'PY'
