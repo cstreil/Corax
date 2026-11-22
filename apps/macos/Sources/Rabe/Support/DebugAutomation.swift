@@ -154,7 +154,7 @@ enum DebugAutomation {
             post(key: parts[1])
         case "scrollrun":
             ScrollRun.start(seconds: Double(parts[1]) ?? 20)
-        case "theme":   // theme:paper|carbon|snow|system (writes the setting; sandbox only)
+        case "theme":   // theme:paper|carbon|system (writes the setting; sandbox only)
             if let id = ThemeID(rawValue: parts[1]) { ActionDispatcher.perform(.theme(id)) }
         case "view":    // view:inbox|all|… (navigation only, read-only)
             if let v = MailView(rawValue: parts[1]) { ActionDispatcher.perform(.view(v)) }

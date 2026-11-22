@@ -333,48 +333,13 @@ struct ToastView: View {
 
 // MARK: - Window plumbing
 
-/// Background per theme. Glas uses the real material behind the window.
+/// Background per theme: the window surface itself. Das Fenster ist immer
+/// deckend — das frühere Glas-Theme mit Material hinter dem Fenster gibt es
+/// nicht mehr.
 struct WindowBackground: View {
     let theme: Theme
     var body: some View {
-        if theme.usesGlass {
-            // Mockup `glass`: the window (`--win`, white 58 %) lies over a
-            // blurred page with a blue and a peach glow. Natively the page is
-            // the real desktop behind a translucent material; the two glows
-            // from `--page` tint it so the theme reads the same on any wallpaper.
-            ZStack {
-                VisualEffect(material: .sidebar, blending: .behindWindow)
-                GeometryReader { geo in
-                    let r = max(geo.size.width, geo.size.height)
-                    ZStack {
-                        RadialGradient(colors: [RGBA.hex(0xc9d8ff).color, .clear], center: UnitPoint(x: 0.15, y: 0.1),
-                                       startRadius: 0, endRadius: r * 0.95)
-                        RadialGradient(colors: [RGBA.hex(0xffd9c7).color, .clear], center: UnitPoint(x: 0.9, y: 0.8),
-                                       startRadius: 0, endRadius: r * 0.75)
-                    }
-                }
-                theme.win.color
-            }
-            .ignoresSafeArea()
-        } else {
-            theme.win.color.ignoresSafeArea()
-        }
-    }
-}
-
-struct VisualEffect: NSViewRepresentable {
-    let material: NSVisualEffectView.Material
-    let blending: NSVisualEffectView.BlendingMode
-    func makeNSView(context: Context) -> NSVisualEffectView {
-        let v = NSVisualEffectView()
-        v.material = material
-        v.blendingMode = blending
-        v.state = .followsWindowActiveState
-        return v
-    }
-    func updateNSView(_ v: NSVisualEffectView, context: Context) {
-        v.material = material
-        v.blendingMode = blending
+        theme.win.color.ignoresSafeArea()
     }
 }
 

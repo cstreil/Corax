@@ -85,7 +85,7 @@ public final class SettingsStore {
 
     public init() {}
 
-    public var themeID: ThemeID { ThemeID(rawValue: raw["theme"] as? String ?? "system") ?? .system }
+    public var themeID: ThemeID { ThemeID.migrated(from: raw["theme"] as? String ?? "system") }
     public var accentKey: String { raw["accentColor"] as? String ?? "violet" }
     public var undoSendSeconds: Int { (raw["undoSendSeconds"] as? NSNumber)?.intValue ?? 10 }
     /// `RABE_REMOTE_IMAGES=off` overrides the stored setting for this run only

@@ -45,7 +45,7 @@ struct SidebarColumn: View {
             footer
         }
         .frame(width: SidebarState.width)
-        .background(sideBackground)
+        .background(theme.side.color)
         .overlay(alignment: .trailing) {
             Rectangle().fill(theme.line.color).frame(width: 0.5)
         }
@@ -54,18 +54,6 @@ struct SidebarColumn: View {
         // sich der Schlüssel danach nicht mehr änderte. Die Kontenliste gehört
         // deshalb in den Schlüssel; sobald sie da ist, lädt die Zeile erneut.
         .task(id: "\(box.accountId ?? -1)|\(box.accounts.map(\.id))") { await box.loadFolders() }
-    }
-
-    /// Glas zeigt das Fenstermaterial, Papier und Graphit ihre eigene Fläche.
-    @ViewBuilder private var sideBackground: some View {
-        if theme.usesGlass {
-            ZStack {
-                VisualEffect(material: .sidebar, blending: .behindWindow)
-                theme.side.color
-            }
-        } else {
-            theme.side.color
-        }
     }
 
     // MARK: Konto

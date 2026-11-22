@@ -35,7 +35,7 @@ struct GeneralSettingsView: View {
     @ViewBuilder
     private var appearance: some View {
         Section("Darstellung") {
-            SettingPickerRow(title: "Design", hint: "Glas ist hell, Graphit ist dunkel.",
+            SettingPickerRow(title: "Design", hint: "Papier ist hell, Graphit ist dunkel. „System“ folgt der Einstellung des Macs.",
                              selection: Binding(get: { s.themeID }, set: { s.set("theme", $0.rawValue) })) {
                 ForEach(ThemeID.allCases) { Text($0.title).tag($0) }
             }

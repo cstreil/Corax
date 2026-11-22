@@ -101,7 +101,7 @@ struct SettingsIndexEntry: Identifiable {
 enum SettingsIndex {
     static let all: [SettingsIndexEntry] = [
         // Allgemein
-        .init(page: .appearance, label: "Design", keywords: "theme dark light glass graphite glas graphit snow carbon farbe appearance"),
+        .init(page: .appearance, label: "Design", keywords: "theme dark light hell dunkel graphit papier carbon farbe appearance"),
         .init(page: .appearance, label: "Akzentfarbe", keywords: "accent color colour highlight brand tint akzent"),
         .init(page: .appearance, label: "Sprache", keywords: "language locale translation deutsch german"),
         .init(page: .appearance, label: "Inbox-Ansicht", keywords: "inbox ui layout avatar classic liste rows look design"),

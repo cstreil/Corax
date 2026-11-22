@@ -6,19 +6,27 @@ import RabeBindings
 /// (`UI/Theme/Theme.swift` keeps those conversions), so themes can be resolved
 /// and tested without a UI toolkit.
 ///
-/// Settings IDs. `carbon` and `snow` are existing IDs (Graphit and Glas) and
-/// stay as they are; `paper` is new.
+/// Settings IDs. `paper` (hell) und `carbon` (dunkel) sind die zwei festen
+/// Themes; `system` folgt der Einstellung des Macs. Das frühere Glas-Theme
+/// (`snow`) gibt es nicht mehr — ein gespeicherter Wert wird über
+/// `migrated(from:)` zu `system`.
 public enum ThemeID: String, CaseIterable, Identifiable, Sendable {
-    case system, paper, carbon, snow
+    case system, paper, carbon
     public var id: String { rawValue }
 
     public var title: String {
         switch self {
         case .system: "System"
-        case .paper: "Papier"
-        case .carbon: "Graphit"
-        case .snow: "Glas"
+        case .paper: "Hell (Papier)"
+        case .carbon: "Dunkel (Graphit)"
         }
+    }
+
+    /// Gespeicherte Einstellung → Theme. Unbekannte Werte (etwa das entfernte
+    /// `snow`) fallen auf `system`, damit die Auswahl nie leer ist und nichts
+    /// abstürzt.
+    public static func migrated(from stored: String) -> ThemeID {
+        ThemeID(rawValue: stored) ?? .system
     }
 }
 
@@ -38,12 +46,10 @@ public struct Theme: Equatable, Sendable {
     public let sel: RGBA
     public let hover: RGBA
     public let kbd: RGBA
-    /// Real material behind the window (Glas).
-    public let usesGlass: Bool
 
     public init(id: ThemeID, isDark: Bool, page: RGBA, win: RGBA, bar: RGBA, surface: RGBA, ink: RGBA,
                 ink2: RGBA, ink3: RGBA, line: RGBA, accent: RGBA, accentInk: RGBA, sel: RGBA, hover: RGBA,
-                kbd: RGBA, usesGlass: Bool) {
+                kbd: RGBA) {
         self.id = id
         self.isDark = isDark
         self.page = page
@@ -59,7 +65,6 @@ public struct Theme: Equatable, Sendable {
         self.sel = sel
         self.hover = hover
         self.kbd = kbd
-        self.usesGlass = usesGlass
     }
 
     public static let paper = Theme(
@@ -67,30 +72,20 @@ public struct Theme: Equatable, Sendable {
         page: .hex(0xe9e5de), win: .hex(0xfbfaf7), bar: .hex(0xf6f4f0), surface: .hex(0xffffff),
         ink: .hex(0x1c1b19), ink2: .hex(0x5f5b55), ink3: .hex(0x9d988f),
         line: RGBA(30, 20, 10, 0.08), accent: .hex(0xd4602a), accentInk: .hex(0xffffff),
-        sel: RGBA(212, 96, 42, 0.07), hover: RGBA(30, 20, 10, 0.035), kbd: .hex(0xffffff), usesGlass: false)
+        sel: RGBA(212, 96, 42, 0.07), hover: RGBA(30, 20, 10, 0.035), kbd: .hex(0xffffff))
 
     public static let graphite = Theme(
         id: .carbon, isDark: true,
         page: .hex(0x0b0b0d), win: .hex(0x18181b), bar: .hex(0x1d1d21), surface: .hex(0x232328),
         ink: .hex(0xededf0), ink2: .hex(0xa3a3ad), ink3: .hex(0x6b6b75),
         line: RGBA(255, 255, 255, 0.07), accent: .hex(0xff8d52), accentInk: .hex(0x1a0d05),
-        sel: RGBA(255, 141, 82, 0.09), hover: RGBA(255, 255, 255, 0.035), kbd: .hex(0x2b2b31), usesGlass: false)
+        sel: RGBA(255, 141, 82, 0.09), hover: RGBA(255, 255, 255, 0.035), kbd: .hex(0x2b2b31))
 
-    public static let glass = Theme(
-        id: .snow, isDark: false,
-        page: .hex(0xeef0f6), win: RGBA(255, 255, 255, 0.58), bar: RGBA(255, 255, 255, 0.35),
-        surface: RGBA(255, 255, 255, 0.86),
-        ink: .hex(0x14161c), ink2: .hex(0x535866), ink3: .hex(0x8d93a1),
-        line: RGBA(20, 30, 60, 0.08), accent: .hex(0x2f62ff), accentInk: .hex(0xffffff),
-        sel: RGBA(47, 98, 255, 0.08), hover: RGBA(20, 30, 60, 0.04), kbd: RGBA(255, 255, 255, 0.9), usesGlass: true)
-
-    /// Hintergrund der Seitenleiste (M2.9, Entwurf §4): eine Spur dunkler als
-    /// `win`, in Glas liegt sie über dem Material und bleibt deshalb heller.
+    /// Hintergrund der Seitenleiste (M2.9, Entwurf §4): eine Spur dunkler als `win`.
     public var side: RGBA {
         switch id {
         case .paper: .hex(0xf1eee8)
         case .carbon: .hex(0x141417)
-        case .snow: RGBA(255, 255, 255, 0.22)
         case .system: bar
         }
     }
@@ -102,7 +97,6 @@ public struct Theme: Equatable, Sendable {
         case .system: base = systemDark ? .graphite : .paper
         case .paper: base = .paper
         case .carbon: base = .graphite
-        case .snow: base = .glass
         }
         return base.withAccent(key: accentKey)
     }
@@ -126,7 +120,7 @@ public struct Theme: Equatable, Sendable {
         guard let color else { return self }
         return Theme(id: id, isDark: isDark, page: page, win: win, bar: bar, surface: surface, ink: ink, ink2: ink2,
                      ink3: ink3, line: line, accent: color, accentInk: color.luminance > 0.6 ? .hex(0x111111) : .hex(0xffffff),
-                     sel: color.with(alpha: isDark ? 0.09 : 0.07), hover: hover, kbd: kbd, usesGlass: usesGlass)
+                     sel: color.with(alpha: isDark ? 0.09 : 0.07), hover: hover, kbd: kbd)
     }
 
     /// Colours handed to `wrapForDisplay` for HTML mail.
