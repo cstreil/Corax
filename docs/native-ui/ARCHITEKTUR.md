@@ -1,6 +1,6 @@
 # Corax native — Architektur
 
-Stand 2026-11-18 · Entscheidung: **Option A** — SwiftUI/AppKit (macOS) + Qt 6/QML (Linux, Skins KDE und Omarchy) auf dem unveränderten Rust-Kern `comail-core`. Kein Tauri, kein Electron.
+Stand 2026-11-22 · Entscheidung: **Option A** — SwiftUI/AppKit (macOS) + **GPUI 0.2.2 + Blitz** (Linux/Omarchy) auf dem unveränderten Rust-Kern `comail-core`. Kein Tauri, kein Electron. Der Linux-Teil wurde am 2026-11-22 vom Vergleichs-Spike auf GPUI + Blitz umgestellt: siehe `LINUX.md` und §8f.
 
 ## 0. Namen
 
@@ -30,7 +30,7 @@ Termin geschrieben hat, und wird nirgends gelesen.
 - `src-tauri/src/notifications.rs` (369 Z.) — entscheidet und zeigt Desktop-Benachrichtigungen (Tauri-Plugin).
 - HTML-Mails: `src/components/thread/MessageCard.tsx` baut ein `srcdoc` mit CSP `default-src 'none'; style-src 'unsafe-inline'; img-src data: cid:` (Remote-Bilder nur per Einstellung/Override), `referrer no-referrer`, Dark-Mode-Anpassung per JS nach dem Laden.
 - Mockups: `Work/Tasks/2026-11-18-mail-app-mockup/` — `index.html` (macOS Papier/Graphit/Glas, iOS), `linux.html` (KDE Breeze hell/dunkel mit Befehlsleiste, Omarchy im Terminal-Look mit Modi NORMAL/INSERT/SUCHE/BEFEHL und Theme-Menü), Daten `mail-data.js`, Screenshots `previews/`.
-- Werkzeuge auf dem Mac: Swift 6.4.2, **nur Command Line Tools (kein Xcode, kein `actool`, kein `xcodebuild`)**, Rust 1.99.1 (Homebrew, kein rustup), Qt 6.12 **nur qtbase** (kein QtQuick). Linux-Testgeräte: Scott (x86, CachyOS, Plasma 6.8 Wayland), Burton (ARM, Omarchy/Hyprland).
+- Werkzeuge auf dem Mac: Swift 6.4.2, **nur Command Line Tools (kein Xcode, kein `actool`, kein `xcodebuild`)**, Rust 1.99.1 (Homebrew, kein rustup), Qt 6.12 **nur qtbase** (kein QtQuick). Linux-Testgerät: **Tarantino** (x86_64, Omarchy 4.5/Hyprland, Intel UHD 620, 1920×1080 @1×, per Tailscale erreichbar).
 
 ## 2. Zielbild
 
@@ -46,9 +46,9 @@ Termin geschrieben hat, und wird nirgends gelesen.
                 │ html::wrap_for_display (CSP, Theme-Variablen)           │
                 └───────▲──────────────────────────────────▲─────────────┘
                         │                                  │ Rust direkt
-              corax-uniffi (UniFFI)                 corax-qt (cxx-qt, Binary)
-                        │ Swift-Bindings                   │ QObjects/ListModels
-              apps/macos  SwiftUI + AppKit          apps/linux/qml  QML-Skins kde | omarchy
+              corax-uniffi (UniFFI)              corax-host im selben Prozess
+                        │ Swift-Bindings                   │ Rust direkt
+              apps/macos  SwiftUI + AppKit      apps/linux-gpui  GPUI + Blitz
 ```
 
 ### Ablage
@@ -59,21 +59,21 @@ Termin geschrieben hat, und wird nirgends gelesen.
 | `src-tauri/crates/corax-host/src/bin/corax-cli.rs` | bin | `corax-cli invoke <cmd> '<json>'`, `corax-cli events` — Test ohne UI |
 | `src-tauri/crates/corax-uniffi/` | staticlib, Member | UniFFI-Fassade für Swift |
 | `apps/macos/` | SwiftPM-Paket `Corax` | macOS-App; `scripts/build-app.sh` baut `.app` ohne Xcode |
-| `apps/linux/` | eigener Cargo-Workspace, Crate `corax-qt` | Linux-App (cxx-qt, Cargo-only-Build), `qml/`, `packaging/PKGBUILD` |
+| `apps/linux-gpui/` | eigener Cargo-Workspace, Crate `corax-linux-spike` | Linux-App (**GPUI + Blitz**, Cargo-only-Build), `vendor/` mit zwei Patches; `packaging/PKGBUILD` folgt in L5 (siehe `LINUX.md`) |
 
-Begründung: Kern und Tauri-App bleiben unangetastet (Upstream-Merges bleiben billig, die Tauri-App bleibt bis zur Ablösung Alltags-App). Zusätzlich ändert sich in `src-tauri/Cargo.toml` nur die Zeile `members`. Qt-Abhängigkeiten liegen außerhalb des Tauri-Workspace, damit macOS- und Tauri-Builds kein QtQuick brauchen. `corax-qt` bindet `corax-host` per Pfad ein (`../../src-tauri/crates/corax-host`).
+Begründung: Kern und Tauri-App bleiben unangetastet (Upstream-Merges bleiben billig, die Tauri-App bleibt bis zur Ablösung Alltags-App). Zusätzlich ändert sich in `src-tauri/Cargo.toml` nur die Zeile `members`. Die Linux-Abhängigkeiten (GPUI, Blitz, Vello) liegen außerhalb des Tauri-Workspace, damit macOS- und Tauri-Builds unberührt bleiben. `apps/linux-gpui` bindet `corax-host` per Pfad ein (`../../src-tauri/crates/corax-host`) und läuft im selben Prozess.
 
 ## 3. Kernentscheidungen
 
 | # | Entscheidung | Begründung | Verworfen |
 |---|---|---|---|
 | E1 | Brücke = **ein JSON-Dispatcher** `dispatch(cmd, args_json)` mit denselben Command-Namen und Argumenten wie `commands.rs` | Wiederverwendet serde-Typen und den erprobten Tauri-Vertrag 1:1; `src/ipc/*.ts` dokumentiert ihn bereits; 105 Commands mechanisch portierbar; zwei Nutzer (Swift, QML-Dialoge). JSON-Kosten für eine 50er-Seite liegen im Bereich von 0,1–1 ms. | UniFFI-Records für alle Typen (Spiegel von ~60 Typen, Settings mit ~60 Feldern, hoher Pflegeaufwand); `uniffi`-Derives im Kern (ändert Upstream-Code) |
-| E2 | Linux-Listen als **Rust-`QAbstractListModel` über cxx-qt**, typisiert direkt auf `Core` | ListView-Performance, kein JSON im Scroll-Pfad | QML-JS-Arrays aus JSON (zu langsam bei 10k Zeilen) |
+| E2 | ~~Linux-Listen als **Rust-`QAbstractListModel` über cxx-qt**~~ — **für Linux ersetzt durch `LINUX.md` L-E2** (`uniform_list` mit Range-Callback, Daten seitenweise vom Kern) | ListView-Performance, kein JSON im Scroll-Pfad | QML-JS-Arrays aus JSON (zu langsam bei 10k Zeilen) |
 | E3 | macOS-Mailliste = **AppKit `NSTableView`** (view-based) in SwiftUI eingebettet, Rest SwiftUI | Variable Zeilenhöhen mit animiertem Inline-Aufklappen (`noteHeightOfRows`), präzise Tastatur-/Selektionskontrolle, 10k+ Zeilen | SwiftUI `List` (Höhenanimation und Tastatursteuerung unzuverlässig) |
-| E4 | HTML: macOS `WKWebView` je aufgeklappter Nachricht; Linux **nativ als Text** (QML `Text`/`TextEdit`, RichText-Subset) und **QtWebEngine nur auf Anforderung** („Original anzeigen“, per `Loader`) | WKWebView ist Systembestand; QtWebEngine ist Chromium (≥100 MB RAM) und soll erst laden, wenn nötig | QtWebEngine immer (RAM, Startzeit) |
+| E4 | HTML: macOS `WKWebView` je aufgeklappter Nachricht; ~~Linux nativ als Text (QML RichText-Subset)~~ — **für Linux ersetzt durch `LINUX.md` L-E3** (Blitz rendert HTML/CSS in ein Bild) | WKWebView ist Systembestand; Blitz liefert auf Linux Browser-Qualität ohne Chromium | QtWebEngine immer (RAM, Startzeit) |
 | E5 | HTML-Hülle zentral in `corax-host::html::wrap_for_display` mit derselben CSP wie `MessageCard.tsx`; Seiten-JS aus; Dark-Mode-Anpassung als App-Skript (WKUserScript bzw. `runJavaScript`) | Eine Sicherheitsgrenze für beide Plattformen, gleich der freigegebenen Tauri-Grenze | eigene CSP je UI |
-| E6 | Linux: **ein** Programm, Skin per Laufzeit: `omarchy` wenn `~/.local/state/omarchy/current/theme/colors.toml` existiert und Hyprland läuft, sonst `kde`; Override `CORAX_SKIN`/Einstellung | Kein zweites Toolkit, gemeinsamer Zustand und Modelle | ratatui-TUI (keine Pixelanimation, kein Trackpad-Momentum — siehe Chat 2026-11-18) |
-| E7 | KDE-Skin: QtQuick Controls mit Stil `org.kde.desktop` (Fallback `Fusion`), Farben aus `kdeglobals`; **kein Kirigami in M1** | Echter Breeze-Look, minimale Abhängigkeiten | Kirigami (zusätzliche Abhängigkeit ohne M1-Nutzen) |
+| E6 | Linux: **ein** Programm, Look aus dem aktiven Omarchy-Theme — **für Linux ersetzt durch `LINUX.md` L-E5** (KDE-Skin vorerst nicht) | Kein zweites Toolkit, gemeinsamer Zustand und Modelle | ratatui-TUI (keine Pixelanimation, kein Trackpad-Momentum — siehe Chat 2026-11-18) |
+| E7 | ~~KDE-Skin: QtQuick Controls mit Stil `org.kde.desktop`~~ — **für Linux ersetzt durch `LINUX.md` L-E5** (KDE-Skin und Kirigami vorerst nicht) | Echter Breeze-Look, minimale Abhängigkeiten | Kirigami (zusätzliche Abhängigkeit ohne M1-Nutzen) |
 | E8 | macOS-Build **ohne Xcode**: Rust-Staticlib + UniFFI-Swift-Datei + C-Modulmap als SwiftPM-Target, `.app` per Skript, Signatur mit vorhandener `Apple Development`-Identität | Läuft auf dem jetzigen Mac; Xcode bleibt optional | XCFramework (braucht `xcodebuild`) |
 | E9 | Mindestversion macOS 26 | `glassEffect` (Glas-Theme), Observation | ältere macOS (Glas nur mit Ersatzmaterial) |
 | E10 | Eigene Instanz `de.streil.rabe.native` (eigenes Datenverzeichnis und Keyring-Service) bis zur Ablösung; erst dann `de.streil.rabe` | Kein paralleler Zugriff zweier Sync-Engines auf eine DB | Mitbenutzung der Release-DB |
@@ -138,7 +138,7 @@ impl CoraxHost {
 
 Swift-Seite: `CoraxClient` (actor) mit typisierten Wrappern (`listThreads(view:…) async throws -> ThreadPage`) und `Codable`-Typen gespiegelt aus `src/ipc/*.ts`.
 
-### corax-qt (QML sieht)
+### ~~corax-qt~~ (QML sieht) — für Linux ersetzt, siehe `LINUX.md`
 
 - `Corax` (Singleton-QObject): `invoke(cmd, argsJson) → Promise-artig über Signal `result(requestId, json, error)``, Signale je UiEvent, Property `skin`.
 - `ThreadListModel` (QAbstractListModel): Rollen `threadId, subject, snippet, from, date, unread, starred, hasAttachments, labels, group`; Properties `view, splitId, accountId, labelId, folderId`; `canFetchMore/fetchMore` (Seiten à 100); reagiert auf `mail:updated` mit gezieltem Nachladen der betroffenen Zeilen.
@@ -187,7 +187,7 @@ Messung: `corax-host` loggt Zeitstempel (`tracing`, Ziel `perf`), UIs loggen Ers
 | P0 | Machbarkeit: `corax-host`-Gerüst (Start, Lock, `dispatch` für 4 Commands), `corax-cli`, `corax-uniffi`, SwiftPM-Fenster mit Inbox-Liste; cxx-qt-Fenster mit Liste auf Scott | Coder | Auditor kurz |
 | P1 | Vollständiger Dispatcher (alle Commands), UiEvents, HTML-Hülle, Benachrichtigungslogik, Vertragstests | Coder | Auditor (Sicherheit HTML/FFI) |
 | P2 | macOS-UI M1 | Frontend | Auditor |
-| P3 | Linux-UI M1 (erst KDE, dann Omarchy) | Frontend | Auditor |
+| P3 | **Linux L1–L5** (GPUI + Blitz), siehe `LINUX.md` | Coder + Frontend | Auditor je Meilenstein |
 | P4 | M2-Parität | Coder + Frontend | Auditor |
 | P5 | M3-Ablösung | Coder | Auditor |
 
@@ -234,9 +234,9 @@ Messung: `corax-host` loggt Zeitstempel (`tracing`, Ziel `perf`), UIs loggen Ers
 ## 8. Risiken
 
 1. **Kein Xcode:** SwiftPM-App-Bau per Skript ist machbar, aber ohne Instruments/Asset-Katalog. Icon als `.icns` (vorhanden in `src-tauri/icons/`). Fällt P0 hier durch → Xcode installieren.
-2. **cxx-qt mit Pfad-Abhängigkeit in einen fremden Workspace** (Workspace-Vererbung von `comail-core`): in P0 mit `cargo check` belegen; Rückfall: `corax-qt` als Member in `src-tauri` mit `default-members` ohne `corax-qt`.
+2. ~~**cxx-qt mit Pfad-Abhängigkeit in einen fremden Workspace**~~ — **erledigt 2026-11-22:** fällt mit GPUI weg (kein cxx-qt, Kern im selben Prozess), siehe `LINUX.md` L-E1.
 3. **Inline-Aufklappen mit HTML in Tabellenzeilen:** Höhe des `WKWebView` erst nach Laden bekannt → Platzhalterhöhe aus Text-Snippet, dann animiert anpassen.
-4. **HTML ohne WebEngine unter Linux** sieht bei Newsletter-HTML schlechter aus → Knopf „Original anzeigen“ ist Pflicht in M1.
+4. ~~**HTML ohne WebEngine unter Linux** sieht schlechter aus~~ — **erledigt 2026-11-22:** Blitz rendert HTML/CSS wie ein Browser (5 von 5 Korpus-Mails), siehe `LINUX.md` und `BERICHT-VERGLEICH-GPUI.md`.
 5. **Doppelte UI-Arbeit** über zwei Plattformen; Mitigation: Store-Logik (Paging, optimistische Aktionen, Undo) in `corax-host` halten, wo sie plattformneutral ist — aber erst, wenn beide UIs sie wirklich brauchen.
 6. **AGPL-3.0-only** gilt für die neuen Apps weiter (abgeleitetes Werk).
 7. **Undo bei sehr großen Gruppen (W7):** `undo_last` fasst nur Aktionen ±150 ms um die jüngste; ab etwa 750 Threads in einem Aufruf bleibt ein Rest zurück. Die App lehnt Gruppen über 500 Threads ab (`GroupActionLimit`). Der Kern-Fix (Gesten-ID für Undo) ist vorgemerkt für den Moment, in dem Comail-Code ersetzt wird.
@@ -283,3 +283,7 @@ Messung: `corax-host` loggt Zeitstempel (`tracing`, Ziel `perf`), UIs loggen Ers
 - **Schlüsselbund:** `CredentialAdoption` prüft je Eintrag (`<account_id>:<slot>`) die Quellen der Reihe nach und übernimmt aus der ersten, die ihn hat. Gelesen wird nur, was fehlt; nichts wird gelöscht. Beim ersten Start kommen die Zugriffsdialoge erneut (bis zu fünf, akzeptiert).
 - **Rust-Host:** `NATIVE_IDENTIFIER`/`SANDBOX_IDENTIFIER`/`TEST_KEYRING_SERVICE` tragen die neuen Kennungen; `de.streil.corax` und `…sandbox` stehen jetzt in `RELEASE_KEYRING_SERVICES`, damit keine Instanz dorthin schreiben kann. `comail-core` bleibt unverändert.
 - **Folgen:** Siri/Kurzbefehle laufen unter der neuen Kennung neu ein; Kurzbefehle, die der Nutzer mit `de.streil.corax` angelegt hat, müssen eventuell neu verknüpft werden. Der alte Datenordner `~/Library/Application Support/de.streil.corax` bleibt als Rückweg liegen (Löschung entscheidet der Nutzer). Feed-Default in `release.sh` zeigt auf `github.com/coraxapp/releases/…` (Repo und Schlüssel folgen zum ersten Release).
+
+## 8f. Linux-Entscheidung (2026-11-22)
+
+Nach einem Vergleichs-Spike auf Tarantino (GPUI + Blitz gegen Qt 6.12/QML mit `cxx-qt`, gleiches Messprotokoll, gleicher Korpus) ist **GPUI 0.2.2 + Blitz** der Weg für Linux/Omarchy: ruckelfrei ohne Feinabstimmung, Newsletter in Browser-Qualität, Kern im selben Prozess. Qt/QML bleibt als Referenz dokumentiert, wird aber nicht weitergebaut. Begründung mit allen Messwerten, Festlegungen L-E1 bis L-E7 und Meilensteine L1–L5 in `LINUX.md`.
