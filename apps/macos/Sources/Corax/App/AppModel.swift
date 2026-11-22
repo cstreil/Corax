@@ -179,11 +179,11 @@ final class AppModel {
         // den übernommenen Stand.
         switch migrationOutcome {
         case .legacyRunning:
-            startError = "Rabe Native läuft noch. Bitte beenden und \(AppIdentity.displayName) neu starten — dann werden die Daten übernommen."
+            startError = "Die frühere native Version läuft noch. Bitte beenden und \(AppIdentity.displayName) neu starten — dann werden die Daten übernommen."
             PerfLog.shared.write("migration_blocked reason=legacy_running")
             return
         case .failed(let reason):
-            startError = "Die Datenübernahme aus Rabe Native ist fehlgeschlagen: \(reason) Es wurde nichts verändert."
+            startError = "Die Datenübernahme aus der früheren nativen Version ist fehlgeschlagen: \(reason) Es wurde nichts verändert."
             PerfLog.shared.write("migration_blocked reason=failed")
             return
         case .notNeeded, .migrated:

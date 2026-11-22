@@ -52,7 +52,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         guard ApplicationChecks.tauriRunning else { return }
         PerfLog.shared.write("dialog tauri_running")
         let alert = NSAlert()
-        alert.messageText = "Rabe (Tauri) läuft"
+        alert.messageText = "Die frühere Version läuft noch"
         alert.informativeText = "Die ältere App gleicht dieselben Konten ab. Zwei Instanzen am selben "
             + "Postfach können Mails doppelt verschieben. Die App wird nur gemeldet, nicht angefasst."
         alert.alertStyle = .warning
@@ -61,14 +61,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         if alert.runModal() == .alertSecondButtonReturn { NSApp.terminate(nil) }
     }
 
-    /// Übernahme aus Rabe Native nicht möglich: Rabe Native läuft noch, oder
-    /// das Kopieren ist gescheitert (dann wurde nichts verändert).
+    /// Übernahme aus der früheren nativen Version nicht möglich: sie läuft
+    /// noch, oder das Kopieren ist gescheitert (dann wurde nichts verändert).
     private func showMigrationBlocked() {
         let model = AppModel.shared
         PerfLog.shared.write("dialog migration_blocked")
         let alert = NSAlert()
-        alert.messageText = "Rabe Native beenden"
-        alert.informativeText = model.startError ?? "Die Daten aus Rabe Native konnten nicht übernommen werden."
+        alert.messageText = "Die frühere native Version beenden"
+        alert.informativeText = model.startError
+            ?? "Die Daten aus der früheren nativen Version konnten nicht übernommen werden."
         alert.alertStyle = .warning
         alert.addButton(withTitle: "Erneut versuchen")
         alert.addButton(withTitle: "\(AppIdentity.displayName) beenden")
@@ -79,8 +80,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         }
     }
 
-    /// Nach dem Beenden von Rabe Native noch einmal von vorn: ein frischer
-    /// Start findet den alten Ordner und übernimmt ihn.
+    /// Nach dem Beenden der früheren nativen Version noch einmal von vorn:
+    /// ein frischer Start findet den alten Ordner und übernimmt ihn.
     private func relaunch() {
         PerfLog.shared.write("relaunch for migration")
         let configuration = NSWorkspace.OpenConfiguration()
